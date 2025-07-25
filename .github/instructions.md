@@ -65,4 +65,5 @@ If committing to VCS is required, ask the user to do it and suggest a commit mes
 - Create detailed implementation plans in `devdoc/` directory named `GS-{issue-number}_PLAN.md`
 - All verification tests must pass before proceeding to next step
 - Move issues to "Queued" state when TDD cycle and implementation are complete
+- **IMPORTANT:** When marking an implementation plan as complete, simultaneously update `devdoc/README.md` to reflect the completion status
 - Final release will move all "Queued" issues to "Done" collectively
