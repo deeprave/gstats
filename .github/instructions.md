@@ -14,6 +14,7 @@ Inform the user and get confirmation for any assumptions and big decisions made 
 
 **IMPORTANT**
 | The plan must strictly adhere to the TDD (Red-Green-Refactor) workflow, where a failing test is written before the implementation code for any new functionality.
+| It is important to use a clean architecture following SOLID principles and clear and unambiguous API for modules, struct, implementations and variants.
 
 **Output Format Requirements**:
 The output must be a logically structured implementation plan written and stored in Markdown format, suitable for direct inclusion in a code repository.
@@ -50,6 +51,15 @@ Once the step is complete, get a review from the user before proceeding.
 NEVER commit code or add files to the commit cache.
 
 If committing to VCS is required, ask the user to do it and suggest a commit message as specified in the implementation plan.
+
+## Pre-Work Verification
+
+Before starting any development activity, ensure that:
+
+1. **Repository State:** All changes (excluding unstaged) have been pushed to remote repository
+2. **Task Management:** A new YouTrack task has been created and is being actively worked on
+
+This verification ensures clean starting conditions and proper task tracking for all development work.
 
 ## Project Workflow Rules
 
