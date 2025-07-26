@@ -21,7 +21,7 @@ fn test_logger_initialization() {
 fn test_timestamp_format_validation() {
     // This test verifies timestamp formatting is working correctly
     let output = Command::new("cargo")
-        .args(&["run", "--", "--verbose", "."])
+        .args(&["run", "--", "--verbose", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
@@ -38,7 +38,7 @@ fn test_timestamp_format_validation() {
 fn test_json_format_output_structure() {
     // This test verifies JSON format is working correctly
     let output = Command::new("cargo")
-        .args(&["run", "--", "--log-format", "json", "."])
+        .args(&["run", "--", "--log-format", "json", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
@@ -55,7 +55,7 @@ fn test_json_format_output_structure() {
 fn test_log_level_filtering() {
     // This test verifies log level filtering is working correctly
     let output = Command::new("cargo")
-        .args(&["run", "--", "--quiet", "."])
+        .args(&["run", "--", "--quiet", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
@@ -70,12 +70,12 @@ fn test_log_level_filtering() {
 fn test_format_switching() {
     // This test verifies format switching is working correctly
     let text_output = Command::new("cargo")
-        .args(&["run", "--", "."])
+        .args(&["run", "--", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
     let json_output = Command::new("cargo")
-        .args(&["run", "--", "--log-format", "json", "."])
+        .args(&["run", "--", "--log-format", "json", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
@@ -93,7 +93,7 @@ fn test_file_output_functionality() {
     let temp_file = "/tmp/gstats_test.log";
     
     let _output = Command::new("cargo")
-        .args(&["run", "--", "--log-file", temp_file, "."])
+        .args(&["run", "--", "--log-file", temp_file, "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
@@ -116,7 +116,7 @@ fn test_independent_file_log_levels() {
     let temp_file = "/tmp/gstats_level_test.log";
     
     let output = Command::new("cargo")
-        .args(&["run", "--", "--quiet", "--log-file", temp_file, "--log-file-level", "debug", "."])
+        .args(&["run", "--", "--quiet", "--log-file", temp_file, "--log-file-level", "debug", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     

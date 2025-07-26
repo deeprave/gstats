@@ -109,3 +109,14 @@ This verification ensures clean starting conditions and proper task tracking for
   - Otherwise do nothing immediately with subtasks until asked to do so.
   - Individual subtasks will be worked on as separate issues
   - Once all subtasks are completed, return to "Start of Lifecycle"
+
+#### Testing
+
+##IMPORTANT** Never mark an issue as complete until you get 100% pass rate on all tests.
+Fix all non-working tests. ALWAYS. No excuses.
+If tests were passing and start failing after you change code and then it is absolutely a mistake to think that the failures are "unrelated". They most definitely are related, regardless that you initially do not know how or why. FIX THEM.
+
+#### YouTrack Interactions
+
+YouTrack is queried and updated using the `yt` command. Please read YouTrack.md in this directory for details.
+One identified issue is that long descriptions or comments cause issues that result in vscode encountering a "PTY" error resulting in failure, a short hang and delay. Shorten long descriptions by making them as concise as possible.

@@ -37,7 +37,8 @@ This directory contains detailed implementation plans and development documentat
 - **GS-4_PLAN.md** - Command Line Parser and Git Repository Detection ✅ COMPLETED (Queued)
 - **GS-5_PLAN.md** - Implement logging ✅ COMPLETED (Queued)
 - **GS-12_PLAN.md** - Configuration File Support ✅ COMPLETED (Queued)
-- **GS-6_PLAN.md** - Basic Git Statistics Collection (Ready - GS-12 dependency resolved)
+- **GS-14** - Add repository path flag with --repo|-r|--repository option ✅ COMPLETED (Queued - Plan attached to YouTrack)
+- **GS-6_PLAN.md** - Plugin Architecture System (Ready - GS-14 dependency resolved, GS-15 dependency required)
 
 ## Future Plans
 
