@@ -1,6 +1,3 @@
-// Git repository detection and validation module
-// Provides functionality to check if directories are git repositories
-
 use git2::Repository;
 use anyhow::{Result, Context};
 use std::path::Path;
@@ -29,13 +26,11 @@ pub fn validate_git_repository<P: AsRef<Path>>(path: P) -> Result<String> {
     let path = path.as_ref();
     info!("Validating git repository at: {}", path.display());
     
-    // Check if path exists
     if !path.exists() {
         error!("Path does not exist: {}", path.display());
         anyhow::bail!("Path does not exist: {}", path.display());
     }
     
-    // Check if it's a git repository
     if !is_git_repository(path) {
         error!("Path is not a git repository: {}", path.display());
         anyhow::bail!(
@@ -44,14 +39,15 @@ pub fn validate_git_repository<P: AsRef<Path>>(path: P) -> Result<String> {
         );
     }
     
-    // Get canonical path
     let canonical_path = path.canonicalize()
         .with_context(|| format!("Failed to resolve canonical path for: {}", path.display()))?;
     
     let path_str = canonical_path.to_string_lossy().to_string();
     info!("Git repository validated successfully: {}", path_str);
     Ok(path_str)
-}/// Resolve repository path from optional argument
+}
+
+/// Resolve repository path from optional argument
 /// If no path provided, uses current directory and validates it's a git repository
 pub fn resolve_repository_path(repository_arg: Option<String>) -> Result<String> {
     match repository_arg {
@@ -90,7 +86,6 @@ mod tests {
 
     #[test]
     fn test_is_git_repository_with_non_git_dir() {
-        // Test with a directory that definitely isn't a git repository
         // We'll use /tmp which should exist but not be a git repo
         assert!(!is_git_repository("/tmp"));
     }

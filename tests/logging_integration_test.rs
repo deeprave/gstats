@@ -46,9 +46,9 @@ fn test_json_format_output_structure() {
     
     // Verify JSON format with required fields
     assert!(stderr.contains(r#""timestamp":"#) && 
-            stderr.contains(r#""loglevel":"#) && 
+            stderr.contains(r#""level":"#) && 
             stderr.contains(r#""message":"#), 
-        "Expected JSON format with timestamp, loglevel, message fields, got: {}", stderr);
+        "Expected JSON format with timestamp, level, message fields, got: {}", stderr);
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn test_format_switching() {
     let json_stderr = String::from_utf8_lossy(&json_output.stderr);
     
     // Verify different output formats
-    assert!(text_stderr.contains("[INFO]") && json_stderr.contains(r#""loglevel":"INFO""#), 
+    assert!(text_stderr.contains("[INFO]") && json_stderr.contains(r#""level":"INFO""#), 
         "Expected different output formats - Text: {}, JSON: {}", text_stderr, json_stderr);
 }
 
@@ -116,7 +116,7 @@ fn test_independent_file_log_levels() {
     let temp_file = "/tmp/gstats_level_test.log";
     
     let output = Command::new("cargo")
-        .args(&["run", "--", "--quiet", "--log-file", temp_file, "--file-log-level", "debug", "."])
+        .args(&["run", "--", "--quiet", "--log-file", temp_file, "--log-file-level", "debug", "."])
         .output()
         .expect("Failed to execute command");
     

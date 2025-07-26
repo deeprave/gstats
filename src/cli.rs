@@ -1,6 +1,3 @@
-// Command line interface module for gstats
-// Handles argument parsing and CLI structure
-
 use clap::Parser;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -38,6 +35,14 @@ pub struct Args {
     /// Log level for file output (independent of console level)
     #[arg(long, value_name = "LEVEL")]
     pub log_file_level: Option<String>,
+    
+    /// Configuration file path
+    #[arg(long, value_name = "FILE")]
+    pub config_file: Option<PathBuf>,
+    
+    /// Configuration section name
+    #[arg(long, value_name = "SECTION")]
+    pub config_name: Option<String>,
 }
 
 /// Parse command line arguments
@@ -52,7 +57,6 @@ pub fn parse_args() -> Args {
 pub fn validate_args(args: &Args) -> Result<()> {
     debug!("Validating CLI argument combinations");
     
-    // Check for conflicting log level flags
     let log_flags_count = [args.verbose, args.quiet, args.debug]
         .iter()
         .filter(|&&flag| flag)
@@ -64,7 +68,6 @@ pub fn validate_args(args: &Args) -> Result<()> {
         ));
     }
     
-    // Validate log format
     match args.log_format.to_lowercase().as_str() {
         "text" | "json" => {},
         _ => return Err(anyhow::anyhow!(
@@ -72,7 +75,6 @@ pub fn validate_args(args: &Args) -> Result<()> {
         )),
     }
     
-    // Validate log file level if provided
     if let Some(ref level) = args.log_file_level {
         match level.to_lowercase().as_str() {
             "error" | "warn" | "info" | "debug" | "trace" => {},
@@ -82,7 +84,6 @@ pub fn validate_args(args: &Args) -> Result<()> {
         }
     }
     
-    // Log file level requires log file
     if args.log_file_level.is_some() && args.log_file.is_none() {
         return Err(anyhow::anyhow!(
             "--log-file-level requires --log-file to be specified"
@@ -100,8 +101,7 @@ pub fn run(args: Args) -> Result<()> {
         None => ".".to_string(), // Default to current directory
     };
 
-    // For now, just print what we would analyze
-    // This will be replaced with actual git analysis in future iterations
+    // TODO: Replace with actual git analysis implementation
     println!("Analyzing git repository at: {}", repo_path);
 
     Ok(())
@@ -113,7 +113,6 @@ mod tests {
 
     #[test]
     fn test_args_parsing_with_repository() {
-        // Test that Args can be created with repository path
         let args = Args {
             repository: Some("/path/to/repo".to_string()),
             verbose: false,
@@ -122,13 +121,14 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         assert_eq!(args.repository, Some("/path/to/repo".to_string()));
     }
 
     #[test]
     fn test_args_parsing_without_repository() {
-        // Test that Args can be created without repository path
         let args = Args {
             repository: None,
             verbose: false,
@@ -137,6 +137,8 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         assert_eq!(args.repository, None);
     }
@@ -151,6 +153,8 @@ mod tests {
             log_format: "json".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         assert!(validate_args(&args).is_ok());
     }
@@ -165,6 +169,8 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         assert!(validate_args(&args).is_err());
     }
@@ -179,6 +185,8 @@ mod tests {
             log_format: "invalid".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         assert!(validate_args(&args).is_err());
     }
@@ -193,13 +201,14 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: Some("debug".to_string()),
+            config_file: None,
+            config_name: None,
         };
         assert!(validate_args(&args).is_err());
     }
 
     #[test]
     fn test_cli_run_with_path() {
-        // Test that run function handles repository path correctly
         let args = Args {
             repository: Some("/some/path".to_string()),
             verbose: false,
@@ -208,6 +217,8 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         
         // Should not panic or error for basic path handling
@@ -218,7 +229,6 @@ mod tests {
 
     #[test]
     fn test_cli_run_without_path() {
-        // Test that run function handles no repository path correctly
         let args = Args {
             repository: None,
             verbose: false,
@@ -227,9 +237,10 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            config_file: None,
+            config_name: None,
         };
         
-        // Should not panic or error for basic path handling
         let result = run(args);
         assert!(result.is_ok());
     }

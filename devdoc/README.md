@@ -13,11 +13,21 @@ This directory contains detailed implementation plans and development documentat
 
 ## Workflow
 
-1. Create implementation plan before starting any development
-2. Follow TDD (Red-Green-Refactor) methodology strictly
-3. Mark each step as completed with verification tests
-4. Move YouTrack issue to "Queued" when plan is fully implemented
-5. Keep plans as historical reference for project development
+1. Ask the user to select a task by it's issue id
+2. Create implementation plan before starting any development
+3. Follow TDD (Red-Green-Refactor) methodology strictly
+4. Mark each step as completed with verification tests
+5. Once all tasks in the implementation plan is fully implemented and marked as completed:
+   before continuing, let's scan the source code and check for code quality issues, specifically:
+   - scan all changed files and remove obvious/redundant comments, keeping only comments that:
+     - document an API
+     - provide editor or ide assistance or pseudo "bookmarks"
+     - explain unusual logic, non-obvious or complex operations or algorithms
+     - serve a purpose for the rust compiler, libraries or modules
+   - Request confirmation from the user that the plan is fully implemented and working as intended
+   - Attach the implementation plan to its respective issue
+   - Move issue state to "Queued"
+   - Go back to step 1
 
 ## Current Plans
 
@@ -25,6 +35,9 @@ This directory contains detailed implementation plans and development documentat
 - **GS-2_PLAN.md** - Initialize Git Repository and GitHub Integration ✅ COMPLETED (Queued)
 - **GS-3_PLAN.md** - Validate Testing Infrastructure with TDD Workflow ✅ COMPLETED (Queued)
 - **GS-4_PLAN.md** - Command Line Parser and Git Repository Detection ✅ COMPLETED (Queued)
+- **GS-5_PLAN.md** - Implement logging ✅ COMPLETED (Queued)
+- **GS-12_PLAN.md** - Configuration File Support ✅ COMPLETED (Queued)
+- **GS-6_PLAN.md** - Basic Git Statistics Collection (Ready - GS-12 dependency resolved)
 
 ## Future Plans
 

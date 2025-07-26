@@ -1,0 +1,12 @@
+# Test configuration file for gstats
+
+[logging]
+level = "debug"
+format = "json"
+file_path = "/tmp/gstats.log"
+file_level = "info"
+
+[module.commits]
+batch_size = "100"
+timeout = "30"
+enable_caching = "true"

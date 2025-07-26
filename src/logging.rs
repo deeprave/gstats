@@ -218,7 +218,6 @@ impl log::Log for GstatsLogger {
 pub fn init_logger(config: LogConfig) -> Result<()> {
     let logger = GstatsLogger::new(config.clone());
     
-    // Set the maximum log level based on configuration
     let max_level = match (&config.file_level, config.console_level) {
         (Some(file_level), console_level) => {
             if *file_level > console_level {

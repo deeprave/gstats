@@ -1,6 +1,5 @@
-// Main entry point for gstats - Git Repository Analytics Tool
-
 mod cli;
+mod config;
 mod git;
 mod logging;
 
@@ -10,7 +9,6 @@ use log::{info, error};
 
 fn main() {
     if let Err(e) = run() {
-        // Log error with full context chain
         error!("Application error: {}", e);
         for cause in e.chain().skip(1) {
             error!("  Caused by: {}", cause);
@@ -25,14 +23,13 @@ fn main() {
 fn run() -> Result<()> {
     let args = cli::parse_args();
     
-    // Validate CLI arguments
     cli::validate_args(&args)?;
     
-    // Configure logging based on CLI arguments
-    let log_config = configure_logging(&args)?;
+    let config_manager = load_configuration(&args)?;
+    
+    let log_config = configure_logging(&args, &config_manager)?;
     logging::init_logger(log_config)?;
     
-    // Validate git repository
     let repo_path = git::resolve_repository_path(args.repository)?;
     
     info!("Analyzing git repository at: {}", repo_path);
@@ -40,11 +37,26 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn configure_logging(args: &cli::Args) -> Result<logging::LogConfig> {
+fn load_configuration(args: &cli::Args) -> Result<config::ConfigManager> {
+    let mut manager = if let Some(config_file) = &args.config_file {
+        info!("Loading configuration from explicit file: {}", config_file.display());
+        config::ConfigManager::load_from_file(config_file.clone())?
+    } else {
+        config::ConfigManager::load()?
+    };
+    
+    if let Some(section_name) = &args.config_name {
+        info!("Selecting configuration section: {}", section_name);
+        manager.select_section(section_name.clone());
+    }
+    
+    Ok(manager)
+}
+
+fn configure_logging(args: &cli::Args, config: &config::ConfigManager) -> Result<logging::LogConfig> {
     use log::LevelFilter;
     use std::str::FromStr;
     
-    // Determine console log level
     let console_level = if args.debug {
         LevelFilter::Trace
     } else if args.verbose {
@@ -52,26 +64,63 @@ fn configure_logging(args: &cli::Args) -> Result<logging::LogConfig> {
     } else if args.quiet {
         LevelFilter::Error
     } else {
-        LevelFilter::Info
+        match config.get_log_level("base", "console-level") {
+            Ok(Some(level)) => {
+                info!("Using console log level from config: {:?}", level);
+                level
+            }
+            Ok(None) => LevelFilter::Info,
+            Err(e) => {
+                info!("Invalid console-level in config, using default: {}", e);
+                LevelFilter::Info
+            }
+        }
     };
     
     info!("Console log level set to: {:?}", console_level);
     
-    // Determine log format
-    let format = logging::LogFormat::from_str(&args.log_format)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let format = if !args.log_format.is_empty() && args.log_format != "text" {
+        logging::LogFormat::from_str(&args.log_format)
+            .map_err(|e| anyhow::anyhow!(e))?
+    } else {
+        match config.get_value("base", "log-format") {
+            Some(format_str) => {
+                info!("Using log format from config: {}", format_str);
+                logging::LogFormat::from_str(format_str)
+                    .unwrap_or(logging::LogFormat::Text)
+            }
+            None => logging::LogFormat::Text,
+        }
+    };
     
     info!("Log format set to: {:?}", format);
     
-    // Determine destination and file log level
-    let (destination, file_level) = match (&args.log_file, &args.log_file_level) {
-        (Some(file_path), Some(level_str)) => {
-            let file_level = logging::parse_log_level(level_str)?;
-            info!("File logging enabled: {} (level: {:?})", file_path.display(), file_level);
-            (logging::LogDestination::Both(file_path.clone()), Some(file_level))
+    let log_file_path = args.log_file.clone()
+        .or_else(|| config.get_path("base", "log-file"));
+    
+    let file_log_level = match &args.log_file_level {
+        Some(level_str) => Some(logging::parse_log_level(level_str)?),
+        None => {
+            match config.get_log_level("base", "file-log-level") {
+                Ok(Some(level)) => {
+                    info!("Using file log level from config: {:?}", level);
+                    Some(level)
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    info!("Invalid file-log-level in config, using None: {}", e);
+                    None
+                }
+            }
+        }
+    };
+    
+    let (destination, file_level) = match (log_file_path.as_ref(), file_log_level) {
+        (Some(file_path), Some(level)) => {
+            info!("File logging enabled: {} (level: {:?})", file_path.display(), level);
+            (logging::LogDestination::Both(file_path.clone()), Some(level))
         }
         (Some(file_path), None) => {
-            // Use console level for file if not specified
             info!("File logging enabled: {} (level: {:?} - same as console)", file_path.display(), console_level);
             (logging::LogDestination::Both(file_path.clone()), Some(console_level))
         }
