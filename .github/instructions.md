@@ -1,5 +1,9 @@
 # Project Development Lifecycle
 
+This project is being developed in Australia and therefore uses AU or UK english spellings in all documentation, comments,variable and file names
+
+## Project Guidelines
+
 This project makes use of Test Driven Development (TDD) and agile software planning.
 
 During the initial implementation phase, analyse the affected codebase, including documents, and get familiarised with the existing frameworks and libraries used in the project.
