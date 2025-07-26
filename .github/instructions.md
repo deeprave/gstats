@@ -37,10 +37,12 @@ After each step, run the test without code coverage to ensure that red-green-ref
 
 During the implementation try not to insert comments unless it is absolutely necessary.
 The only comments that are allowed are:
+
 - API documentation
 - MARK or other bookmark style comments used by an IDE (e.g. Xcode)
 - explanations of complex logic
 - explanations of algorithms used to implemented
+
 No other comments should be inserted, including comments that describe what should be obvious.
 Instead, use meaningful variable and method names to make the code self-documenting.
 If you find that you need to add comments, consider refactoring the code to make it clearer instead.
@@ -51,9 +53,9 @@ There may be cases where it is difficult or impossible to cover some code.
 
 Once the step is complete, get a review from the user before proceeding.
 
-**IMPORANT**
-- NEVER commit code or add files to the commit cache unless explicitly asked to do so.
-- If commit is the next logical step, generate a commit message and ask the user to do the actual commit.
+**IMPORTANT**
+| - NEVER commit code or add files to the commit cache unless explicitly asked to do so.
+| - If commit is the next logical step, generate a commit message and ask the user to do the actual commit.
 
 ## Pre-Work Verification
 
@@ -67,6 +69,7 @@ This verification ensures clean starting conditions and proper task tracking for
 ## Project Workflow Rules
 
 ### Issue State Management
+
 - **Backlog:** Issue may be selected to work on
 - **Open:** Issue is actively being worked on
 - **In Progress:** Implementation is underway following TDD cycle
@@ -74,11 +77,13 @@ This verification ensures clean starting conditions and proper task tracking for
 - **Done:** All "Queued" issues are collectively moved to "Done" when the product is built and released on GitHub
 
 ### Start of Lifecycle
+
 - When there is no active issue, present a list of available (State in [Backlog, Open]) to the user
 - The user will elect the issue to work on next.
 - It should be moved state = "In Progress" and the implementation plan generated
 
 ### Development Process
+
 - Each YouTrack issue represents a complete feature or infrastructure component
 - if an issue is too large a unit of work, suggest to the unit that it be split (see below)
 - Follow strict TDD (Red-Green-Refactor) workflow for all development
@@ -86,20 +91,21 @@ This verification ensures clean starting conditions and proper task tracking for
 - All verification tests must pass before proceeding to next step
 - **IMPORTANT** Request a review from the user once the detailed implementation is marked complete
 - Once confirmed and there are no other additional tasks or cleanup to perform:
-    - if the TDD cycle and implementation are complete
-        - update `devdoc/README.md` to reflect the current development status
-        - attach the plan to the issue to which it belongs
-        - once successfully attached remove it from the project work area
-        - Move the issue to "Queued" state 
-    - Notes:
-        - **IMPORTANT** DO NOT attach and remove plans until they are completed!
+  - if the TDD cycle and implementation are complete
+    1. update `devdoc/README.md` to reflect the current development status
+    2. attach the plan to the issue to which it belongs
+    3. once successfully attached remove it from the project work area
+    4. Move the issue to "Queued" state
+- Notes:
+  - **IMPORTANT** DO NOT attach plans until they are completed!
 
-#### Splitting Tasks ####
+#### Splitting Tasks
+
 - Large tasks may need to be split from time to time. When required to do this:
-    - Mark the task to be split (the parent) as type = "Feature", state = "Open"
-    - Create the new tas or tasks (Youtrack uses its own numbering system)
-    - Add a link of type "is subtask of" from the child task to parent
-      issue type = "Task", state = "Open"
-    - Otherwise do nothing immediately with subtasks until asked to do so.
-    - Individual subtasks will be worked on as separate issues
-    - Once all subtasks are completed, return to "Start of Lifecycle"
+  - Mark the task to be split (the parent) as type = "Feature", state = "Open"
+  - Create the new tas or tasks (YouTrack uses its own numbering system)
+  - Add a link of type "is subtask of" from the child task to parent
+    issue type = "Task", state = "Open"
+  - Otherwise do nothing immediately with subtasks until asked to do so.
+  - Individual subtasks will be worked on as separate issues
+  - Once all subtasks are completed, return to "Start of Lifecycle"
