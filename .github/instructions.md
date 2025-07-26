@@ -120,3 +120,10 @@ If tests were passing and start failing after you change code and then it is abs
 
 YouTrack is queried and updated using the `yt` command. Please read YouTrack.md in this directory for details.
 One identified issue is that long descriptions or comments cause issues that result in vscode encountering a "PTY" error resulting in failure, a short hang and delay. Shorten long descriptions by making them as concise as possible.
+
+#### Git Commits
+
+As stated with emphasis above, NEVER `git add` or `git commit`.
+You will be asked to generate a commit message, however, and when doing so be terse and to the point.
+Do not include extraneous information or detail what was changed and to which files. That's what a git log is for.
+If related to an issue, then mention that issue in the git message so that YouTrack can create the association to it.
