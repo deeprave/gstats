@@ -4,43 +4,78 @@
 use git2::Repository;
 use anyhow::{Result, Context};
 use std::path::Path;
+use log::{debug, info, warn, error};
 
 /// Check if the given path is a git repository
 pub fn is_git_repository<P: AsRef<Path>>(path: P) -> bool {
-    Repository::open(path).is_ok()
+    let path = path.as_ref();
+    debug!("Checking if path is git repository: {}", path.display());
+    
+    match Repository::open(path) {
+        Ok(_) => {
+            debug!("Git repository detected at: {}", path.display());
+            true
+        }
+        Err(e) => {
+            debug!("Not a git repository at {}: {}", path.display(), e);
+            false
+        }
+    }
 }
 
 /// Validate that the given path is an accessible git repository
 /// Returns the canonical path if valid, error otherwise
 pub fn validate_git_repository<P: AsRef<Path>>(path: P) -> Result<String> {
     let path = path.as_ref();
+    info!("Validating git repository at: {}", path.display());
     
     // Check if path exists
     if !path.exists() {
+        error!("Path does not exist: {}", path.display());
         anyhow::bail!("Path does not exist: {}", path.display());
     }
-
-    // Try to open as git repository
-    let _repo = Repository::open(path)
-        .with_context(|| {
-            format!(
-                "Directory is not a git repository: {}\n\nHelp: Make sure you're in a git repository or specify a valid git repository path.",
-                path.display()
-            )
-        })?;
-
-    // Return canonical path
+    
+    // Check if it's a git repository
+    if !is_git_repository(path) {
+        error!("Path is not a git repository: {}", path.display());
+        anyhow::bail!(
+            "The path '{}' is not a git repository. Please specify a valid git repository path.",
+            path.display()
+        );
+    }
+    
+    // Get canonical path
     let canonical_path = path.canonicalize()
-        .with_context(|| format!("Failed to resolve path: {}", path.display()))?;
-
-    Ok(canonical_path.to_string_lossy().to_string())
-}
-
-/// Get the repository path, using current directory if none specified
-/// Validates that the resulting path is a git repository
-pub fn resolve_repository_path(path_option: Option<String>) -> Result<String> {
-    let path = path_option.unwrap_or_else(|| ".".to_string());
-    validate_git_repository(path)
+        .with_context(|| format!("Failed to resolve canonical path for: {}", path.display()))?;
+    
+    let path_str = canonical_path.to_string_lossy().to_string();
+    info!("Git repository validated successfully: {}", path_str);
+    Ok(path_str)
+}/// Resolve repository path from optional argument
+/// If no path provided, uses current directory and validates it's a git repository
+pub fn resolve_repository_path(repository_arg: Option<String>) -> Result<String> {
+    match repository_arg {
+        Some(path) => {
+            debug!("Repository path provided: {}", path);
+            validate_git_repository(path)
+        }
+        None => {
+            debug!("No repository path provided, using current directory");
+            let current_dir = std::env::current_dir()
+                .context("Failed to get current directory")?;
+            
+            if !is_git_repository(&current_dir) {
+                warn!("Current directory is not a git repository: {}", current_dir.display());
+                anyhow::bail!(
+                    "Current directory '{}' is not a git repository. Please run this command from within a git repository or specify a repository path.",
+                    current_dir.display()
+                );
+            }
+            
+            info!("Using current directory as git repository: {}", current_dir.display());
+            Ok(current_dir.to_string_lossy().to_string())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -85,7 +120,7 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("not a git repository"));
-        assert!(error_msg.contains("Help:")); // Should contain helpful message
+        assert!(error_msg.contains("Please specify")); // Should contain helpful message
     }
 
     #[test]

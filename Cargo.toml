@@ -29,3 +29,8 @@ panic = "abort"
 clap = { version = "4.4", features = ["derive"] }
 git2 = "0.18"
 anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
