@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod git;
 mod logging;
+mod scanner;
 
 use anyhow::Result;
 use std::process;
@@ -21,9 +22,9 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let args = cli::parse_args();
+    let args = cli::args::parse_args();
     
-    cli::validate_args(&args)?;
+    cli::args::validate_args(&args)?;
     
     let config_manager = load_configuration(&args)?;
     

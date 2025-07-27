@@ -2,25 +2,34 @@
 
 ## Active Issues
 
-### GS-31: CLI Filtering Flags Implementation
-**Status**: Open  
-**Priority**: High  
-**Type**: Enhancement  
-**Created**: 2025-07-27  
-
-**Summary**: Add comprehensive filtering flags to CLI for date ranges, file paths, and authors
-
-**Dependencies**: 
-- ✅ GS-24 (Filtering System) - COMPLETED
-
-**Description**: 
-The current CLI only supports basic repository and logging flags. Need to add filtering capabilities that integrate with the completed filtering system from GS-24.
-
-**Location**: `/docs/issues/GS-31-CLI-Filtering-Flags.md`
+*No active issues - GS-31 completed successfully*
 
 ---
 
 ## Completed Tasks (Recent)
+
+### GS-31: CLI Filtering Flags Implementation
+**Status**: ✅ COMPLETED  
+**Completed**: 2025-07-27  
+**Priority**: High  
+**Type**: Enhancement  
+
+**Summary**: Add comprehensive filtering flags to CLI for date ranges, file paths, and authors
+
+**Completed Features**:
+- ✅ Date filtering with ISO 8601 and relative formats (--since, --until)
+- ✅ Path filtering with include/exclude patterns (--include-path, --exclude-path) 
+- ✅ File filtering with glob patterns (--include-file, --exclude-file)
+- ✅ Author filtering with include/exclude (--author, --exclude-author)
+- ✅ Result control with limits and plugins (--limit, plugins)
+- ✅ **BONUS**: Scanner configuration (--performance-mode, --max-memory, --queue-size)
+- ✅ Memory size parsing with units (512MB, 1GB, 0.5T, etc.)
+- ✅ Comprehensive validation and error handling
+- ✅ Integration with GS-24 filtering system
+
+**Test Results**: 196 total tests passing (131 library + 65 CLI)
+
+**Location**: `/docs/issues/GS-31-CLI-Filtering-Flags.md`
 
 ### GS-24: Core Scanner Infrastructure (Steps 1-8)
 **Status**: ✅ COMPLETED (Steps 1-8), Step 9 Pending  
@@ -55,7 +64,7 @@ Based on existing patterns:
 
 ## Next Priority Items
 
-1. **GS-31**: CLI Filtering Flags (HIGH - Needed for testing and usability)
-2. **GS-24 Step 9**: Complete scanner integration and API finalization  
-3. **GS-25**: Git Integration (next scanner component)
-4. **GS-26-30**: Remaining scanner components
+1. **GS-24 Step 9**: Complete scanner integration and API finalization (MEDIUM - Can proceed with GS-31 complete)
+2. **GS-25**: Git Integration (next scanner component)
+3. **GS-26-30**: Remaining scanner components
+4. **New Features**: Ready to define next enhancement requirements

@@ -38,35 +38,48 @@ This directory contains detailed implementation plans and development documentat
 - **GS-5_PLAN.md** - Implement logging ✅ COMPLETED (Queued)
 - **GS-12_PLAN.md** - Configuration File Support ✅ COMPLETED (Queued)
 - **GS-14** - Add repository path flag with --repo|-r|--repository option ✅ COMPLETED (Queued - Plan attached to YouTrack)
-- **GS-24** - Core Scanner Infrastructure (Steps 1-8) ✅ COMPLETED (Open - Parked pending GS-31)
-- **GS-31_PLAN.md** - CLI Filtering Flags Implementation 🔄 READY TO START (Open - High Priority)
+- **GS-24** - Core Scanner Infrastructure (Steps 1-8) ✅ COMPLETED (Open - Parked pending Step 9)
+- **GS-31_PLAN.md** - CLI Filtering Flags Implementation ✅ COMPLETED (Queued - Ready for YouTrack attachment)
 - **GS-6_PLAN.md** - Plugin Architecture System (Ready - GS-14 dependency resolved, GS-15 dependency required)
 
 ## Current Issue Status
 
-### Active Issues
-- **GS-31**: CLI Filtering Flags Implementation (Open, High Priority)
+### Completed Issues
+- **GS-31**: CLI Filtering Flags Implementation ✅ COMPLETED
+  - **All 9 implementation steps completed successfully**
   - Dependencies: GS-24 (Core Scanner Infrastructure) ✅ COMPLETED
-  - Requirements documented in YouTrack issue description
-  - Critical for testing the completed filtering system
+  - **Key Features Delivered**:
+    - Complete CLI filtering system with date, path, file, and author filters
+    - Enhanced argument parsing supporting multiple formats
+    - **BONUS**: Scanner configuration arguments with memory parsing
+    - Comprehensive validation and error handling
+    - Integration with GS-24 filtering infrastructure
+    - 196 total tests passing (131 library + 65 CLI tests)
+  - **Ready for YouTrack plan attachment and state update to "Queued"**
 
 ### Parked Issues  
 - **GS-24**: Core Scanner Infrastructure (Open - Step 9 pending)
   - Steps 1-8: ✅ COMPLETED (76 tests passing)
-  - Step 9: Integration and API finalisation (pending GS-31)
+  - Step 9: Integration and API finalisation (can proceed with GS-31 complete)
   - Comprehensive filtering system with zero-cost abstractions implemented
 
 ## Recent Achievements
+- ✅ **COMPLETED GS-31**: CLI Filtering Flags Implementation with comprehensive functionality
+  - All 9 implementation steps completed successfully
+  - 196 total tests passing (131 library + 65 CLI tests)
+  - **BONUS features**: Scanner configuration arguments with memory parsing (--performance-mode, --max-memory, --queue-size)
+  - Memory size parsing supports units: 512MB, 1GB, 0.5T, 2048K, etc.
+  - Complete integration with GS-24 filtering system
 - ✅ Completed GS-24 Steps 1-8: Core scanner infrastructure with API versioning and filtering system
 - ✅ Created GS-31 issue with comprehensive requirements in YouTrack
 - ✅ Reorganised documentation structure to `.github/instructions/`
 - ✅ Established proper issue tracking and dependency management
 
 ## Next Priority Items
-1. **GS-31**: CLI Filtering Flags (HIGH - Needed for testing and usability)
-2. **GS-24 Step 9**: Complete scanner integration and API finalisation  
-3. **GS-25**: Git Integration (next scanner component)
-4. **GS-26-30**: Remaining scanner components
+1. **GS-24 Step 9**: Complete scanner integration and API finalisation (MEDIUM - Can proceed with GS-31 complete)
+2. **GS-25**: Git Integration (next scanner component)
+3. **GS-26-30**: Remaining scanner components
+4. **New Features**: Ready to define next enhancement requirements
 
 ## Future Plans
 
