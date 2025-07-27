@@ -195,3 +195,9 @@ yt config set SETTING_NAME VALUE
 - The `--all` flag fetches all results using pagination
 - Issue IDs shown in listings (e.g., DSE-21, CMS-32) can be used with `yt issues show`
 - Query syntax is very powerful - see `YouTrack_Query_Language.md` for comprehensive documentation
+
+## Limitations **IMPORTANT**
+- Note that vscode's terminal/pty system does not deal well with long multiline strings in commands.
+  Attempting to do so will crash/freeze the PTY and vscode will need to restart the terminal.
+- As a result, use SHORT, CONCISE descriptions and comments when interacting with the yt.
+  If a large amount of data needs to be added to an isse, create and attach it as a file.

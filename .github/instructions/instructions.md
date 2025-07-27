@@ -87,12 +87,12 @@ This verification ensures clean starting conditions and proper task tracking for
 - Each YouTrack issue represents a complete feature or infrastructure component
 - if an issue is too large a unit of work, suggest to the unit that it be split (see below)
 - Follow strict TDD (Red-Green-Refactor) workflow for all development
-- Create detailed implementation plans in `devdoc/` directory named `GS-{issue-number}_PLAN.md`
+- Create detailed implementation plans in `.github/instructions/` directory named `GS-{issue-number}_PLAN.md`
 - All verification tests must pass before proceeding to next step
 - **IMPORTANT** Request a review from the user once the detailed implementation is marked complete
 - Once confirmed and there are no other additional tasks or cleanup to perform:
   - if the TDD cycle and implementation are complete
-    1. update `devdoc/README.md` to reflect the current development status
+    1. update `.github/instructions/README.md` to reflect the current development status
     2. attach the plan to the issue to which it belongs
     3. once successfully attached remove it from the project work area
     4. Move the issue to "Queued" state
