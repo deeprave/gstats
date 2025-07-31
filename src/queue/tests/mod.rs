@@ -4,4 +4,6 @@ pub mod basic_queue;
 pub mod memory_tracking;
 pub mod versioning;
 pub mod memory_monitoring;
+pub mod backoff;
+pub mod debug_backoff;
 // mod listener_pattern;

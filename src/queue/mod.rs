@@ -6,6 +6,7 @@
 pub mod versioned_message;
 pub mod memory_queue;
 pub mod memory_tracker;
+pub mod backoff;
 pub mod listener;
 
 #[cfg(test)]
@@ -13,8 +14,9 @@ mod tests;
 
 // Re-export core types for easier access
 pub use versioned_message::{QueueMessage, MessageType, MessagePayload};
-pub use memory_queue::{MemoryQueue, VersionedMemoryQueue, QueueMemoryStatistics};
+pub use memory_queue::{MemoryQueue, VersionedMemoryQueue, QueueMemoryStatistics, PressureResponseConfig, PressureResponseStatus, PressureResponseMetrics};
 pub use memory_tracker::{MemoryTracker, MemoryStatistics, MemoryPressureLevel, LeakInformation, MemoryHistorySample};
+pub use backoff::{BackoffAlgorithm, BackoffConfig, BackoffStrategy, BackoffMetrics};
 pub use listener::{MessageListener, ListenerRegistry};
 
 use anyhow::Result;
@@ -39,6 +41,8 @@ pub enum QueueError {
     ListenerError(String),
     #[error("Message versioning error: {0}")]
     VersioningError(String),
+    #[error("Message dropped due to extreme memory pressure: {0}")]
+    MessageDropped(String),
 }
 
 /// Basic queue interface trait
