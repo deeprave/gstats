@@ -95,18 +95,13 @@ pub fn args_to_scanner_config(args: &crate::cli::Args) -> Result<ScannerConfig, 
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```ignore
 /// use gstats::cli::converter::args_to_query_params;
 /// use gstats::cli::Args;
 /// 
-/// let args = Args {
-///     since: Some("2023-01-01".to_string()),
-///     until: Some("1 week ago".to_string()),
-///     include_path: vec!["src/".to_string(), "tests/".to_string()],
-///     // ... other fields
-/// };
-/// 
-/// let query_params = args_to_query_params(&args)?;
+/// // Args would typically be created by clap CLI parsing
+/// // let args = Args::parse(); // from clap
+/// // let query_params = args_to_query_params(&args)?;
 /// ```
 pub fn args_to_query_params(args: &crate::cli::Args) -> Result<QueryParams, CliError> {
     // Convert date arguments

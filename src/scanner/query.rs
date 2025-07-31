@@ -219,9 +219,28 @@ impl QueryParams {
 }
 
 impl QueryBuilder {
+    /// Create a new query builder
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
     /// Set date range filter
     pub fn date_range(mut self, start: Option<SystemTime>, end: Option<SystemTime>) -> Self {
         self.date_range = Some(DateRange { start, end });
+        self
+    }
+    
+    /// Set start date filter
+    pub fn since(mut self, start: SystemTime) -> Self {
+        let range = self.date_range.get_or_insert(DateRange { start: None, end: None });
+        range.start = Some(start);
+        self
+    }
+    
+    /// Set end date filter
+    pub fn until(mut self, end: SystemTime) -> Self {
+        let range = self.date_range.get_or_insert(DateRange { start: None, end: None });
+        range.end = Some(end);
         self
     }
 
@@ -250,6 +269,11 @@ impl QueryBuilder {
         let author_string = author.into();
         self.authors.include.push(author_string);
         self
+    }
+    
+    /// Add author to include (convenience alias)
+    pub fn author<S: Into<String>>(self, author: S) -> Self {
+        self.include_author(author)
     }
 
     /// Add author to exclude

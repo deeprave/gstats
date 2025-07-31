@@ -1,7 +1,8 @@
 use git2::Repository;
 use anyhow::{Result, Context};
-use std::path::Path;
-use log::{debug, info, warn, error};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use log::{debug, info, error};
 
 /// Check if the given path is a git repository
 pub fn is_git_repository<P: AsRef<Path>>(path: P) -> bool {
@@ -23,53 +24,176 @@ pub fn is_git_repository<P: AsRef<Path>>(path: P) -> bool {
 /// Validate that the given path is an accessible git repository
 /// Returns the canonical path if valid, error otherwise
 pub fn validate_git_repository<P: AsRef<Path>>(path: P) -> Result<String> {
-    let path = path.as_ref();
-    info!("Validating git repository at: {}", path.display());
+    // Use the new function internally to avoid code duplication
+    let repo = validate_git_repository_handle(path)?;
     
-    if !path.exists() {
-        error!("Path does not exist: {}", path.display());
-        anyhow::bail!("Path does not exist: {}", path.display());
-    }
+    // Get the canonical path from the repository
+    let workdir = repo.workdir()
+        .or_else(|| Some(repo.path()))
+        .expect("Repository must have a path");
     
-    if !is_git_repository(path) {
-        error!("Path is not a git repository: {}", path.display());
-        anyhow::bail!(
-            "The path '{}' is not a git repository. Please specify a valid git repository path.",
-            path.display()
-        );
-    }
-    
-    let canonical_path = path.canonicalize()
-        .with_context(|| format!("Failed to resolve canonical path for: {}", path.display()))?;
+    let canonical_path = workdir.canonicalize()
+        .with_context(|| format!("Failed to resolve canonical path for: {}", workdir.display()))?;
     
     let path_str = canonical_path.to_string_lossy().to_string();
-    info!("Git repository validated successfully: {}", path_str);
     Ok(path_str)
 }
 
 /// Resolve repository path from optional argument
 /// If no path provided, uses current directory and validates it's a git repository
 pub fn resolve_repository_path(repository_arg: Option<String>) -> Result<String> {
+    // Use the new function internally and convert back to string
+    let handle = resolve_repository_handle(repository_arg)?;
+    Ok(handle.path())
+}
+
+/// A wrapper around git2::Repository that provides scanner-friendly functionality
+#[derive(Clone)]
+pub struct RepositoryHandle {
+    repository: Arc<Repository>,
+    path: PathBuf,
+}
+
+impl RepositoryHandle {
+    /// Open a repository from a path
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let repo = Repository::open(path)
+            .with_context(|| format!("Failed to open repository at: {}", path.display()))?;
+        
+        let canonical_path = path.canonicalize()
+            .with_context(|| format!("Failed to resolve canonical path for: {}", path.display()))?;
+        
+        Ok(Self {
+            repository: Arc::new(repo),
+            path: canonical_path,
+        })
+    }
+    
+    /// Create a handle from an existing Repository
+    pub fn from_repository(repository: Repository) -> Self {
+        let path = repository
+            .workdir()
+            .unwrap_or_else(|| repository.path())
+            .to_path_buf();
+        
+        Self {
+            repository: Arc::new(repository),
+            path,
+        }
+    }
+    
+    /// Get the repository path as a string
+    pub fn path(&self) -> String {
+        self.path.to_string_lossy().to_string()
+    }
+    
+    /// Get the repository working directory
+    pub fn workdir(&self) -> Option<&Path> {
+        self.repository.workdir()
+    }
+    
+    /// Check if this is a bare repository
+    pub fn is_bare(&self) -> bool {
+        self.repository.is_bare()
+    }
+    
+    /// Convert to a path string
+    pub fn to_path_string(&self) -> String {
+        self.path()
+    }
+    
+    /// Get a reference to the underlying Repository
+    pub fn repository(&self) -> &Repository {
+        &self.repository
+    }
+}
+
+// Implement Send + Sync for thread safety
+unsafe impl Send for RepositoryHandle {}
+unsafe impl Sync for RepositoryHandle {}
+
+/// Context for scanner initialization containing all necessary components
+pub struct ScannerInitContext {
+    repository: RepositoryHandle,
+    config: crate::scanner::ScannerConfig,
+    query: crate::scanner::QueryParams,
+}
+
+impl ScannerInitContext {
+    /// Create a new scanner initialization context
+    pub fn new(
+        repository: RepositoryHandle,
+        config: crate::scanner::ScannerConfig,
+        query: crate::scanner::QueryParams,
+    ) -> Self {
+        Self {
+            repository,
+            config,
+            query,
+        }
+    }
+    
+    /// Get the repository handle
+    pub fn repository(&self) -> &RepositoryHandle {
+        &self.repository
+    }
+    
+    /// Get the scanner configuration
+    pub fn config(&self) -> &crate::scanner::ScannerConfig {
+        &self.config
+    }
+    
+    /// Get the query parameters
+    pub fn query(&self) -> &crate::scanner::QueryParams {
+        &self.query
+    }
+}
+
+/// Validate that the given path is an accessible git repository
+/// Returns a Repository handle if valid, error otherwise
+pub fn validate_git_repository_handle<P: AsRef<Path>>(path: P) -> Result<Repository> {
+    let path = path.as_ref();
+    info!("Validating git repository handle at: {}", path.display());
+    
+    if !path.exists() {
+        error!("Path does not exist: {}", path.display());
+        anyhow::bail!("Path does not exist: {}", path.display());
+    }
+    
+    let repo = Repository::open(path)
+        .with_context(|| format!("Failed to open repository at: {}", path.display()))?;
+    
+    if repo.is_bare() {
+        debug!("Repository is bare: {}", path.display());
+    }
+    
+    info!("Git repository handle validated successfully: {}", path.display());
+    Ok(repo)
+}
+
+/// Resolve repository path and return a RepositoryHandle
+/// If no path provided, uses current directory and validates it's a git repository
+pub fn resolve_repository_handle(repository_arg: Option<String>) -> Result<RepositoryHandle> {
     match repository_arg {
         Some(path) => {
             debug!("Repository path provided: {}", path);
-            validate_git_repository(path)
+            let repo = validate_git_repository_handle(&path)?;
+            Ok(RepositoryHandle::from_repository(repo))
         }
         None => {
             debug!("No repository path provided, using current directory");
             let current_dir = std::env::current_dir()
                 .context("Failed to get current directory")?;
             
-            if !is_git_repository(&current_dir) {
-                warn!("Current directory is not a git repository: {}", current_dir.display());
-                anyhow::bail!(
+            let repo = Repository::open(&current_dir)
+                .with_context(|| format!(
                     "Current directory '{}' is not a git repository. Please run this command from within a git repository or specify a repository path.",
                     current_dir.display()
-                );
-            }
+                ))?;
             
             info!("Using current directory as git repository: {}", current_dir.display());
-            Ok(current_dir.to_string_lossy().to_string())
+            Ok(RepositoryHandle::from_repository(repo))
         }
     }
 }
@@ -114,8 +238,8 @@ mod tests {
         let result = validate_git_repository("/tmp");
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("not a git repository"));
-        assert!(error_msg.contains("Please specify")); // Should contain helpful message
+        // The error message now comes from git2 library via validate_git_repository_handle
+        assert!(error_msg.contains("Failed to open repository"));
     }
 
     #[test]

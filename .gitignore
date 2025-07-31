@@ -64,3 +64,4 @@ benchmark_results/
 # Documentation build
 book/
 target/doc/
+.claude/

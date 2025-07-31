@@ -42,11 +42,16 @@ impl Default for ScannerConfig {
 
 impl ScannerConfig {
     /// Create a new configuration builder
-    pub fn new() -> ScannerConfigBuilder {
+    pub fn builder() -> ScannerConfigBuilder {
         ScannerConfigBuilder {
             max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
             queue_size: 1000,
         }
+    }
+    
+    /// Create a new configuration builder (deprecated, use builder())
+    pub fn new() -> ScannerConfigBuilder {
+        Self::builder()
     }
 
     /// Validate the configuration
@@ -94,13 +99,39 @@ impl ScannerConfigBuilder {
         self.queue_size = size;
         self
     }
+    
+    /// Set maximum threads (stub for API compatibility)
+    pub fn max_threads(self, _threads: usize) -> Self {
+        // TODO: Implement when thread pool is added
+        self
+    }
+    
+    /// Set chunk size (stub for API compatibility)
+    pub fn chunk_size(self, _size: usize) -> Self {
+        // TODO: Implement when chunking is added
+        self
+    }
+    
+    /// Set buffer size (stub for API compatibility)
+    pub fn buffer_size(self, _size: usize) -> Self {
+        // TODO: Implement when buffering is added
+        self
+    }
+    
+    /// Enable/disable performance mode (stub for API compatibility)
+    pub fn performance_mode(self, _enabled: bool) -> Self {
+        // TODO: Implement when performance mode is added
+        self
+    }
 
     /// Build the configuration
-    pub fn build(self) -> ScannerConfig {
-        ScannerConfig {
+    pub fn build(self) -> Result<ScannerConfig, ConfigError> {
+        let config = ScannerConfig {
             max_memory_bytes: self.max_memory_bytes,
             queue_size: self.queue_size,
-        }
+        };
+        config.validate()?;
+        Ok(config)
     }
 }
 
@@ -121,7 +152,8 @@ mod tests {
         let config = ScannerConfig::new()
             .with_max_memory(128 * 1024 * 1024)
             .with_queue_size(2000)
-            .build();
+            .build()
+            .expect("Failed to build config");
 
         assert_eq!(config.max_memory_bytes, 128 * 1024 * 1024);
         assert_eq!(config.queue_size, 2000);
@@ -152,12 +184,14 @@ mod tests {
     fn test_memory_display() {
         let config = ScannerConfig::new()
             .with_max_memory(64 * 1024 * 1024)
-            .build();
+            .build()
+            .expect("Failed to build config");
         assert_eq!(config.memory_display(), "64 MB");
 
         let config = ScannerConfig::new()
             .with_max_memory(2 * 1024 * 1024 * 1024) // 2GB
-            .build();
+            .build()
+            .expect("Failed to build config");
         assert_eq!(config.memory_display(), "2.0 GB");
     }
 }

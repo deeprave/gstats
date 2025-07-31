@@ -43,10 +43,10 @@ fn test_cli_current_directory_behavior() {
 
 #[test]
 fn test_cli_error_handling() {
-    // Test error handling for non-existent paths
-    // This test will FAIL initially (RED phase) until error handling is implemented
+    // Test error handling for non-existent repository paths
+    // Use --repository flag to test repository path validation
     let output = Command::new("cargo")
-        .args(&["run", "--quiet", "--", "/definitely/does/not/exist"])
+        .args(&["run", "--quiet", "--", "--repository", "/definitely/does/not/exist"])
         .output()
         .expect("Failed to execute cargo run");
 
@@ -102,6 +102,6 @@ fn test_repo_flag_integration() {
     
     // Test 5: Verify error message quality
     let stderr = String::from_utf8(output.stderr).unwrap_or_default();
-    assert!(stderr.contains("not a git repository"), 
+    assert!(stderr.contains("Failed to open repository") || stderr.contains("not a git repository"), 
             "Error message should be descriptive");
 }

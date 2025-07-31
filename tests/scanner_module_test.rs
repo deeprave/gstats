@@ -104,10 +104,11 @@ fn test_scan_modes_discovery() {
     let supported_modes = gstats::scanner::modes::get_supported_modes();
     
     // Should contain basic scanning modes
-    assert!(supported_modes.contains(gstats::scanner::modes::ScanMode::FILES), 
-            "Should support FILES scanning");
-    assert!(supported_modes.contains(gstats::scanner::modes::ScanMode::HISTORY), 
-            "Should support HISTORY scanning");
+    let files_mode = supported_modes.iter().find(|m| m.flag_value == gstats::scanner::ScanMode::FILES.bits());
+    assert!(files_mode.is_some(), "Should support FILES scanning");
+    
+    let history_mode = supported_modes.iter().find(|m| m.flag_value == gstats::scanner::ScanMode::HISTORY.bits());
+    assert!(history_mode.is_some(), "Should support HISTORY scanning");
     
     // Should be non-empty
     assert!(!supported_modes.is_empty(), "Should have at least one supported mode");
@@ -258,7 +259,8 @@ fn test_scanner_config_customization() {
     let custom_config = ScannerConfig::new()
         .with_max_memory(128 * 1024 * 1024) // 128MB
         .with_queue_size(2000)
-        .build();
+        .build()
+        .expect("Failed to build custom config");
     
     assert_eq!(custom_config.max_memory_bytes, 128 * 1024 * 1024);
     assert_eq!(custom_config.queue_size, 2000);

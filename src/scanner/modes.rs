@@ -26,11 +26,58 @@ bitflags! {
     }
 }
 
-/// Get all supported scanning modes
+/// Mode information for discovery API
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModeInfo {
+    pub name: String,
+    pub description: String,
+    pub flag_value: u32,
+}
+
+/// Get supported scanning modes with metadata
+/// 
+/// # Returns
+/// * `Vec<ModeInfo>` - Information about all supported modes
+pub fn get_supported_modes() -> Vec<ModeInfo> {
+    vec![
+        ModeInfo {
+            name: "files".to_string(),
+            description: "Scan file system structure and content".to_string(),
+            flag_value: ScanMode::FILES.bits(),
+        },
+        ModeInfo {
+            name: "history".to_string(),
+            description: "Scan git history and commit information".to_string(),
+            flag_value: ScanMode::HISTORY.bits(),
+        },
+        ModeInfo {
+            name: "metrics".to_string(),
+            description: "Scan code metrics and complexity".to_string(),
+            flag_value: ScanMode::METRICS.bits(),
+        },
+        ModeInfo {
+            name: "dependencies".to_string(),
+            description: "Scan project dependencies".to_string(),
+            flag_value: ScanMode::DEPENDENCIES.bits(),
+        },
+        ModeInfo {
+            name: "security".to_string(),
+            description: "Scan for security vulnerabilities".to_string(),
+            flag_value: ScanMode::SECURITY.bits(),
+        },
+        ModeInfo {
+            name: "performance".to_string(),
+            description: "Scan performance characteristics".to_string(),
+            flag_value: ScanMode::PERFORMANCE.bits(),
+        },
+    ]
+}
+
+/// Get all supported scanning modes as bitflags
 /// 
 /// # Returns
 /// * `ScanMode` - Bitflags containing all supported modes
-pub fn get_supported_modes() -> ScanMode {
+pub fn get_all_modes() -> ScanMode {
     ScanMode::FILES | ScanMode::HISTORY | ScanMode::METRICS | 
     ScanMode::DEPENDENCIES | ScanMode::SECURITY | ScanMode::PERFORMANCE
 }
@@ -114,9 +161,19 @@ mod tests {
     #[test]
     fn test_supported_modes() {
         let supported = get_supported_modes();
-        assert!(supported.contains(ScanMode::FILES));
-        assert!(supported.contains(ScanMode::HISTORY));
         assert!(!supported.is_empty());
+        
+        // Check that all modes are present
+        let mode_names: Vec<&str> = supported.iter().map(|m| m.name.as_str()).collect();
+        assert!(mode_names.contains(&"files"));
+        assert!(mode_names.contains(&"history"));
+        assert!(mode_names.contains(&"metrics"));
+        
+        // Test get_all_modes as well
+        let all_modes = get_all_modes();
+        assert!(all_modes.contains(ScanMode::FILES));
+        assert!(all_modes.contains(ScanMode::HISTORY));
+        assert!(!all_modes.is_empty());
     }
 
     #[test]

@@ -62,6 +62,8 @@ pub enum MessageData {
         execution_time: f64,
         memory_usage: u64,
     },
+    /// Empty data placeholder
+    None,
 }
 
 impl MessageHeader {

@@ -1,4 +1,5 @@
-![Project Status](https://img.shields.io/badge/Status-Under Development-red) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
+![Project Status](https://img.shields.io/badge/Status-Under Development-red)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 # Git Repository Analytics Tool
 A fast, local-first git analytics tool for analysing Git repositories with comprehensive logging and CLI interface.
 
@@ -67,9 +68,9 @@ Create a TOML configuration file with section-based organisation:
 # Global settings
 [base]
 quiet = true
-log-format = json
-log-file = /tmp/gstats.log
-log-file-level = info
+log-format = "json"
+log-file = "/tmp/gstats.log"
+log-file-level = "info"
 
 # Module-specific settings (for future features)
 [module.commits]
