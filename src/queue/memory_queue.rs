@@ -10,6 +10,16 @@ use crate::queue::memory_tracker::MemoryTracker;
 use crate::queue::versioned_message::QueueMessage;
 use crate::scanner::messages::ScanMessage;
 
+/// Queue-specific memory statistics
+#[derive(Debug, Clone)]
+pub struct QueueMemoryStatistics {
+    pub allocated_bytes: usize,
+    pub message_count: usize,
+    pub capacity: usize,
+    pub average_message_size: f64,
+    pub utilization_percent: f64,
+}
+
 /// Memory-monitored MPSC queue for ScanMessages
 pub struct MemoryQueue {
     inner: Arc<SegQueue<ScanMessage>>,
@@ -17,6 +27,8 @@ pub struct MemoryQueue {
     memory_limit: usize,
     current_size: Arc<AtomicUsize>,
     memory_tracker: Option<Arc<MemoryTracker>>,
+    // Track this queue's individual contribution to shared tracker
+    individual_memory_usage: Arc<AtomicUsize>,
 }
 
 /// Memory-monitored MPSC queue for versioned messages
@@ -37,6 +49,19 @@ impl MemoryQueue {
             memory_limit,
             current_size: Arc::new(AtomicUsize::new(0)),
             memory_tracker: None,
+            individual_memory_usage: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Create a new memory queue with shared memory tracker
+    pub fn with_shared_tracker(capacity: usize, memory_limit: usize, tracker: Arc<MemoryTracker>) -> Self {
+        Self {
+            inner: Arc::new(SegQueue::new()),
+            capacity,
+            memory_limit,
+            current_size: Arc::new(AtomicUsize::new(0)),
+            memory_tracker: Some(tracker),
+            individual_memory_usage: Arc::new(AtomicUsize::new(0)),
         }
     }
     
@@ -48,15 +73,13 @@ impl MemoryQueue {
             memory_limit,
             current_size: Arc::new(AtomicUsize::new(0)),
             memory_tracker: Some(Arc::new(MemoryTracker::new(memory_limit))),
+            individual_memory_usage: Arc::new(AtomicUsize::new(0)),
         }
     }
     
-    /// Get current memory usage in bytes
+    /// Get current memory usage in bytes (individual queue contribution)
     pub fn memory_usage(&self) -> usize {
-        match &self.memory_tracker {
-            Some(tracker) => tracker.allocated_bytes(),
-            None => 0,
-        }
+        self.individual_memory_usage.load(Ordering::Relaxed)
     }
     
     /// Get memory usage as percentage of limit
@@ -103,6 +126,76 @@ impl MemoryQueue {
         std::mem::size_of::<ScanMessage>() + 
         bincode::serialized_size(message).unwrap_or(256) as usize
     }
+
+    /// Get queue-specific memory statistics
+    pub fn get_memory_statistics(&self) -> QueueMemoryStatistics {
+        let size = self.size();
+        let capacity = self.capacity();
+        let allocated = self.memory_usage();
+        
+        QueueMemoryStatistics {
+            allocated_bytes: allocated,
+            message_count: size,
+            capacity,
+            average_message_size: if size > 0 { allocated as f64 / size as f64 } else { 0.0 },
+            utilization_percent: (size as f64 / capacity as f64) * 100.0,
+        }
+    }
+
+    /// Generate a memory usage report
+    pub fn generate_memory_report(&self) -> String {
+        let stats = self.get_memory_statistics();
+        let usage_percent = self.memory_usage_percent();
+        let pressure = if let Some(tracker) = &self.memory_tracker {
+            format!("{:?}", tracker.get_pressure_level())
+        } else {
+            "N/A".to_string()
+        };
+
+        format!(
+            "Memory Usage Report\n\
+            Current Usage: {} bytes\n\
+            Peak Usage: {} bytes\n\
+            Available: {} bytes\n\
+            Usage Percentage: {:.2}%\n\
+            Message Count: {}\n\
+            Average Message Size: {:.2} bytes\n\
+            Memory Pressure: {}",
+            stats.allocated_bytes,
+            self.memory_tracker.as_ref().map_or(0, |t| t.peak_bytes()),
+            self.memory_tracker.as_ref().map_or(0, |t| t.available_bytes()),
+            usage_percent,
+            stats.message_count,
+            stats.average_message_size,
+            pressure
+        )
+    }
+
+    /// Generate a detailed memory usage report
+    pub fn generate_detailed_memory_report(&self) -> String {
+        let basic_report = self.generate_memory_report();
+        
+        if let Some(tracker) = &self.memory_tracker {
+            let detailed_stats = tracker.get_statistics();
+            format!(
+                "{}\n\n\
+                Allocation History\n\
+                Total Allocations: {}\n\
+                Total Deallocations: {}\n\
+                Fragmentation\n\
+                Fragmentation Ratio: {:.2}\n\
+                Recommendations\n\
+                Defragmentation Recommended: {}",
+                basic_report,
+                detailed_stats.total_allocations,
+                detailed_stats.total_deallocations,
+                detailed_stats.fragmentation_ratio,
+                tracker.should_recommend_defragmentation()
+            )
+        } else {
+            format!("{}\n\nDetailed tracking not enabled", basic_report)
+        }
+    }
 }
 
 impl Queue<ScanMessage> for MemoryQueue {
@@ -114,12 +207,15 @@ impl Queue<ScanMessage> for MemoryQueue {
         }
         
         // Check memory limit if tracking is enabled
+        let message_size = Self::estimate_message_size(&message);
         if let Some(tracker) = &self.memory_tracker {
-            let message_size = Self::estimate_message_size(&message);
             if !tracker.allocate(message_size) {
                 return Err(QueueError::MemoryLimitExceeded);
             }
         }
+        
+        // Track individual queue contribution
+        self.individual_memory_usage.fetch_add(message_size, Ordering::Relaxed);
         
         // Enqueue the message
         self.inner.push(message);
@@ -133,11 +229,15 @@ impl Queue<ScanMessage> for MemoryQueue {
             Some(message) => {
                 self.current_size.fetch_sub(1, Ordering::Relaxed);
                 
-                // Update memory tracking if enabled
+                let message_size = Self::estimate_message_size(&message);
+                
+                // Update memory tracking if enabled  
                 if let Some(tracker) = &self.memory_tracker {
-                    let message_size = Self::estimate_message_size(&message);
                     tracker.deallocate(message_size);
                 }
+                
+                // Update individual queue contribution
+                self.individual_memory_usage.fetch_sub(message_size, Ordering::Relaxed);
                 
                 Ok(Some(message))
             }

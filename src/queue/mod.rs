@@ -13,8 +13,8 @@ mod tests;
 
 // Re-export core types for easier access
 pub use versioned_message::{QueueMessage, MessageType, MessagePayload};
-pub use memory_queue::{MemoryQueue, VersionedMemoryQueue};
-pub use memory_tracker::MemoryTracker;
+pub use memory_queue::{MemoryQueue, VersionedMemoryQueue, QueueMemoryStatistics};
+pub use memory_tracker::{MemoryTracker, MemoryStatistics, MemoryPressureLevel, LeakInformation, MemoryHistorySample};
 pub use listener::{MessageListener, ListenerRegistry};
 
 use anyhow::Result;
