@@ -1,6 +1,6 @@
 [logging]
-level = info
-format = json
+level = "info"
+format = "json"
 
 [module.commits]
 batch_size = 200
@@ -9,4 +9,4 @@ enable_caching = false
 
 [advanced]
 performance_mode = true
-memory_limit = 512MB
+memory_limit = "512MB"

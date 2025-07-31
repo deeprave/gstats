@@ -74,9 +74,9 @@ log-file-level = "info"
 
 # Module-specific settings (for future features)
 [module.commits]
-since = 30d
+since = "30d"
 per-day = true
-format = json
+format = "json"
 
 [module.contributors]
 top = 10
