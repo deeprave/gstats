@@ -187,6 +187,11 @@ impl MemoryTracker {
         }
     }
 
+    /// Get the memory limit for this tracker
+    pub fn memory_limit(&self) -> usize {
+        self.max_bytes
+    }
+
     /// Get memory statistics snapshot
     pub fn get_statistics(&self) -> MemoryStatistics {
         let allocations = self.allocation_count();

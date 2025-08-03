@@ -8,6 +8,12 @@ pub mod memory_queue;
 pub mod memory_tracker;
 pub mod backoff;
 pub mod listener;
+pub mod consumer;
+pub mod processor_bridge;
+pub mod debug;
+pub mod scanner_integration;
+pub mod config;
+pub mod cli;
 
 #[cfg(test)]
 mod tests;
@@ -17,10 +23,15 @@ pub use versioned_message::{QueueMessage, MessageType, MessagePayload};
 pub use memory_queue::{MemoryQueue, VersionedMemoryQueue, QueueMemoryStatistics, PressureResponseConfig, PressureResponseStatus, PressureResponseMetrics};
 pub use memory_tracker::{MemoryTracker, MemoryStatistics, MemoryPressureLevel, LeakInformation, MemoryHistorySample};
 pub use backoff::{BackoffAlgorithm, BackoffConfig, BackoffStrategy, BackoffMetrics};
-pub use listener::{MessageListener, ListenerRegistry};
+pub use listener::{MessageListener, ListenerRegistry, DefaultListenerRegistry};
+pub use consumer::{MessageConsumer, ConsumerConfig, ConsumerMetrics};
+pub use processor_bridge::{ScanProcessorBridge, ScanProcessorBridgeBuilder};
+pub use debug::{QueueDebug, QueueDebugStatus, QueueStatusLogger, format_consumer_metrics};
+pub use scanner_integration::{QueueMessageProducer, ScannerQueueIntegration, ScannerQueueBuilder};
+pub use config::{QueueConfig, QueuePreset, load_queue_config, save_queue_config};
+pub use cli::{QueueArgs, QueueCommand, handle_queue_command};
 
 use anyhow::Result;
-use crate::scanner::messages::ScanMessage;
 
 /// Module metadata
 pub const MODULE_NAME: &str = "Memory-Conscious Message Queue";

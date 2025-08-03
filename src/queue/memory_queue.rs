@@ -431,6 +431,7 @@ impl MemoryQueue {
             if let Ok(mut metrics) = PRESSURE_METRICS.lock() {
                 metrics.messages_dropped += 1;
             }
+            log::warn!("Queue: Dropping message due to extreme memory pressure");
             return Err(QueueError::MessageDropped("Extreme memory pressure".to_string()));
         }
         
@@ -450,6 +451,8 @@ impl MemoryQueue {
                             if let Ok(mut metrics) = PRESSURE_METRICS.lock() {
                                 metrics.messages_dropped += 1;
                             }
+                            log::warn!("Queue: Dropping message - memory usage {:.1}% exceeds drop threshold {:.1}%", 
+                                usage_percent, cfg.drop_threshold);
                             return Err(QueueError::MessageDropped("Memory pressure too high".to_string()));
                         }
                         
@@ -592,6 +595,25 @@ impl MemoryQueue {
         } else {
             false
         }
+    }
+    
+    /// Get memory limit
+    pub fn memory_limit(&self) -> usize {
+        self.memory_limit
+    }
+    
+    /// Check if backoff is enabled
+    pub fn is_backoff_enabled(&self) -> bool {
+        if let Ok(backoff) = self.backoff.lock() {
+            backoff.is_enabled()
+        } else {
+            false
+        }
+    }
+    
+    /// Check if pressure response is enabled
+    pub fn is_pressure_response_enabled(&self) -> bool {
+        self.pressure_response_enabled.load(Ordering::Relaxed)
     }
 }
 
