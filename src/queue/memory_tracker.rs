@@ -53,7 +53,7 @@ pub struct MemoryStatistics {
 }
 
 /// Memory pressure levels
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
 pub enum MemoryPressureLevel {
     Normal,    // < 70% usage
     Moderate,  // 70-85% usage

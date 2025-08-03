@@ -3,7 +3,7 @@
 //! Provides basic debugging and status reporting for the queue system
 //! without the overhead of a full monitoring infrastructure.
 
-use crate::queue::{MemoryQueue, ConsumerMetrics, MemoryPressureLevel};
+use crate::queue::{MemoryQueue, ConsumerMetrics, MemoryPressureLevel, Queue};
 use std::fmt::Write;
 
 /// Simple status information for debugging
@@ -34,9 +34,7 @@ impl QueueDebug for MemoryQueue {
             self.size(),
             self.memory_usage() as f64 / 1024.0 / 1024.0,
             self.memory_usage_percent(),
-            self.memory_tracker.as_ref()
-                .map(|t| t.get_pressure_level())
-                .unwrap_or(MemoryPressureLevel::Normal)
+            self.get_memory_pressure_level()
         )
     }
     
@@ -49,11 +47,12 @@ impl QueueDebug for MemoryQueue {
             self.memory_usage_percent()
         ).unwrap();
         
-        if let Some(tracker) = &self.memory_tracker {
+        let memory_limit = self.get_memory_limit();
+        if memory_limit > 0 {
             writeln!(info, "Memory Limit: {:.2}MB", 
-                tracker.memory_limit() as f64 / 1024.0 / 1024.0
+                memory_limit as f64 / 1024.0 / 1024.0
             ).unwrap();
-            writeln!(info, "Pressure Level: {:?}", tracker.get_pressure_level()).unwrap();
+            writeln!(info, "Pressure Level: {:?}", self.get_memory_pressure_level()).unwrap();
         }
         
         let backoff_metrics = self.get_backoff_metrics();

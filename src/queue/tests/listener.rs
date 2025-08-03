@@ -304,5 +304,5 @@ fn test_scan_mode_intersection_filtering() {
     
     // Test combined mode filtering
     let files_or_history = registry.get_interested_listeners(ScanMode::FILES | ScanMode::HISTORY);
-    assert_eq!(files_or_history.len(), 3); // All except history_only intersect with this combination
+    assert_eq!(files_or_history.len(), 4); // All listeners match: files_only (FILES), history_only (HISTORY), files_and_history (both), all_modes (both)
 }

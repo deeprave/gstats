@@ -96,6 +96,27 @@ impl ScanMessage {
         let message = bincode::deserialize(bytes)?;
         Ok(message)
     }
+    
+    /// Estimate memory usage of this message in bytes
+    pub fn estimate_memory_usage(&self) -> usize {
+        let base_size = std::mem::size_of::<Self>();
+        let data_size = match &self.data {
+            MessageData::FileInfo { path, .. } => path.len(),
+            MessageData::CommitInfo { hash, author, message } => {
+                hash.len() + author.len() + message.len()
+            },
+            MessageData::DependencyInfo { name, version, license } => {
+                name.len() + version.len() + license.as_ref().map_or(0, |l| l.len())
+            },
+            MessageData::SecurityInfo { vulnerability, severity, location } => {
+                vulnerability.len() + severity.len() + location.len()
+            },
+            MessageData::PerformanceInfo { function, .. } => function.len(),
+            MessageData::MetricInfo { .. } => 0, // No string fields in MetricInfo
+            MessageData::None => 0,
+        };
+        base_size + data_size
+    }
 }
 
 #[cfg(test)]

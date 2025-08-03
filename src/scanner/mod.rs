@@ -37,6 +37,8 @@ pub mod config;
 pub mod traits;
 pub mod filters;
 pub mod query;
+pub mod async_engine;
+pub mod async_traits;
 
 // Re-export core types for easier access
 pub use config::ScannerConfig;
@@ -46,6 +48,8 @@ pub use version::{get_api_version, get_version_info, is_api_compatible};
 pub use query::{QueryParams, QueryBuilder, DateRange, FilePathFilter, AuthorFilter, QueryValidationError};
 pub use messages::{MessageHeader, ScanMessage};
 pub use filters::{FilterResult, DateFilter, PathFilter, AuthorFilter as AuthorFilterImpl, CommitData};
+pub use async_engine::{AsyncScannerEngine, AsyncScannerEngineBuilder, ScanError, ScanResult};
+pub use async_traits::{AsyncScanner, StreamingMessageProducer, AsyncScanProgress, ScanMessageStream};
 
 use anyhow::Result;
 

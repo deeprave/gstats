@@ -7,7 +7,7 @@ use serde::{Serialize, Deserialize};
 
 bitflags! {
     /// Scanning modes that can be combined using bitwise operations
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct ScanMode: u32 {
         /// No scanning mode selected
         const NONE = 0x0;

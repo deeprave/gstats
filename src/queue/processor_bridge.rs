@@ -357,20 +357,23 @@ mod tests {
     fn test_utility_functions() {
         let processor = Arc::new(MockProcessor::new("test"));
         
+        // Convert MockProcessor to trait object
+        let processor_trait: Arc<dyn ScanProcessor + Send + Sync> = processor;
+        
         // Test files processor bridge
-        let files_bridge = bridge_utils::files_processor_bridge(Arc::clone(&processor), "files_test".to_string());
+        let files_bridge = bridge_utils::files_processor_bridge(Arc::clone(&processor_trait), "files_test".to_string());
         assert_eq!(files_bridge.interested_modes(), ScanMode::FILES);
         
         // Test history processor bridge
-        let history_bridge = bridge_utils::history_processor_bridge(Arc::clone(&processor), "history_test".to_string());
+        let history_bridge = bridge_utils::history_processor_bridge(Arc::clone(&processor_trait), "history_test".to_string());
         assert_eq!(history_bridge.interested_modes(), ScanMode::HISTORY);
         
         // Test metrics processor bridge
-        let metrics_bridge = bridge_utils::metrics_processor_bridge(Arc::clone(&processor), "metrics_test".to_string());
+        let metrics_bridge = bridge_utils::metrics_processor_bridge(Arc::clone(&processor_trait), "metrics_test".to_string());
         assert_eq!(metrics_bridge.interested_modes(), ScanMode::METRICS);
         
         // Test universal processor bridge
-        let universal_bridge = bridge_utils::universal_processor_bridge(Arc::clone(&processor), "universal_test".to_string());
+        let universal_bridge = bridge_utils::universal_processor_bridge(Arc::clone(&processor_trait), "universal_test".to_string());
         assert_eq!(universal_bridge.interested_modes(), ScanMode::FILES | ScanMode::HISTORY | ScanMode::METRICS);
     }
 
@@ -378,20 +381,23 @@ mod tests {
     fn test_auto_detect_bridge() {
         let processor = Arc::new(MockProcessor::new("test"));
         
+        // Convert to trait object
+        let processor_trait: Arc<dyn ScanProcessor + Send + Sync> = processor;
+        
         // Test file detection
-        let file_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor), "file_processor".to_string());
+        let file_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor_trait), "file_processor".to_string());
         assert_eq!(file_bridge.interested_modes(), ScanMode::FILES);
         
         // Test history detection
-        let history_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor), "git_history_processor".to_string());
+        let history_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor_trait), "git_history_processor".to_string());
         assert_eq!(history_bridge.interested_modes(), ScanMode::HISTORY);
         
         // Test metrics detection
-        let metrics_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor), "statistics_processor".to_string());
+        let metrics_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor_trait), "statistics_processor".to_string());
         assert_eq!(metrics_bridge.interested_modes(), ScanMode::METRICS);
         
         // Test unknown defaults to all
-        let unknown_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor), "unknown_processor".to_string());
+        let unknown_bridge = bridge_utils::auto_detect_bridge(Arc::clone(&processor_trait), "unknown_processor".to_string());
         assert_eq!(unknown_bridge.interested_modes(), ScanMode::FILES | ScanMode::HISTORY | ScanMode::METRICS);
     }
 }

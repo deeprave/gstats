@@ -270,6 +270,22 @@ impl MemoryQueue {
         }
     }
     
+    /// Get current memory pressure level
+    pub fn get_memory_pressure_level(&self) -> crate::queue::memory_tracker::MemoryPressureLevel {
+        match &self.memory_tracker {
+            Some(tracker) => tracker.get_pressure_level(),
+            None => crate::queue::memory_tracker::MemoryPressureLevel::Normal,
+        }
+    }
+    
+    /// Get memory limit in bytes
+    pub fn get_memory_limit(&self) -> usize {
+        match &self.memory_tracker {
+            Some(tracker) => tracker.memory_limit(),
+            None => 0,
+        }
+    }
+    
     /// Create a new versioned memory queue
     pub fn new_versioned(capacity: usize, memory_limit: usize) -> VersionedMemoryQueue {
         VersionedMemoryQueue {

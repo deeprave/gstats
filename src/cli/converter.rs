@@ -59,12 +59,14 @@ pub fn args_to_scanner_config(args: &crate::cli::Args) -> Result<ScannerConfig, 
         config = ScannerConfig {
             max_memory_bytes: 256 * 1024 * 1024, // 256MB
             queue_size: 5000,
+            max_threads: None, // Use system default
         };
     } else if args.no_performance_mode {
         // Conservative mode: reduce memory usage
         config = ScannerConfig {
             max_memory_bytes: 32 * 1024 * 1024, // 32MB
             queue_size: 500,
+            max_threads: None, // Use system default
         };
     }
     

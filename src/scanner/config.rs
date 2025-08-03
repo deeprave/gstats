@@ -9,6 +9,8 @@ pub struct ScannerConfig {
     pub max_memory_bytes: usize,
     /// Default queue size
     pub queue_size: usize,
+    /// Maximum number of threads for async operations
+    pub max_threads: Option<usize>,
 }
 
 /// Configuration builder for fluent API
@@ -16,6 +18,7 @@ pub struct ScannerConfig {
 pub struct ScannerConfigBuilder {
     max_memory_bytes: usize,
     queue_size: usize,
+    max_threads: Option<usize>,
 }
 
 /// Configuration validation error
@@ -36,6 +39,7 @@ impl Default for ScannerConfig {
         Self {
             max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
             queue_size: 1000,
+            max_threads: None, // Use system default (num_cpus)
         }
     }
 }
@@ -46,6 +50,7 @@ impl ScannerConfig {
         ScannerConfigBuilder {
             max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
             queue_size: 1000,
+            max_threads: None,
         }
     }
     
@@ -100,9 +105,9 @@ impl ScannerConfigBuilder {
         self
     }
     
-    /// Set maximum threads (stub for API compatibility)
-    pub fn max_threads(self, _threads: usize) -> Self {
-        // TODO: Implement when thread pool is added
+    /// Set maximum threads
+    pub fn max_threads(mut self, threads: usize) -> Self {
+        self.max_threads = Some(threads);
         self
     }
     
@@ -129,6 +134,7 @@ impl ScannerConfigBuilder {
         let config = ScannerConfig {
             max_memory_bytes: self.max_memory_bytes,
             queue_size: self.queue_size,
+            max_threads: self.max_threads,
         };
         config.validate()?;
         Ok(config)
