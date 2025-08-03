@@ -177,6 +177,7 @@ fn test_message_serialization() {
             hash: "abc123".to_string(),
             author: "developer".to_string(),
             message: "Fix bug".to_string(),
+            timestamp: 1640995200, // Jan 1, 2022
         }
     );
     
@@ -415,6 +416,7 @@ fn test_scan_filter_trait() {
             hash: "abc123".to_string(),
             author: "dev".to_string(),
             message: "Fix".to_string(),
+            timestamp: 1640995200, // Jan 1, 2022
         }
     );
     assert!(filter.should_include(&commit_message));
