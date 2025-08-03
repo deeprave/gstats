@@ -214,8 +214,9 @@ fn validate_limit(limit: Option<usize>) -> Result<Option<usize>, CliError> {
 
 /// Validate and map plugin names to scanning modes
 /// 
-/// This function validates plugin names and determines the required scanning modes.
-/// Currently returns the plugin list as-is for validation by the plugin system.
+/// This function validates plugin names using the plugin discovery system.
+/// For CLI usage, this provides basic validation - full plugin system validation
+/// happens during execution with proper plugin registry integration.
 pub fn validate_plugins(plugins: &[String]) -> Result<Vec<String>, CliError> {
     if plugins.is_empty() {
         // Default to commits plugin when no plugins specified
@@ -227,6 +228,24 @@ pub fn validate_plugins(plugins: &[String]) -> Result<Vec<String>, CliError> {
         .collect();
     
     validated_plugins
+}
+
+/// Validate and map plugin names using plugin discovery system
+/// 
+/// This async function provides full plugin validation using the discovery system.
+/// Use this for comprehensive validation that checks actual plugin availability.
+pub async fn validate_plugins_with_discovery(plugins: &[String]) -> Result<Vec<String>, CliError> {
+    use super::plugin_handler::PluginHandler;
+    
+    let handler = PluginHandler::new()
+        .map_err(|e| CliError::PluginValidation { 
+            message: format!("Failed to initialize plugin handler: {}", e) 
+        })?;
+    
+    handler.validate_plugin_names(plugins).await
+        .map_err(|e| CliError::PluginValidation { 
+            message: e.to_string() 
+        })
 }
 
 /// Validate a single plugin name
@@ -252,6 +271,40 @@ fn validate_plugin_name(plugin: &str) -> Result<String, CliError> {
 mod tests {
     use super::*;
     use crate::cli::Args;
+
+    /// Create Args with default values for testing
+    fn create_test_args() -> Args {
+        Args {
+            repository: None,
+            verbose: false,
+            quiet: false,
+            debug: false,
+            log_format: "text".to_string(),
+            log_file: None,
+            log_file_level: None,
+            config_file: None,
+            config_name: None,
+            since: None,
+            until: None,
+            include_path: Vec::new(),
+            exclude_path: Vec::new(),
+            include_file: Vec::new(),
+            exclude_file: Vec::new(),
+            author: Vec::new(),
+            exclude_author: Vec::new(),
+            limit: None,
+            performance_mode: false,
+            no_performance_mode: false,
+            max_memory: None,
+            queue_size: None,
+            plugins: Vec::new(),
+            list_plugins: false,
+            plugin_info: None,
+            check_plugin: None,
+            list_by_type: None,
+            plugin_dir: None,
+        }
+    }
 
     #[test]
     fn test_convert_date_arguments_both_dates() {
@@ -403,6 +456,11 @@ mod tests {
             max_memory: None,
             queue_size: None,
             plugins: vec!["commits".to_string()],
+            list_plugins: false,
+            plugin_info: None,
+            check_plugin: None,
+            list_by_type: None,
+            plugin_dir: None,
         };
         
         let result = args_to_query_params(&args).unwrap();
@@ -417,31 +475,7 @@ mod tests {
     
     #[test]
     fn test_args_to_query_params_minimal() {
-        let args = Args {
-            repository: None,
-            verbose: false,
-            quiet: false,
-            debug: false,
-            log_format: "text".to_string(),
-            log_file: None,
-            log_file_level: None,
-            config_file: None,
-            config_name: None,
-            since: None,
-            until: None,
-            include_path: vec![],
-            exclude_path: vec![],
-            include_file: vec![],
-            exclude_file: vec![],
-            author: vec![],
-            exclude_author: vec![],
-            limit: None,
-            performance_mode: false,
-            no_performance_mode: false,
-            max_memory: None,
-            queue_size: None,
-            plugins: vec![],
-        };
+        let args = create_test_args();
         
         let result = args_to_query_params(&args).unwrap();
         
@@ -455,31 +489,7 @@ mod tests {
 
     #[test]
     fn test_args_to_scanner_config_default() {
-        let args = Args {
-            repository: None,
-            verbose: false,
-            quiet: false,
-            debug: false,
-            log_format: "text".to_string(),
-            log_file: None,
-            log_file_level: None,
-            config_file: None,
-            config_name: None,
-            since: None,
-            until: None,
-            include_path: vec![],
-            exclude_path: vec![],
-            include_file: vec![],
-            exclude_file: vec![],
-            author: vec![],
-            exclude_author: vec![],
-            limit: None,
-            performance_mode: false,
-            no_performance_mode: false,
-            max_memory: None,
-            queue_size: None,
-            plugins: vec![],
-        };
+        let args = create_test_args();
         
         let result = args_to_scanner_config(&args).unwrap();
         
@@ -491,29 +501,8 @@ mod tests {
     #[test]
     fn test_args_to_scanner_config_performance_mode() {
         let args = Args {
-            repository: None,
-            verbose: false,
-            quiet: false,
-            debug: false,
-            log_format: "text".to_string(),
-            log_file: None,
-            log_file_level: None,
-            config_file: None,
-            config_name: None,
-            since: None,
-            until: None,
-            include_path: vec![],
-            exclude_path: vec![],
-            include_file: vec![],
-            exclude_file: vec![],
-            author: vec![],
-            exclude_author: vec![],
-            limit: None,
             performance_mode: true,
-            no_performance_mode: false,
-            max_memory: None,
-            queue_size: None,
-            plugins: vec![],
+            ..create_test_args()
         };
         
         let result = args_to_scanner_config(&args).unwrap();
@@ -526,29 +515,8 @@ mod tests {
     #[test]
     fn test_args_to_scanner_config_conservative_mode() {
         let args = Args {
-            repository: None,
-            verbose: false,
-            quiet: false,
-            debug: false,
-            log_format: "text".to_string(),
-            log_file: None,
-            log_file_level: None,
-            config_file: None,
-            config_name: None,
-            since: None,
-            until: None,
-            include_path: vec![],
-            exclude_path: vec![],
-            include_file: vec![],
-            exclude_file: vec![],
-            author: vec![],
-            exclude_author: vec![],
-            limit: None,
-            performance_mode: false,
             no_performance_mode: true,
-            max_memory: None,
-            queue_size: None,
-            plugins: vec![],
+            ..create_test_args()
         };
         
         let result = args_to_scanner_config(&args).unwrap();
@@ -561,29 +529,9 @@ mod tests {
     #[test]
     fn test_args_to_scanner_config_custom_memory() {
         let args = Args {
-            repository: None,
-            verbose: false,
-            quiet: false,
-            debug: false,
-            log_format: "text".to_string(),
-            log_file: None,
-            log_file_level: None,
-            config_file: None,
-            config_name: None,
-            since: None,
-            until: None,
-            include_path: vec![],
-            exclude_path: vec![],
-            include_file: vec![],
-            exclude_file: vec![],
-            author: vec![],
-            exclude_author: vec![],
-            limit: None,
-            performance_mode: false,
-            no_performance_mode: false,
             max_memory: Some("512MB".to_string()),
             queue_size: Some(2000),
-            plugins: vec![],
+            ..create_test_args()
         };
         
         let result = args_to_scanner_config(&args).unwrap();
@@ -628,6 +576,11 @@ mod tests {
                 max_memory: Some(memory_str.to_string()),
                 queue_size: None,
                 plugins: vec![],
+                list_plugins: false,
+                plugin_info: None,
+                check_plugin: None,
+                list_by_type: None,
+                plugin_dir: None,
             };
             
             let result = args_to_scanner_config(&args).unwrap();
@@ -661,6 +614,11 @@ mod tests {
             max_memory: None,
             queue_size: None,
             plugins: vec![],
+            list_plugins: false,
+            plugin_info: None,
+            check_plugin: None,
+            list_by_type: None,
+            plugin_dir: None,
         };
         
         let result = args_to_scanner_config(&args);
@@ -698,6 +656,11 @@ mod tests {
             max_memory: Some("invalid".to_string()),
             queue_size: None,
             plugins: vec![],
+            list_plugins: false,
+            plugin_info: None,
+            check_plugin: None,
+            list_by_type: None,
+            plugin_dir: None,
         };
         
         let result = args_to_scanner_config(&args);

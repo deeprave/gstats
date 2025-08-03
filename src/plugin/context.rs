@@ -50,42 +50,59 @@ pub struct RuntimeInfo {
     pub working_directory: String,
 }
 
-/// Request structure for plugin execution
+/// Request types for plugin execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginRequest {
-    /// Request identifier for tracking
-    pub request_id: String,
-    
-    /// Requested scan modes
-    pub scan_modes: ScanMode,
-    
-    /// Request-specific parameters
-    pub parameters: HashMap<String, serde_json::Value>,
-    
-    /// Maximum execution time in milliseconds
-    pub timeout_ms: Option<u64>,
-    
-    /// Priority level for execution
-    pub priority: RequestPriority,
+pub enum PluginRequest {
+    /// Execute scan with specified modes
+    Execute {
+        /// Request identifier for tracking
+        request_id: String,
+        /// Requested scan modes
+        scan_modes: ScanMode,
+        /// Request-specific parameters
+        parameters: HashMap<String, serde_json::Value>,
+        /// Maximum execution time in milliseconds
+        timeout_ms: Option<u64>,
+        /// Priority level for execution
+        priority: RequestPriority,
+    },
+    /// Get plugin statistics
+    GetStatistics,
+    /// Get plugin capabilities
+    GetCapabilities,
+    /// Export data
+    Export,
+    /// Process specific data
+    ProcessData {
+        /// Data to process
+        data: serde_json::Value,
+    },
 }
 
-/// Response structure from plugin execution
+/// Response types from plugin execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginResponse {
-    /// Request identifier this response corresponds to
-    pub request_id: String,
-    
-    /// Execution status
-    pub status: ExecutionStatus,
-    
-    /// Response data
-    pub data: serde_json::Value,
-    
-    /// Execution metadata
-    pub metadata: ExecutionMetadata,
-    
-    /// Any errors that occurred
-    pub errors: Vec<String>,
+pub enum PluginResponse {
+    /// Execution response with full metadata
+    Execute {
+        /// Request identifier this response corresponds to
+        request_id: String,
+        /// Execution status
+        status: ExecutionStatus,
+        /// Response data
+        data: serde_json::Value,
+        /// Execution metadata
+        metadata: ExecutionMetadata,
+        /// Any errors that occurred
+        errors: Vec<String>,
+    },
+    /// Statistics response
+    Statistics(crate::scanner::messages::ScanMessage),
+    /// Capabilities response
+    Capabilities(Vec<crate::plugin::traits::PluginCapability>),
+    /// Data export response
+    Data(String),
+    /// Process data response
+    ProcessedData(Vec<crate::scanner::messages::ScanMessage>),
 }
 
 /// Request priority levels
@@ -199,9 +216,9 @@ impl RuntimeInfo {
 }
 
 impl PluginRequest {
-    /// Create a new plugin request
+    /// Create a new execute plugin request
     pub fn new(scan_modes: ScanMode) -> Self {
-        Self {
+        Self::Execute {
             request_id: uuid::Uuid::now_v7().to_string(),
             scan_modes,
             parameters: HashMap::new(),
@@ -210,36 +227,60 @@ impl PluginRequest {
         }
     }
     
-    /// Set request priority
-    pub fn with_priority(mut self, priority: RequestPriority) -> Self {
-        self.priority = priority;
-        self
-    }
-    
-    /// Set timeout
-    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
-        self.timeout_ms = Some(timeout_ms);
-        self
-    }
-    
-    /// Add parameter
-    pub fn with_parameter<T: Serialize>(mut self, key: String, value: T) -> Self {
-        if let Ok(json_value) = serde_json::to_value(value) {
-            self.parameters.insert(key, json_value);
+    /// Set request priority (only for Execute requests)
+    pub fn with_priority(self, priority: RequestPriority) -> Self {
+        match self {
+            Self::Execute { request_id, scan_modes, parameters, timeout_ms, .. } => {
+                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority }
+            }
+            _ => self,
         }
-        self
     }
     
-    /// Get parameter value
+    /// Set timeout (only for Execute requests)
+    pub fn with_timeout(self, timeout_ms: u64) -> Self {
+        match self {
+            Self::Execute { request_id, scan_modes, parameters, priority, .. } => {
+                Self::Execute { request_id, scan_modes, parameters, timeout_ms: Some(timeout_ms), priority }
+            }
+            _ => self,
+        }
+    }
+    
+    /// Add parameter (only for Execute requests)
+    pub fn with_parameter<T: Serialize>(self, key: String, value: T) -> Self {
+        match self {
+            Self::Execute { request_id, scan_modes, mut parameters, timeout_ms, priority } => {
+                if let Ok(json_value) = serde_json::to_value(value) {
+                    parameters.insert(key, json_value);
+                }
+                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority }
+            }
+            _ => self,
+        }
+    }
+    
+    /// Get parameter value (only for Execute requests)
     pub fn get_parameter(&self, key: &str) -> Option<&serde_json::Value> {
-        self.parameters.get(key)
+        match self {
+            Self::Execute { parameters, .. } => parameters.get(key),
+            _ => None,
+        }
+    }
+    
+    /// Get request ID
+    pub fn request_id(&self) -> Option<&str> {
+        match self {
+            Self::Execute { request_id, .. } => Some(request_id),
+            _ => None,
+        }
     }
 }
 
 impl PluginResponse {
-    /// Create a successful response
+    /// Create a successful execute response
     pub fn success(request_id: String, data: serde_json::Value, metadata: ExecutionMetadata) -> Self {
-        Self {
+        Self::Execute {
             request_id,
             status: ExecutionStatus::Success,
             data,
@@ -248,9 +289,9 @@ impl PluginResponse {
         }
     }
     
-    /// Create a failed response
+    /// Create a failed execute response
     pub fn failed(request_id: String, error: String, metadata: ExecutionMetadata) -> Self {
-        Self {
+        Self::Execute {
             request_id,
             status: ExecutionStatus::Failed,
             data: serde_json::Value::Null,
@@ -259,9 +300,9 @@ impl PluginResponse {
         }
     }
     
-    /// Create a warning response
+    /// Create a warning execute response
     pub fn warning(request_id: String, data: serde_json::Value, warnings: Vec<String>, metadata: ExecutionMetadata) -> Self {
-        Self {
+        Self::Execute {
             request_id,
             status: ExecutionStatus::Warning,
             data,
@@ -272,12 +313,26 @@ impl PluginResponse {
     
     /// Check if response indicates success
     pub fn is_success(&self) -> bool {
-        matches!(self.status, ExecutionStatus::Success | ExecutionStatus::Warning)
+        match self {
+            Self::Execute { status, .. } => matches!(status, ExecutionStatus::Success | ExecutionStatus::Warning),
+            Self::Statistics(_) | Self::Capabilities(_) | Self::Data(_) | Self::ProcessedData(_) => true,
+        }
     }
     
     /// Check if response indicates failure
     pub fn is_failure(&self) -> bool {
-        matches!(self.status, ExecutionStatus::Failed | ExecutionStatus::Cancelled | ExecutionStatus::Timeout)
+        match self {
+            Self::Execute { status, .. } => matches!(status, ExecutionStatus::Failed | ExecutionStatus::Cancelled | ExecutionStatus::Timeout),
+            _ => false,
+        }
+    }
+    
+    /// Get errors if any
+    pub fn get_errors(&self) -> &[String] {
+        match self {
+            Self::Execute { errors, .. } => errors,
+            _ => &[],
+        }
     }
 }
 
@@ -370,9 +425,14 @@ mod tests {
             .with_timeout(5000)
             .with_parameter("limit".to_string(), 100);
         
-        assert_eq!(request.scan_modes, ScanMode::FILES);
-        assert_eq!(request.priority, RequestPriority::High);
-        assert_eq!(request.timeout_ms, Some(5000));
+        match request {
+            PluginRequest::Execute { scan_modes, priority, timeout_ms, .. } => {
+                assert_eq!(scan_modes, ScanMode::FILES);
+                assert_eq!(priority, RequestPriority::High);
+                assert_eq!(timeout_ms, Some(5000));
+            }
+            _ => panic!("Expected Execute request"),
+        }
         assert!(request.get_parameter("limit").is_some());
     }
     
@@ -388,7 +448,7 @@ mod tests {
         
         assert!(success_response.is_success());
         assert!(!success_response.is_failure());
-        assert_eq!(success_response.errors.len(), 0);
+        assert_eq!(success_response.get_errors().len(), 0);
         
         let failed_response = PluginResponse::failed(
             "test-id".to_string(),
@@ -398,7 +458,7 @@ mod tests {
         
         assert!(!failed_response.is_success());
         assert!(failed_response.is_failure());
-        assert_eq!(failed_response.errors.len(), 1);
+        assert_eq!(failed_response.get_errors().len(), 1);
     }
     
     #[test]

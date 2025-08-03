@@ -47,6 +47,14 @@ pub enum PluginError {
     #[error("Plugin discovery error: {message}")]
     DiscoveryFailed { message: String },
     
+    /// Plugin discovery error (alias)
+    #[error("Discovery error: {message}")]
+    DiscoveryError { message: String },
+    
+    /// Plugin descriptor parsing error
+    #[error("Descriptor parse error: {message}")]
+    DescriptorParseError { message: String },
+    
     /// Plugin loading error
     #[error("Plugin loading error: {message}")]
     LoadingFailed { message: String },
@@ -116,6 +124,16 @@ impl PluginError {
     /// Create a discovery failed error
     pub fn discovery_failed<S: Into<String>>(message: S) -> Self {
         Self::DiscoveryFailed { message: message.into() }
+    }
+    
+    /// Create a discovery error
+    pub fn discovery_error<S: Into<String>>(message: S) -> Self {
+        Self::DiscoveryError { message: message.into() }
+    }
+    
+    /// Create a descriptor parse error
+    pub fn descriptor_parse_error<S: Into<String>>(message: S) -> Self {
+        Self::DescriptorParseError { message: message.into() }
     }
     
     /// Create a loading failed error
@@ -195,6 +213,12 @@ impl From<serde_json::Error> for PluginError {
 impl From<tokio::task::JoinError> for PluginError {
     fn from(err: tokio::task::JoinError) -> Self {
         PluginError::async_error(format!("Task join error: {}", err))
+    }
+}
+
+impl From<serde_yaml::Error> for PluginError {
+    fn from(err: serde_yaml::Error) -> Self {
+        PluginError::descriptor_parse_error(format!("YAML error: {}", err))
     }
 }
 

@@ -106,6 +106,28 @@ pub struct Args {
     /// Plugin names to execute (positional arguments)
     #[arg(value_name = "PLUGIN")]
     pub plugins: Vec<String>,
+    
+    // ============ PLUGIN MANAGEMENT ============
+    
+    /// List all available plugins
+    #[arg(long = "list-plugins")]
+    pub list_plugins: bool,
+    
+    /// Show detailed information about a specific plugin
+    #[arg(long = "plugin-info", value_name = "PLUGIN")]
+    pub plugin_info: Option<String>,
+    
+    /// Check plugin compatibility with current API
+    #[arg(long = "check-plugin", value_name = "PLUGIN")]
+    pub check_plugin: Option<String>,
+    
+    /// List plugins by type (scanner, notification, processing, output, composite)
+    #[arg(long = "list-by-type", value_name = "TYPE")]
+    pub list_by_type: Option<String>,
+    
+    /// Plugin directory path for discovery
+    #[arg(long = "plugin-dir", value_name = "DIR")]
+    pub plugin_dir: Option<String>,
 }
 
 impl Args {
@@ -213,6 +235,11 @@ mod tests {
             max_memory: None,
             queue_size: None,
             plugins: Vec::new(),
+            list_plugins: false,
+            plugin_info: None,
+            check_plugin: None,
+            list_by_type: None,
+            plugin_dir: None,
         }
     }
 

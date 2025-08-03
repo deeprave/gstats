@@ -6,7 +6,7 @@ use crate::scanner::modes::ScanMode;
 use serde::{Serialize, Deserialize};
 
 /// Compact message structure with fixed header and variable data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScanMessage {
     /// Fixed header with scanning metadata
     pub header: MessageHeader,
@@ -15,7 +15,7 @@ pub struct ScanMessage {
 }
 
 /// Fixed header containing scanning metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageHeader {
     /// Scanning mode used
     pub scan_mode: ScanMode,
@@ -24,7 +24,7 @@ pub struct MessageHeader {
 }
 
 /// Variable data types for different scanning modes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessageData {
     /// File system scanning data
     FileInfo {

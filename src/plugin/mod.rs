@@ -24,6 +24,7 @@ pub mod registry;
 pub mod notification;
 pub mod compatibility;
 pub mod discovery;
+pub mod builtin;
 
 #[cfg(test)]
 pub mod tests;

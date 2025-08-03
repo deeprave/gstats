@@ -277,7 +277,7 @@ pub struct SystemEvent {
 }
 
 /// Types of system events
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SystemEventType {
     /// System started
     SystemStartup,

@@ -48,6 +48,15 @@ impl MockPlugin {
     pub fn reset_execution_count(&self) {
         *self.execution_count.lock().unwrap() = 0;
     }
+    
+    /// Add a capability to the plugin
+    pub fn add_capability(&mut self, name: String, description: String, version: String) {
+        self.info.capabilities.push(crate::plugin::traits::PluginCapability {
+            name,
+            description,
+            version,
+        });
+    }
 }
 
 #[async_trait]
@@ -88,7 +97,7 @@ impl Plugin for MockPlugin {
         *self.state.lock().unwrap() = PluginState::Initialized;
 
         Ok(PluginResponse::success(
-            request.request_id,
+            request.request_id().unwrap_or("unknown").to_string(),
             serde_json::json!({"result": "mock_success"}),
             metadata,
         ))
@@ -215,16 +224,31 @@ impl ScannerPlugin for MockScannerPlugin {
 pub struct MockNotificationPlugin {
     base: MockPlugin,
     notifications_received: Arc<Mutex<Vec<String>>>,
-    preferences: NotificationPreferences,
+    pub preferences: NotificationPreferences,
 }
 
 impl MockNotificationPlugin {
     /// Create a new mock notification plugin
     pub fn new(name: &str, should_fail: bool) -> Self {
+        let mut base = MockPlugin::new(name, should_fail);
+        // Change plugin type to Notification
+        base.info.plugin_type = PluginType::Notification;
         Self {
-            base: MockPlugin::new(name, should_fail),
+            base,
             notifications_received: Arc::new(Mutex::new(Vec::new())),
-            preferences: NotificationPreferences::default(),
+            preferences: NotificationPreferences {
+                queue_updates: true,
+                scan_progress: true,
+                error_notifications: true,
+                system_events: vec![
+                    SystemEventType::SystemStartup,
+                    SystemEventType::SystemShutdown,
+                    SystemEventType::ConfigurationChanged,
+                    SystemEventType::MemoryWarning,
+                    SystemEventType::PerformanceAlert,
+                ],
+                max_frequency: Some(100), // High frequency for testing
+            },
         }
     }
 
