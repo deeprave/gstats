@@ -64,6 +64,7 @@ dashmap = "6.0"
 tokio-util = "0.7"
 pin-project = "1.1"
 num_cpus = "1.16"
+uuid = { version = "1.0", features = ["v4", "v7"] }
 
 [dev-dependencies]
 tempfile = "3.8"
