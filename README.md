@@ -1,4 +1,5 @@
 ![Project Status](https://img.shields.io/badge/Status-Under Development-red)
+<!-- noinspection MarkdownUnresolvedFileReference -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 # Git Repository Analytics Tool
 A fast, local-first git analytics tool for analysing Git repositories with comprehensive logging and CLI interface.

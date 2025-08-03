@@ -76,6 +76,10 @@ impl ScanError {
     pub fn async_operation(msg: impl Into<String>) -> Self {
         Self::AsyncOperation(msg.into())
     }
+    
+    pub fn invalid_mode(mode: crate::scanner::modes::ScanMode) -> Self {
+        Self::InvalidMode(mode)
+    }
 }
 
 /// Result type for async scanning operations

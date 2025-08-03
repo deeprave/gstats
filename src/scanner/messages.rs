@@ -37,6 +37,7 @@ pub enum MessageData {
         hash: String,
         author: String,
         message: String,
+        timestamp: i64,
     },
     /// Code metrics scanning data
     MetricInfo {
@@ -74,6 +75,16 @@ impl MessageHeader {
             timestamp,
         }
     }
+    
+    /// Get the scan mode
+    pub fn mode(&self) -> ScanMode {
+        self.scan_mode
+    }
+    
+    /// Get the timestamp
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
 }
 
 impl ScanMessage {
@@ -102,7 +113,7 @@ impl ScanMessage {
         let base_size = std::mem::size_of::<Self>();
         let data_size = match &self.data {
             MessageData::FileInfo { path, .. } => path.len(),
-            MessageData::CommitInfo { hash, author, message } => {
+            MessageData::CommitInfo { hash, author, message, .. } => {
                 hash.len() + author.len() + message.len()
             },
             MessageData::DependencyInfo { name, version, license } => {
@@ -116,6 +127,16 @@ impl ScanMessage {
             MessageData::None => 0,
         };
         base_size + data_size
+    }
+    
+    /// Get a reference to the message header
+    pub fn header(&self) -> &MessageHeader {
+        &self.header
+    }
+    
+    /// Get a reference to the message data
+    pub fn data(&self) -> &MessageData {
+        &self.data
     }
 }
 
@@ -145,6 +166,7 @@ mod tests {
                 hash: "abc123".to_string(),
                 author: "developer".to_string(),
                 message: "Fix bug".to_string(),
+                timestamp: 1234567890,
             }
         );
 
@@ -167,6 +189,7 @@ mod tests {
             hash: "def456".to_string(),
             author: "contributor".to_string(),
             message: "Add feature".to_string(),
+            timestamp: 1234567890,
         };
 
         let metric_data = MessageData::MetricInfo {

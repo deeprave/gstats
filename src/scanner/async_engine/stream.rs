@@ -443,7 +443,7 @@ mod tests {
             )),
             Ok(ScanMessage::new(
                 MessageHeader::new(ScanMode::HISTORY, 2),
-                MessageData::CommitInfo { hash: "abc123".to_string(), author: "test".to_string(), message: "test commit".to_string() }
+                MessageData::CommitInfo { hash: "abc123".to_string(), author: "test".to_string(), message: "test commit".to_string(), timestamp: 1234567890 }
             )),
             Ok(ScanMessage::new(
                 MessageHeader::new(ScanMode::FILES, 3),

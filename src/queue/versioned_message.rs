@@ -139,6 +139,7 @@ mod tests {
                 hash: "abc123".to_string(),
                 author: "developer".to_string(),
                 message: "Fix bug".to_string(),
+                timestamp: 1234567890,
             }
         );
         
