@@ -301,13 +301,13 @@ mod tests {
     #[tokio::test]
     async fn test_message_processing() {
         let registry = create_test_registry().await;
-        let executor = PluginExecutor::new(registry, ScanMode::FILES);
+        let executor = PluginExecutor::new(registry.clone(), ScanMode::FILES);
         
         // Initialize the plugin
-        let context = create_test_context();
+        let _context = create_test_context();
         {
             let mut reg = registry.inner().write().await;
-            if let Some(plugin) = reg.get_plugin_mut("test-scanner") {
+            if let Some(_plugin) = reg.get_plugin_mut("test-scanner") {
                 // Plugin already exists, no need to create a new one
                 // Just initialize it
                 // plugin.initialize(&context).await.unwrap();

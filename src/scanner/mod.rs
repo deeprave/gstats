@@ -40,6 +40,7 @@ pub mod query;
 pub mod async_engine;
 pub mod async_traits;
 pub mod plugin_scanner;
+pub mod statistics;
 
 // Re-export core types for easier access
 pub use config::ScannerConfig;
@@ -52,6 +53,7 @@ pub use filters::{FilterResult, DateFilter, PathFilter, AuthorFilter as AuthorFi
 pub use async_engine::{AsyncScannerEngine, AsyncScannerEngineBuilder, ScanError, ScanResult};
 pub use async_traits::{AsyncScanner, StreamingMessageProducer, AsyncScanProgress, ScanMessageStream};
 pub use plugin_scanner::{PluginScanner, PluginScannerBuilder};
+pub use statistics::{RepositoryStatistics, RepositoryStatsCollector};
 
 use anyhow::Result;
 

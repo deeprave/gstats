@@ -40,42 +40,41 @@ pub enum CliError {
     PluginValidation { message: String },
 }
 
-/// Convert CLI arguments to ScannerConfig
+/// Convert CLI arguments to ScannerConfig with ConfigManager integration
 /// 
 /// This function takes CLI scanner configuration arguments and converts them
-/// into a ScannerConfig for the scanning system.
-pub fn args_to_scanner_config(args: &crate::cli::Args) -> Result<ScannerConfig, CliError> {
+/// into a ScannerConfig for the scanning system. CLI arguments override config file settings.
+pub fn args_to_scanner_config(args: &crate::cli::Args, config_manager: Option<&crate::config::ConfigManager>) -> Result<ScannerConfig, CliError> {
     // Validate performance mode conflicts
     if args.performance_mode && args.no_performance_mode {
         return Err(CliError::ConflictingPerformanceModes);
     }
     
-    // Start with default config
-    let mut config = ScannerConfig::default();
+    // Start with config from file (if available), otherwise use defaults
+    let mut config = if let Some(manager) = config_manager {
+        manager.get_scanner_config()
+            .map_err(|e| CliError::PluginValidation { message: e.to_string() })?
+    } else {
+        ScannerConfig::default()
+    };
     
-    // Apply performance mode settings
+    // Apply CLI performance mode settings (override config file)
     if args.performance_mode {
         // Performance mode: increase memory and queue size for speed
-        config = ScannerConfig {
-            max_memory_bytes: 256 * 1024 * 1024, // 256MB
-            queue_size: 5000,
-            max_threads: None, // Use system default
-        };
+        config.max_memory_bytes = 256 * 1024 * 1024; // 256MB
+        config.queue_size = 5000;
     } else if args.no_performance_mode {
         // Conservative mode: reduce memory usage
-        config = ScannerConfig {
-            max_memory_bytes: 32 * 1024 * 1024, // 32MB
-            queue_size: 500,
-            max_threads: None, // Use system default
-        };
+        config.max_memory_bytes = 32 * 1024 * 1024; // 32MB
+        config.queue_size = 500;
     }
     
-    // Override with specific memory setting if provided
+    // Override with specific CLI memory setting if provided
     if let Some(memory_str) = &args.max_memory {
         config.max_memory_bytes = parse_memory_size(memory_str)?; // Already returns bytes
     }
     
-    // Override with specific queue size if provided
+    // Override with specific CLI queue size if provided
     if let Some(queue_size) = args.queue_size {
         if queue_size == 0 {
             return Err(CliError::InvalidQueueSize { size: queue_size });
@@ -88,6 +87,14 @@ pub fn args_to_scanner_config(args: &crate::cli::Args) -> Result<ScannerConfig, 
         .map_err(|e| CliError::PluginValidation { message: e.to_string() })?;
     
     Ok(config)
+}
+
+/// Convert CLI arguments to ScannerConfig (backward compatibility)
+/// 
+/// This function maintains backward compatibility for existing code.
+/// New code should use args_to_scanner_config_with_config.
+pub fn args_to_scanner_config_legacy(args: &crate::cli::Args) -> Result<ScannerConfig, CliError> {
+    args_to_scanner_config(args, None)
 }
 
 /// Convert CLI arguments to QueryParams
@@ -491,7 +498,7 @@ mod tests {
     fn test_args_to_scanner_config_default() {
         let args = create_test_args();
         
-        let result = args_to_scanner_config(&args).unwrap();
+        let result = args_to_scanner_config(&args, None).unwrap();
         
         // Should use default settings when no performance mode specified
         assert_eq!(result.max_memory_bytes, 64 * 1024 * 1024); // 64MB in bytes
@@ -505,7 +512,7 @@ mod tests {
             ..create_test_args()
         };
         
-        let result = args_to_scanner_config(&args).unwrap();
+        let result = args_to_scanner_config(&args, None).unwrap();
         
         // Should use performance mode presets
         assert_eq!(result.max_memory_bytes, 256 * 1024 * 1024); // 256MB in bytes
@@ -519,7 +526,7 @@ mod tests {
             ..create_test_args()
         };
         
-        let result = args_to_scanner_config(&args).unwrap();
+        let result = args_to_scanner_config(&args, None).unwrap();
         
         // Should use conservative mode presets
         assert_eq!(result.max_memory_bytes, 32 * 1024 * 1024); // 32MB in bytes
@@ -534,7 +541,7 @@ mod tests {
             ..create_test_args()
         };
         
-        let result = args_to_scanner_config(&args).unwrap();
+        let result = args_to_scanner_config(&args, None).unwrap();
         
         // Should use custom settings
         assert_eq!(result.max_memory_bytes, 512 * 1024 * 1024); // 512MB in bytes
@@ -583,7 +590,7 @@ mod tests {
                 plugin_dir: None,
             };
             
-            let result = args_to_scanner_config(&args).unwrap();
+            let result = args_to_scanner_config(&args, None).unwrap();
             assert_eq!(result.max_memory_bytes, expected_bytes, "Failed for input: {}", memory_str);
         }
     }
@@ -621,7 +628,7 @@ mod tests {
             plugin_dir: None,
         };
         
-        let result = args_to_scanner_config(&args);
+        let result = args_to_scanner_config(&args, None);
         assert!(result.is_err());
         if let Err(CliError::ConflictingPerformanceModes) = result {
             // Expected error
@@ -663,7 +670,57 @@ mod tests {
             plugin_dir: None,
         };
         
-        let result = args_to_scanner_config(&args);
+        let result = args_to_scanner_config(&args, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_args_to_scanner_config_with_config() {
+        use std::collections::HashMap;
+        use crate::config::{ConfigManager, Configuration};
+        
+        // Create a config with scanner settings
+        let mut config = Configuration::new();
+        let mut scanner_section = HashMap::new();
+        scanner_section.insert("max-memory".to_string(), "256MB".to_string());
+        scanner_section.insert("queue-size".to_string(), "3000".to_string());
+        config.insert("scanner".to_string(), scanner_section);
+        
+        let config_manager = ConfigManager::from_config(config);
+        
+        let args = create_test_args();
+        let result = args_to_scanner_config(&args, Some(&config_manager)).unwrap();
+        
+        // Should use config values
+        assert_eq!(result.max_memory_bytes, 256 * 1024 * 1024); // 256MB from config
+        assert_eq!(result.queue_size, 3000); // 3000 from config
+    }
+
+    #[test]
+    fn test_args_to_scanner_config_cli_overrides_config() {
+        use std::collections::HashMap;
+        use crate::config::{ConfigManager, Configuration};
+        
+        // Create a config with scanner settings
+        let mut config = Configuration::new();
+        let mut scanner_section = HashMap::new();
+        scanner_section.insert("max-memory".to_string(), "128MB".to_string());
+        scanner_section.insert("queue-size".to_string(), "2000".to_string());
+        config.insert("scanner".to_string(), scanner_section);
+        
+        let config_manager = ConfigManager::from_config(config);
+        
+        // CLI args that should override config
+        let args = Args {
+            max_memory: Some("512MB".to_string()),
+            queue_size: Some(4000),
+            ..create_test_args()
+        };
+        
+        let result = args_to_scanner_config(&args, Some(&config_manager)).unwrap();
+        
+        // Should use CLI values (override config)
+        assert_eq!(result.max_memory_bytes, 512 * 1024 * 1024); // 512MB from CLI
+        assert_eq!(result.queue_size, 4000); // 4000 from CLI
     }
 }

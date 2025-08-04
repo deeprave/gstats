@@ -20,6 +20,9 @@ pub use streaming_producer::{StreamingQueueProducer, StreamingConfig, StreamingS
 pub use repository::{AsyncRepositoryHandle, RepositoryStats, FileInfo, CommitInfo};
 pub use scanners::{AsyncFileScanner, AsyncHistoryScanner, AsyncCombinedScanner};
 
+// Re-export statistics types for convenience
+pub use crate::scanner::statistics::{RepositoryStatistics, RepositoryStatsCollector};
+
 // Module metadata
 pub const MODULE_NAME: &str = "Async Scanner Engine";
 pub const MODULE_VERSION: &str = "1.0.0";

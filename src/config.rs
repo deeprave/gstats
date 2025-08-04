@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use toml::Value;
 use log::{debug, info};
+use crate::scanner::config::ScannerConfig;
 
 /// Configuration storage - section_name -> key -> value
 pub type Configuration = HashMap<String, HashMap<String, String>>;
@@ -17,6 +18,14 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
+    /// Create a new ConfigManager from a Configuration (primarily for testing)
+    pub fn from_config(config: Configuration) -> Self {
+        Self {
+            config,
+            config_file_path: None,
+            selected_section: None,
+        }
+    }
     /// Load configuration using discovery hierarchy
     pub fn load() -> Result<Self> {
         debug!("Starting configuration discovery");
@@ -103,6 +112,48 @@ impl ConfigManager {
     /// Get path value with type conversion
     pub fn get_path(&self, section: &str, key: &str) -> Option<PathBuf> {
         self.get_value(section, key).map(PathBuf::from)
+    }
+    
+    /// Get scanner configuration from config file
+    pub fn get_scanner_config(&self) -> Result<ScannerConfig> {
+        let mut config = ScannerConfig::default();
+        
+        // Check for scanner configuration values
+        if let Some(max_memory_str) = self.get_value("scanner", "max-memory") {
+            let max_memory_bytes = crate::cli::memory_parser::parse_memory_size(max_memory_str)
+                .with_context(|| format!("Invalid max-memory value in config: {}", max_memory_str))?;
+            config.max_memory_bytes = max_memory_bytes;
+        }
+        
+        if let Some(queue_size_str) = self.get_value("scanner", "queue-size") {
+            let queue_size = queue_size_str.parse::<usize>()
+                .with_context(|| format!("Invalid queue-size value in config: {}", queue_size_str))?;
+            config.queue_size = queue_size;
+        }
+        
+        if let Some(max_threads_str) = self.get_value("scanner", "max-threads") {
+            let max_threads = max_threads_str.parse::<usize>()
+                .with_context(|| format!("Invalid max-threads value in config: {}", max_threads_str))?;
+            config.max_threads = Some(max_threads);
+        }
+        
+        // Handle performance-mode preset
+        if let Some(performance_mode_str) = self.get_value("scanner", "performance-mode") {
+            let performance_mode = self.get_bool("scanner", "performance-mode")?
+                .unwrap_or(false);
+                
+            if performance_mode {
+                // Apply performance mode presets (match CLI converter)
+                config.max_memory_bytes = 256 * 1024 * 1024; // 256MB
+                config.queue_size = 5000;
+            }
+        }
+        
+        // Validate final configuration
+        config.validate()
+            .with_context(|| "Scanner configuration validation failed")?;
+            
+        Ok(config)
     }
 }
 
@@ -252,11 +303,7 @@ format = "json"
         module_section.insert("log-format".to_string(), "json".to_string()); // Override base
         config.insert("module.commits".to_string(), module_section);
         
-        let manager = ConfigManager {
-            config,
-            config_file_path: None,
-            selected_section: None,
-        };
+        let manager = ConfigManager::from_config(config);
         
         assert_eq!(manager.get_value("module.commits", "quiet").unwrap(), "true");
         assert_eq!(manager.get_value("module.commits", "log-format").unwrap(), "json");
@@ -301,11 +348,7 @@ format = "json"
         base_section.insert("path".to_string(), "/tmp/test".to_string());
         config.insert("base".to_string(), base_section);
         
-        let manager = ConfigManager {
-            config,
-            config_file_path: None,
-            selected_section: None,
-        };
+        let manager = ConfigManager::from_config(config);
         
         assert_eq!(manager.get_bool("base", "debug").unwrap().unwrap(), true);
         assert_eq!(manager.get_bool("base", "quiet").unwrap().unwrap(), false);
@@ -340,5 +383,92 @@ since = "30d"
         assert_eq!(manager.get_value("base", "log-format").unwrap(), "json");
         assert_eq!(manager.get_value("module.commits", "since").unwrap(), "30d");
         assert_eq!(manager.config_file_path.as_ref().unwrap(), temp_file.path());
+    }
+
+    #[test]
+    fn test_scanner_config_default() {
+        let manager = ConfigManager {
+            config: Configuration::new(),
+            config_file_path: None,
+            selected_section: None,
+        };
+        
+        let scanner_config = manager.get_scanner_config().unwrap();
+        assert_eq!(scanner_config.max_memory_bytes, 64 * 1024 * 1024); // Default 64MB
+        assert_eq!(scanner_config.queue_size, 1000); // Default 1000
+        assert!(scanner_config.max_threads.is_none()); // Default None
+    }
+
+    #[test]
+    fn test_scanner_config_from_toml() {
+        let toml_content = r#"
+[scanner]
+max-memory = "128MB"
+queue-size = 2000
+max-threads = 8
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        assert_eq!(scanner_config.max_memory_bytes, 128 * 1024 * 1024); // 128MB
+        assert_eq!(scanner_config.queue_size, 2000);
+        assert_eq!(scanner_config.max_threads, Some(8));
+    }
+
+    #[test]
+    fn test_scanner_config_performance_mode() {
+        let toml_content = r#"
+[scanner]
+performance-mode = true
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        // Performance mode presets
+        assert_eq!(scanner_config.max_memory_bytes, 256 * 1024 * 1024); // 256MB
+        assert_eq!(scanner_config.queue_size, 5000);
+    }
+
+    #[test]
+    fn test_scanner_config_invalid_values() {
+        let toml_content = r#"
+[scanner]
+max-memory = "invalid"
+queue-size = 0
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        
+        // Should fail due to invalid memory value
+        assert!(manager.get_scanner_config().is_err());
+    }
+
+    #[test]
+    fn test_scanner_config_mixed_units() {
+        let toml_content = r#"
+[scanner]
+max-memory = "1GB"
+queue-size = 3000
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        assert_eq!(scanner_config.max_memory_bytes, 1024 * 1024 * 1024); // 1GB
+        assert_eq!(scanner_config.queue_size, 3000);
     }
 }

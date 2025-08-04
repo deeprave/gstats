@@ -219,7 +219,7 @@ async fn run_scanner(
     let repo = git::resolve_repository_handle(Some(repo_path))?;
     
     // Convert CLI args to scanner config and query params
-    let scanner_config = cli::converter::args_to_scanner_config(&args)?;
+    let scanner_config = cli::converter::args_to_scanner_config(&args, Some(&config_manager))?;
     let query_params = cli::converter::args_to_query_params(&args)?;
     
     info!("Scanner configuration: {:?}", scanner_config);

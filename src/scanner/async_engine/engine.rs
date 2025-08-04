@@ -11,6 +11,7 @@ use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::ScanMessage;
 use crate::scanner::traits::MessageProducer;
 use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
+use crate::scanner::statistics::{RepositoryStatistics, RepositoryStatsCollector};
 use crate::git::RepositoryHandle;
 use super::task_manager::TaskManager;
 use super::error::{ScanError, ScanResult};
@@ -224,12 +225,47 @@ impl AsyncScannerEngine {
             completed_tasks: self.task_manager.completed_task_count().await,
             registered_scanners: self.scanners.len(),
             errors: self.task_manager.get_errors().await.len(),
+            repository_stats: None,
         }
+    }
+    
+    /// Get comprehensive engine statistics including repository context
+    pub async fn get_comprehensive_stats(&self) -> ScanResult<EngineStats> {
+        let repository_stats = self.collect_repository_statistics().await.ok();
+        
+        Ok(EngineStats {
+            active_tasks: self.task_manager.active_task_count(),
+            completed_tasks: self.task_manager.completed_task_count().await,
+            registered_scanners: self.scanners.len(),
+            errors: self.task_manager.get_errors().await.len(),
+            repository_stats,
+        })
     }
     
     /// Check if engine is idle (no active tasks)
     pub fn is_idle(&self) -> bool {
         self.task_manager.active_task_count() == 0
+    }
+    
+    /// Collect repository statistics
+    /// 
+    /// This provides basic repository context that can be useful for
+    /// analysis, reporting, and understanding scan scope.
+    pub async fn collect_repository_statistics(&self) -> ScanResult<RepositoryStatistics> {
+        let collector = RepositoryStatsCollector::new();
+        
+        // Spawn blocking task for git operations
+        let repo = Arc::clone(&self.repository);
+        let stats = tokio::task::spawn_blocking(move || {
+            collector.collect_statistics(&repo)
+        }).await
+        .map_err(|e| ScanError::task(format!("Failed to collect statistics: {}", e)))?
+        .map_err(|e| ScanError::repository(format!("Statistics collection error: {}", e)))?;
+        
+        log::debug!("Collected repository statistics: {} commits, {} files, {} authors", 
+                   stats.total_commits, stats.total_files, stats.total_authors);
+        
+        Ok(stats)
     }
 }
 
@@ -240,6 +276,7 @@ pub struct EngineStats {
     pub completed_tasks: usize,
     pub registered_scanners: usize,
     pub errors: usize,
+    pub repository_stats: Option<RepositoryStatistics>,
 }
 
 /// Builder for async scanner engine
@@ -403,6 +440,38 @@ mod tests {
         
         let stats = engine.get_stats().await;
         assert_eq!(stats.registered_scanners, 1);
+    }
+    
+    #[tokio::test]
+    async fn test_repository_statistics_collection() {
+        let repo = RepositoryHandle::open(".").unwrap();
+        let producer = Arc::new(MockMessageProducer {
+            count: Arc::new(AtomicUsize::new(0)),
+        });
+        
+        let engine = AsyncScannerEngine::new_for_test(repo, ScannerConfig::default(), producer).unwrap();
+        
+        // Test basic statistics collection
+        let stats_result = engine.collect_repository_statistics().await;
+        assert!(stats_result.is_ok());
+        
+        let stats = stats_result.unwrap();
+        assert!(stats.total_commits > 0, "Should have commits");
+        assert!(stats.total_files > 0, "Should have files");
+        assert!(stats.total_authors > 0, "Should have authors");
+        assert!(stats.repository_size > 0, "Should have size");
+        
+        // Test comprehensive stats
+        let comprehensive_stats_result = engine.get_comprehensive_stats().await;
+        assert!(comprehensive_stats_result.is_ok());
+        
+        let comprehensive_stats = comprehensive_stats_result.unwrap();
+        assert!(comprehensive_stats.repository_stats.is_some());
+        
+        let repo_stats = comprehensive_stats.repository_stats.unwrap();
+        assert_eq!(repo_stats.total_commits, stats.total_commits);
+        assert_eq!(repo_stats.total_files, stats.total_files);
+        assert_eq!(repo_stats.total_authors, stats.total_authors);
     }
     
     #[tokio::test]
