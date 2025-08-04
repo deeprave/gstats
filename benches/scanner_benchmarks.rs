@@ -108,7 +108,8 @@ fn bench_repository_operations(c: &mut Criterion) {
     c.bench_function("async_repository_commit_count", |b| {
         b.iter(|| {
             rt.block_on(async {
-                async_repo.get_commit_count().await.unwrap()
+                // Get repository stats for benchmarking - object_count gives us a proxy for complexity
+                async_repo.get_repository_stats().await.unwrap().object_count
             })
         })
     });
@@ -121,7 +122,7 @@ fn bench_scanner_engine_creation(c: &mut Criterion) {
     let config = ScannerConfig::default();
     
     let rt = Arc::new(Runtime::new().unwrap());
-    let memory_queue = Arc::new(MemoryQueue::new());
+    let memory_queue = Arc::new(MemoryQueue::new(10000, 128 * 1024 * 1024));
     let message_producer = Arc::new(QueueMessageProducer::new(
         Arc::clone(&memory_queue),
         "BenchmarkProducer".to_string()
@@ -151,7 +152,7 @@ fn bench_scanner_repository_sizes(c: &mut Criterion) {
         let repo_handle = RepositoryHandle::open(&repo_path).unwrap();
         let config = ScannerConfig::default();
         
-        let memory_queue = Arc::new(MemoryQueue::new());
+        let memory_queue = Arc::new(MemoryQueue::new(10000, 128 * 1024 * 1024));
         let message_producer = Arc::new(QueueMessageProducer::new(
             Arc::clone(&memory_queue),
             "BenchmarkProducer".to_string()
@@ -188,7 +189,7 @@ fn bench_scan_modes(c: &mut Criterion) {
     let config = ScannerConfig::default();
     
     let rt = Arc::new(Runtime::new().unwrap());
-    let memory_queue = Arc::new(MemoryQueue::new());
+    let memory_queue = Arc::new(MemoryQueue::new(10000, 128 * 1024 * 1024));
     let message_producer = Arc::new(QueueMessageProducer::new(
         Arc::clone(&memory_queue),
         "BenchmarkProducer".to_string()
