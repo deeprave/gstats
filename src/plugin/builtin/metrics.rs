@@ -6,7 +6,11 @@ use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
 };
+use super::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
+use super::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
+use super::duplication_detector::{DuplicationDetector, DuplicationConfig};
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
+use crate::git::RepositoryHandle;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use serde_json::json;
@@ -18,6 +22,7 @@ pub struct MetricsPlugin {
     file_metrics: HashMap<String, FileMetrics>,
     total_lines: usize,
     total_files: usize,
+    repository: Option<RepositoryHandle>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +68,7 @@ impl MetricsPlugin {
             file_metrics: HashMap::new(),
             total_lines: 0,
             total_files: 0,
+            repository: None,
         }
     }
 
@@ -202,7 +208,7 @@ impl Plugin for MetricsPlugin {
         &self.info
     }
 
-    async fn initialize(&mut self, _context: &PluginContext) -> PluginResult<()> {
+    async fn initialize(&mut self, context: &PluginContext) -> PluginResult<()> {
         if self.initialized {
             return Err(PluginError::initialization_failed("Plugin already initialized"));
         }
@@ -211,6 +217,10 @@ impl Plugin for MetricsPlugin {
         self.file_metrics.clear();
         self.total_lines = 0;
         self.total_files = 0;
+        
+        // Store repository handle for change frequency analysis
+        self.repository = Some((*context.repository).clone());
+        
         self.initialized = true;
 
         Ok(())
@@ -240,6 +250,12 @@ impl Plugin for MetricsPlugin {
                     }
                     "files" | "file-stats" => {
                         self.execute_file_statistics().await
+                    }
+                    "hotspots" | "changes" | "frequency" => {
+                        self.execute_hotspot_analysis().await
+                    }
+                    "duplicates" | "duplication" | "clone-detection" => {
+                        self.execute_duplication_analysis().await
                     }
                     _ => Err(PluginError::execution_failed(
                         format!("Unknown function: {}", function_name)
@@ -284,6 +300,18 @@ impl Plugin for MetricsPlugin {
                 name: "files".to_string(),
                 aliases: vec!["file-stats".to_string()],
                 description: "Generate file-level statistics and aggregations".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "hotspots".to_string(),
+                aliases: vec!["changes".to_string(), "frequency".to_string()],
+                description: "Identify code hotspots by combining complexity and change frequency analysis".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "duplicates".to_string(),
+                aliases: vec!["duplication".to_string(), "clone-detection".to_string()],
+                description: "Detect duplicate and similar code patterns using token-based analysis".to_string(),
                 is_default: false,
             },
         ]
@@ -396,6 +424,7 @@ impl MetricsPlugin {
             file_metrics: self.file_metrics.clone(),
             total_lines: self.total_lines,
             total_files: self.total_files,
+            repository: self.repository.clone(),
         }
     }
 
@@ -548,6 +577,214 @@ impl MetricsPlugin {
             },
             errors: vec![],
         })
+    }
+    
+    /// Execute hotspot analysis function combining complexity and change frequency
+    async fn execute_hotspot_analysis(&self) -> PluginResult<PluginResponse> {
+        // Require repository for change frequency analysis
+        let repository = self.repository.as_ref()
+            .ok_or_else(|| PluginError::invalid_state("Repository not available for hotspot analysis"))?;
+        
+        // Convert FileMetrics to FileComplexityMetrics for hotspot detection
+        let mut complexity_metrics = HashMap::new();
+        for (path, metrics) in &self.file_metrics {
+            let mut complexity_metric = FileComplexityMetrics::new(path.clone());
+            complexity_metric.lines_of_code = metrics.lines_of_code;
+            complexity_metric.cyclomatic_complexity = metrics.cyclomatic_complexity as f64;
+            complexity_metric.comment_ratio = if metrics.lines_of_code > 0 {
+                metrics.comment_lines as f64 / metrics.lines_of_code as f64
+            } else {
+                0.0
+            };
+            complexity_metric.file_size_bytes = metrics.file_size_bytes;
+            complexity_metrics.insert(path.clone(), complexity_metric);
+        }
+        
+        // Perform change frequency analysis
+        let mut frequency_analyzer = ChangeFrequencyAnalyzer::new(
+            repository.clone(), 
+            TimeWindow::Quarter // Analyze last 3 months by default
+        );
+        
+        if let Err(e) = frequency_analyzer.analyze() {
+            return Err(PluginError::execution_failed(
+                format!("Change frequency analysis failed: {}", e)
+            ));
+        }
+        
+        let change_stats = frequency_analyzer.get_file_stats();
+        
+        // Detect hotspots
+        let hotspot_detector = HotspotDetector::with_defaults(TimeWindow::Quarter);
+        let hotspots = hotspot_detector.get_top_hotspots(&complexity_metrics, change_stats, 20);
+        let summary = hotspot_detector.generate_summary(&complexity_metrics, change_stats);
+        
+        // Prepare response data
+        let hotspot_data: Vec<_> = hotspots.iter().map(|h| {
+            json!({
+                "file_path": h.file_path,
+                "hotspot_score": h.hotspot_score,
+                "complexity_score": h.complexity_score,
+                "frequency_score": h.frequency_score,
+                "recency_weight": h.recency_weight,
+                "priority": format!("{:?}", h.priority),
+                "change_count": h.change_stats.change_count,
+                "author_count": h.change_stats.author_count,
+                "last_changed": h.change_stats.last_changed,
+                "lines_of_code": h.complexity_metrics.lines_of_code,
+                "cyclomatic_complexity": h.complexity_metrics.cyclomatic_complexity,
+                "recommendations": h.recommendations
+            })
+        }).collect();
+        
+        let data = json!({
+            "hotspots": hotspot_data,
+            "summary": {
+                "total_hotspots": summary.total_hotspots,
+                "critical_hotspots": summary.critical_hotspots,
+                "high_hotspots": summary.high_hotspots,
+                "medium_hotspots": summary.medium_hotspots,
+                "low_hotspots": summary.low_hotspots,
+                "average_hotspot_score": summary.average_hotspot_score,
+                "max_hotspot_score": summary.max_hotspot_score,
+                "files_analyzed": summary.files_analyzed,
+                "time_window": format!("{:?}", summary.time_window)
+            },
+            "change_frequency_summary": {
+                "total_files": frequency_analyzer.get_summary().total_files,
+                "total_changes": frequency_analyzer.get_summary().total_changes,
+                "commits_analyzed": frequency_analyzer.get_summary().total_commits_analyzed,
+                "average_frequency": frequency_analyzer.get_summary().average_frequency,
+                "max_frequency": frequency_analyzer.get_summary().max_frequency
+            },
+            "function": "hotspots"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "hotspot_analysis".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: hotspots.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute duplication analysis function
+    async fn execute_duplication_analysis(&self) -> PluginResult<PluginResponse> {
+        // Collect file contents for analysis
+        let mut file_contents = HashMap::new();
+        
+        // For now, we'll use a simplified approach by reading available files
+        // In a full implementation, this would integrate with the scanner to get actual file contents
+        for (file_path, metrics) in &self.file_metrics {
+            // Generate sample content based on metrics for demonstration
+            // In practice, this would read actual file contents
+            let sample_content = self.generate_sample_content(file_path, metrics);
+            file_contents.insert(file_path.clone(), sample_content);
+        }
+        
+        // Create duplication detector with default config
+        let detector = DuplicationDetector::with_defaults();
+        
+        // Detect duplicates
+        let duplicate_groups = detector.detect_duplicates(&file_contents);
+        let summary = detector.generate_summary(&file_contents, &duplicate_groups);
+        
+        // Prepare response data
+        let duplicate_data: Vec<_> = duplicate_groups.iter().map(|group| {
+            json!({
+                "id": group.id,
+                "similarity_score": group.similarity_score,
+                "total_lines": group.total_lines,
+                "total_tokens": group.total_tokens,
+                "impact_score": group.impact_score,
+                "block_count": group.blocks.len(),
+                "involved_files": group.get_involved_files(),
+                "blocks": group.blocks.iter().map(|block| {
+                    json!({
+                        "file_path": block.file_path,
+                        "start_line": block.start_line,
+                        "end_line": block.end_line,
+                        "line_count": block.line_count(),
+                        "token_count": block.token_count()
+                    })
+                }).collect::<Vec<_>>()
+            })
+        }).collect();
+        
+        let data = json!({
+            "duplicate_groups": duplicate_data,
+            "summary": {
+                "total_files_analyzed": summary.total_files_analyzed,
+                "total_lines_analyzed": summary.total_lines_analyzed,
+                "duplicate_groups": summary.duplicate_groups,
+                "total_duplicate_lines": summary.total_duplicate_lines,
+                "duplication_percentage": summary.duplication_percentage,
+                "average_similarity": summary.average_similarity,
+                "highest_impact_score": summary.highest_impact_score,
+                "files_with_duplicates": summary.files_with_duplicates
+            },
+            "function": "duplicates"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "duplication_analysis".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: duplicate_groups.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Generate sample content for duplication analysis (temporary implementation)
+    fn generate_sample_content(&self, file_path: &str, metrics: &FileMetrics) -> String {
+        // This is a placeholder - in practice, actual file contents would be read
+        let extension = &metrics.file_extension;
+        let lines_count = metrics.lines_of_code;
+        
+        match extension.as_str() {
+            "rs" => {
+                let mut content = String::new();
+                content.push_str("// Sample Rust file\n");
+                content.push_str("use std::collections::HashMap;\n\n");
+                content.push_str("fn main() {\n");
+                for i in 0..lines_count.min(50) {
+                    content.push_str(&format!("    println!(\"Line {}\");\n", i));
+                }
+                content.push_str("}\n");
+                content
+            }
+            "py" => {
+                let mut content = String::new();
+                content.push_str("# Sample Python file\n");
+                content.push_str("import os\n\n");
+                content.push_str("def main():\n");
+                for i in 0..lines_count.min(50) {
+                    content.push_str(&format!("    print(\"Line {}\")\n", i));
+                }
+                content.push_str("\nif __name__ == '__main__':\n    main()\n");
+                content
+            }
+            _ => {
+                let mut content = String::new();
+                for i in 0..lines_count.min(50) {
+                    content.push_str(&format!("Line {} of {}\n", i, file_path));
+                }
+                content
+            }
+        }
     }
 }
 

@@ -310,6 +310,8 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            show_plugins: false,
+            plugins_help: false,
         }
     }
 
@@ -468,6 +470,8 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            show_plugins: false,
+            plugins_help: false,
         };
         
         let result = args_to_query_params(&args).unwrap();
@@ -588,6 +592,8 @@ mod tests {
                 check_plugin: None,
                 list_by_type: None,
                 plugin_dir: None,
+                show_plugins: false,
+                plugins_help: false,
             };
             
             let result = args_to_scanner_config(&args, None).unwrap();
@@ -626,6 +632,8 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            show_plugins: false,
+            plugins_help: false,
         };
         
         let result = args_to_scanner_config(&args, None);
@@ -668,6 +676,8 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            show_plugins: false,
+            plugins_help: false,
         };
         
         let result = args_to_scanner_config(&args, None);

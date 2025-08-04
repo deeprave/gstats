@@ -5,6 +5,9 @@
 pub mod commits;
 pub mod metrics;
 pub mod export;
+pub mod change_frequency;
+pub mod hotspot_detector;
+pub mod duplication_detector;
 
 // Re-export built-in plugins
 pub use commits::CommitsPlugin;
