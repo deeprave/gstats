@@ -285,6 +285,7 @@ pub struct AsyncScannerEngineBuilder {
     config: Option<ScannerConfig>,
     message_producer: Option<Arc<dyn MessageProducer + Send + Sync>>,
     scanners: Vec<Arc<dyn AsyncScanner>>,
+    runtime: Option<Arc<tokio::runtime::Runtime>>,
 }
 
 impl AsyncScannerEngineBuilder {
@@ -295,6 +296,7 @@ impl AsyncScannerEngineBuilder {
             config: None,
             message_producer: None,
             scanners: Vec::new(),
+            runtime: None,
         }
     }
     
@@ -322,6 +324,12 @@ impl AsyncScannerEngineBuilder {
         self
     }
     
+    /// Set the runtime (optional - if not set, a new runtime will be created)
+    pub fn runtime(mut self, runtime: Arc<tokio::runtime::Runtime>) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+    
     /// Build the engine
     pub fn build(self) -> ScanResult<AsyncScannerEngine> {
         let repository = self.repository
@@ -332,10 +340,17 @@ impl AsyncScannerEngineBuilder {
         let message_producer = self.message_producer
             .ok_or_else(|| ScanError::configuration("Message producer not set"))?;
         
-        #[cfg(test)]
-        let mut engine = AsyncScannerEngine::new_for_test(repository, config, message_producer)?;
-        #[cfg(not(test))]
-        let mut engine = AsyncScannerEngine::new(repository, config, message_producer)?;
+        let mut engine = if let Some(runtime) = self.runtime {
+            // Use provided runtime
+            AsyncScannerEngine::with_runtime(repository, config, message_producer, runtime)?
+        } else {
+            // Create new runtime
+            #[cfg(test)]
+            let engine = AsyncScannerEngine::new_for_test(repository, config, message_producer)?;
+            #[cfg(not(test))]
+            let engine = AsyncScannerEngine::new(repository, config, message_producer)?;
+            engine
+        };
         
         for scanner in self.scanners {
             engine.register_scanner(scanner);

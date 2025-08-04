@@ -69,6 +69,7 @@ impl AsyncRepositoryHandle {
     }
     
     /// Perform a thread-safe read operation on the repository
+    /// TODO: Re-enable spawn_blocking for GS-30 when we fix runtime nesting issues
     async fn with_repository<F, T>(&self, operation: F) -> ScanResult<T>
     where
         F: FnOnce(&Repository) -> Result<T> + Send + 'static,
@@ -76,10 +77,8 @@ impl AsyncRepositoryHandle {
     {
         let handle = Arc::clone(&self.handle);
         
-        task::spawn_blocking(move || {
-            operation(handle.repository())
-        }).await
-            .map_err(|e| ScanError::async_operation(format!("Repository operation failed: {}", e)))?
+        // Temporary fix: execute synchronously to avoid runtime drop issues
+        operation(handle.repository())
             .map_err(|e| ScanError::repository(e.to_string()))
     }
     
