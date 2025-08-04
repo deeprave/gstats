@@ -38,6 +38,7 @@ pub enum MessageData {
         author: String,
         message: String,
         timestamp: i64,
+        changed_files: Vec<String>,
     },
     /// Code metrics scanning data
     MetricInfo {
@@ -113,8 +114,9 @@ impl ScanMessage {
         let base_size = std::mem::size_of::<Self>();
         let data_size = match &self.data {
             MessageData::FileInfo { path, .. } => path.len(),
-            MessageData::CommitInfo { hash, author, message, .. } => {
-                hash.len() + author.len() + message.len()
+            MessageData::CommitInfo { hash, author, message, changed_files, .. } => {
+                hash.len() + author.len() + message.len() + 
+                changed_files.iter().map(|f| f.len()).sum::<usize>()
             },
             MessageData::DependencyInfo { name, version, license } => {
                 name.len() + version.len() + license.as_ref().map_or(0, |l| l.len())
@@ -167,6 +169,7 @@ mod tests {
                 author: "developer".to_string(),
                 message: "Fix bug".to_string(),
                 timestamp: 1234567890,
+                changed_files: vec!["src/main.rs".to_string()],
             }
         );
 
@@ -190,6 +193,7 @@ mod tests {
             author: "contributor".to_string(),
             message: "Add feature".to_string(),
             timestamp: 1234567890,
+            changed_files: vec!["src/lib.rs".to_string(), "README.md".to_string()],
         };
 
         let metric_data = MessageData::MetricInfo {

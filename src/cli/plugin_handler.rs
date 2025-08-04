@@ -57,7 +57,7 @@ impl PluginHandler {
         debug!("Discovering plugins in directory: {}", self.discovery.plugin_directory().display());
         
         let descriptors = self.discovery.discover_plugins().await?;
-        info!("Discovered {} plugins", descriptors.len());
+        debug!("Discovered {} plugins", descriptors.len());
         
         for descriptor in &descriptors {
             debug!("Found plugin: {} v{} ({:?})", 
@@ -153,7 +153,7 @@ impl PluginHandler {
             ));
         }
         
-        info!("Validated {} plugins successfully", validated.len());
+        debug!("Validated {} plugins successfully", validated.len());
         Ok(validated)
     }
     
@@ -279,7 +279,7 @@ impl PluginHandler {
         let export_functions = export_plugin.advertised_functions();
         self.command_mapper.register_plugin("export", export_functions);
         
-        info!("Registered built-in plugins: commits, metrics, export");
+        debug!("Registered built-in plugins: commits, metrics, export");
         Ok(())
     }
     

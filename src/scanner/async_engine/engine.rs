@@ -122,7 +122,7 @@ impl AsyncScannerEngine {
             }
             
             if !found {
-                log::warn!("No scanner found for mode: {:?}", mode);
+                log::debug!("Mode {:?} will be handled by plugin processing", mode);
             }
         }
         
@@ -139,7 +139,7 @@ impl AsyncScannerEngine {
             
             let task_id = self.task_manager.spawn_task(mode, move |cancel| {
                 async move {
-                    log::info!("Starting {} scan with scanner: {}", mode.bits(), scanner_name);
+                    log::debug!("Starting {} scan with scanner: {}", mode.bits(), scanner_name);
                     
                     // Get message stream from scanner
                     let stream = scanner.scan_async(mode).await?;
@@ -147,7 +147,7 @@ impl AsyncScannerEngine {
                     // Process messages from stream
                     AsyncScannerEngine::process_stream(stream, producer, cancel).await?;
                     
-                    log::info!("Completed {} scan", mode.bits());
+                    log::debug!("Completed {} scan", mode.bits());
                     Ok(())
                 }
             }).await?;

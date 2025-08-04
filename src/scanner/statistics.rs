@@ -112,48 +112,35 @@ impl RepositoryStatsCollector {
         Ok(())
     }
     
-    /// Collect file-related statistics
+    /// Collect file-related statistics from Git repository (tracked files only)
     fn collect_file_statistics(&self, repo: &RepositoryHandle, stats: &mut RepositoryStatistics) -> Result<()> {
-        use std::fs;
+        let git_repo = repo.repository();
         
-        let workdir = repo.workdir()
-            .ok_or_else(|| anyhow::anyhow!("Repository has no working directory"))?;
-            
         let mut file_count = 0u64;
         let mut total_size = 0u64;
         
-        // Recursively count files in the working directory
-        self.count_files_recursive(workdir, &mut file_count, &mut total_size)?;
+        // Get the HEAD commit to read the tree
+        if let Ok(head) = git_repo.head() {
+            if let Ok(commit) = head.peel_to_commit() {
+                let tree = commit.tree()?;
+                
+                // Walk through all files in the Git tree (tracked files only)
+                tree.walk(git2::TreeWalkMode::PreOrder, |_, entry| {
+                    if entry.kind() == Some(git2::ObjectType::Blob) {
+                        file_count += 1;
+                        
+                        // Try to get the blob size
+                        if let Ok(blob) = git_repo.find_blob(entry.id()) {
+                            total_size += blob.size() as u64;
+                        }
+                    }
+                    git2::TreeWalkResult::Ok
+                })?;
+            }
+        }
         
         stats.total_files = file_count;
         stats.repository_size = total_size;
-        
-        Ok(())
-    }
-    
-    /// Recursively count files and calculate total size
-    fn count_files_recursive(&self, dir: &std::path::Path, file_count: &mut u64, total_size: &mut u64) -> Result<()> {
-        use std::fs;
-        
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                
-                // Skip .git directory
-                if path.file_name().map_or(false, |name| name == ".git") {
-                    continue;
-                }
-                
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.is_file() {
-                        *file_count += 1;
-                        *total_size += metadata.len();
-                    } else if metadata.is_dir() {
-                        self.count_files_recursive(&path, file_count, total_size)?;
-                    }
-                }
-            }
-        }
         
         Ok(())
     }

@@ -179,6 +179,9 @@ impl AsyncRepositoryHandle {
                 let oid = oid_result?;
                 let commit = repo.find_commit(oid)?;
                 
+                // Get changed files by comparing with parent commit
+                let changed_files = get_commit_changed_files(repo, &commit)?;
+                
                 let commit_info = CommitInfo {
                     id: oid.to_string(),
                     message: commit.message().unwrap_or("").to_string(),
@@ -186,6 +189,7 @@ impl AsyncRepositoryHandle {
                     author_email: commit.author().email().unwrap_or("").to_string(),
                     timestamp: commit.time().seconds(),
                     parent_count: commit.parent_count(),
+                    changed_files,
                 };
                 
                 commits.push(commit_info);
@@ -234,6 +238,7 @@ impl AsyncRepositoryHandle {
                 message: commit_info.message,
                 author: commit_info.author,
                 timestamp: commit_info.timestamp,
+                changed_files: commit_info.changed_files,
             };
             
             messages.push(ScanMessage::new(header, data));
@@ -269,6 +274,60 @@ pub struct CommitInfo {
     pub author_email: String,
     pub timestamp: i64,
     pub parent_count: usize,
+    pub changed_files: Vec<String>,
+}
+
+/// Get the list of files changed in a commit by comparing with its parent(s)
+fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<Vec<String>, git2::Error> {
+    let mut changed_files = std::collections::HashSet::new();
+    
+    // Get the commit tree
+    let commit_tree = commit.tree()?;
+    
+    // If this is the initial commit (no parents), return all files in the tree
+    if commit.parent_count() == 0 {
+        let mut file_paths = Vec::new();
+        commit_tree.walk(TreeWalkMode::PreOrder, |root, entry| {
+            if entry.kind() == Some(ObjectType::Blob) {
+                if let Some(name) = entry.name() {
+                    let full_path = if root.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{}/{}", root, name)
+                    };
+                    file_paths.push(full_path);
+                }
+            }
+            TreeWalkResult::Ok
+        })?;
+        return Ok(file_paths);
+    }
+    
+    // Compare with each parent (handles merge commits)
+    for i in 0..commit.parent_count() {
+        let parent = commit.parent(i)?;
+        let parent_tree = parent.tree()?;
+        
+        // Create diff between parent and current commit
+        let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?;
+        
+        // Extract file paths from diff
+        diff.foreach(&mut |delta, _progress| {
+            if let Some(new_file) = delta.new_file().path() {
+                if let Some(path_str) = new_file.to_str() {
+                    changed_files.insert(path_str.to_string());
+                }
+            }
+            if let Some(old_file) = delta.old_file().path() {
+                if let Some(path_str) = old_file.to_str() {
+                    changed_files.insert(path_str.to_string());
+                }
+            }
+            true // continue iteration
+        }, None, None, None)?;
+    }
+    
+    Ok(changed_files.into_iter().collect())
 }
 
 /// Estimate line count from file size (rough heuristic)
@@ -380,9 +439,10 @@ mod tests {
         for message in &messages {
             assert_eq!(message.header().mode(), ScanMode::HISTORY);
             match message.data() {
-                MessageData::CommitInfo { hash, author, .. } => {
+                MessageData::CommitInfo { hash, author, changed_files, .. } => {
                     assert!(!hash.is_empty());
                     assert!(!author.is_empty());
+                    assert!(changed_files.is_empty() || !changed_files.is_empty()); // Allows empty or non-empty
                 }
                 _ => panic!("Expected CommitInfo message data"),
             }

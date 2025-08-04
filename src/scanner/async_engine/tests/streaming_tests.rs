@@ -22,6 +22,8 @@ fn create_test_message(id: u64, mode: ScanMode) -> ScanMessage {
                 hash: format!("commit_{:06x}", id),
                 author: format!("author_{}", id % 3),
                 message: format!("Commit message {}", id),
+                timestamp: 1234567890 + id as i64,
+                changed_files: vec![format!("file_{}.rs", id)],
             },
             _ => MessageData::FileInfo {
                 path: format!("generic_{}.txt", id),

@@ -334,7 +334,7 @@ impl CommitsPlugin {
 
     /// Generate analysis for a single commit
     fn generate_commit_analysis(&self, commit: &ScanMessage) -> PluginResult<ScanMessage> {
-        if let MessageData::CommitInfo { hash, author, message, timestamp } = &commit.data {
+        if let MessageData::CommitInfo { hash, author, message, timestamp, .. } = &commit.data {
             // Get author commit count
             let count = self.author_stats.get(author).unwrap_or(&0);
             
@@ -382,6 +382,7 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64,
+            changed_files: vec!["src/main.rs".to_string()], // Add test file
         };
 
         let header = MessageHeader::new(

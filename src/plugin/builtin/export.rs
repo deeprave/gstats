@@ -818,6 +818,7 @@ mod tests {
             author: "test@example.com".to_string(),
             message: "Test commit".to_string(),
             timestamp: 123456789,
+            changed_files: vec!["src/main.rs".to_string()],
         };
         let message = create_test_message(ScanMode::HISTORY, data);
         plugin.add_data(message).unwrap();

@@ -196,7 +196,7 @@ pub fn validate_args(args: &Args) -> Result<()> {
         ));
     }
     
-    info!("CLI arguments validated successfully");
+    debug!("CLI arguments validated successfully");
     Ok(())
 }
 

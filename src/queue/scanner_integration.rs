@@ -416,6 +416,7 @@ mod tests {
                 author: "test@example.com".to_string(),
                 message: "Test commit".to_string(),
                 timestamp: 1234567890,
+                changed_files: vec!["src/lib.rs".to_string()],
             }
         );
         

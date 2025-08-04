@@ -178,6 +178,7 @@ fn test_message_serialization() {
             author: "developer".to_string(),
             message: "Fix bug".to_string(),
             timestamp: 1640995200, // Jan 1, 2022
+            changed_files: vec!["src/main.rs".to_string()],
         }
     );
     
@@ -417,6 +418,7 @@ fn test_scan_filter_trait() {
             author: "dev".to_string(),
             message: "Fix".to_string(),
             timestamp: 1640995200, // Jan 1, 2022
+            changed_files: vec![],
         }
     );
     assert!(filter.should_include(&commit_message));

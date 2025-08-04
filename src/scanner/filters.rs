@@ -340,15 +340,11 @@ impl FilterExecutor {
             combined_filters.push(Box::new(DateFilter::new(date_range.clone())));
         }
         
-        // Add path filter if present
-        if query.has_path_filter() {
-            combined_filters.push(Box::new(PathFilter::new(query.file_paths.clone())));
-        }
+        // Always add path filter - it correctly handles empty include lists as "include all"
+        combined_filters.push(Box::new(PathFilter::new(query.file_paths.clone())));
         
-        // Add author filter if present  
-        if query.has_author_filter() {
-            combined_filters.push(Box::new(AuthorFilter::new(query.authors.clone())));
-        }
+        // Always add author filter - it correctly handles empty include lists as "include all"
+        combined_filters.push(Box::new(AuthorFilter::new(query.authors.clone())));
         
         Box::new(CombinedFilter::new(combined_filters))
     }
@@ -705,5 +701,34 @@ mod tests {
         // Should terminate early after finding 1 match
         let result = executor.apply_filter(commits.into_iter(), filter);
         assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_empty_filters_include_all() {
+        use crate::scanner::query::QueryParams;
+        
+        // Create query with no filters (empty include/exclude lists)
+        let empty_query = QueryParams::default();
+        
+        // Verify the query has empty include lists
+        assert!(empty_query.file_paths.include.is_empty());
+        assert!(empty_query.authors.include.is_empty());
+        
+        // Create filter from empty query
+        let filter = FilterExecutor::filter_from_query(&empty_query);
+        
+        // Test commits with different authors and paths
+        let commits = vec![
+            create_test_commit(UNIX_EPOCH, "alice", vec!["src/main.rs"]),
+            create_test_commit(UNIX_EPOCH, "bob", vec!["tests/test.rs"]),
+            create_test_commit(UNIX_EPOCH, "charlie", vec!["docs/README.md"]),
+        ];
+        
+        // All commits should pass through empty filters (include all behavior)
+        for commit in &commits {
+            let result = filter.apply(commit);
+            assert!(matches!(result, ControlFlow::Continue(())), 
+                "Empty filters should include all commits, but commit {:?} was filtered out", commit);
+        }
     }
 }

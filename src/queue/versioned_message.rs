@@ -140,6 +140,7 @@ mod tests {
                 author: "developer".to_string(),
                 message: "Fix bug".to_string(),
                 timestamp: 1234567890,
+                changed_files: vec!["src/main.rs".to_string()],
             }
         );
         

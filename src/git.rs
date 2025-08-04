@@ -154,7 +154,7 @@ impl ScannerInitContext {
 /// Returns a Repository handle if valid, error otherwise
 pub fn validate_git_repository_handle<P: AsRef<Path>>(path: P) -> Result<Repository> {
     let path = path.as_ref();
-    info!("Validating git repository handle at: {}", path.display());
+    debug!("Validating git repository handle at: {}", path.display());
     
     if !path.exists() {
         error!("Path does not exist: {}", path.display());
@@ -168,7 +168,7 @@ pub fn validate_git_repository_handle<P: AsRef<Path>>(path: P) -> Result<Reposit
         debug!("Repository is bare: {}", path.display());
     }
     
-    info!("Git repository handle validated successfully: {}", path.display());
+    debug!("Git repository handle validated successfully: {}", path.display());
     Ok(repo)
 }
 

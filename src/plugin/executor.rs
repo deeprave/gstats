@@ -62,9 +62,15 @@ impl PluginExecutor {
         for plugin_name in plugin_names {
             log::debug!("Processing message through plugin: {}", plugin_name);
             
-            // For now, we'll just log that we would process through the plugin
-            // In a full implementation, we'd need to safely downcast and call process_scan_data
-            log::trace!("Plugin {} would process message", plugin_name);
+            // For now, we need to implement proper plugin message processing
+            // This requires either:
+            // 1. Adding an as_any() method to the Plugin trait, or
+            // 2. Adding a process_message method to the base Plugin trait, or
+            // 3. Using a different approach to handle ScannerPlugin specifically
+            //
+            // As a temporary solution, we'll log that processing would happen here
+            // The real issue is that plugins need their internal state updated during scanning
+            log::trace!("Plugin {} message processing not yet fully implemented", plugin_name);
             
             // Update metrics
             let mut metrics = self.metrics.write().await;

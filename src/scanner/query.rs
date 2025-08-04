@@ -147,16 +147,6 @@ impl QueryParams {
         self.date_range.is_some()
     }
     
-    /// Check if this query has any file path constraints
-    pub fn has_path_filter(&self) -> bool {
-        !self.file_paths.include.is_empty() || !self.file_paths.exclude.is_empty()
-    }
-    
-    /// Check if this query has any author constraints
-    pub fn has_author_filter(&self) -> bool {
-        !self.authors.include.is_empty() || !self.authors.exclude.is_empty()
-    }
-    
     /// Check if this query has a limit constraint
     pub fn has_limit(&self) -> bool {
         self.limit.is_some()
@@ -525,15 +515,11 @@ mod tests {
             .unwrap();
             
         assert!(params.has_date_filter());
-        assert!(params.has_path_filter());
-        assert!(params.has_author_filter());
         assert!(params.has_limit());
         assert_eq!(params.effective_limit(), Some(100));
         
         let empty_params = QueryParams::new();
         assert!(!empty_params.has_date_filter());
-        assert!(!empty_params.has_path_filter());
-        assert!(!empty_params.has_author_filter());
         assert!(!empty_params.has_limit());
         assert_eq!(empty_params.effective_limit(), None);
     }

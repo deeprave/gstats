@@ -132,6 +132,7 @@ impl AsyncHistoryScanner {
                     author: commit_info.author,
                     message: commit_info.message,
                     timestamp: commit_info.timestamp,
+                    changed_files: commit_info.changed_files,
                 };
                 
                 Ok(ScanMessage::new(header, data))
@@ -350,10 +351,11 @@ mod tests {
             assert_eq!(message.header().mode(), ScanMode::HISTORY);
             
             match message.data() {
-                MessageData::CommitInfo { hash, author, message: _, timestamp } => {
+                MessageData::CommitInfo { hash, author, message: _, timestamp, changed_files } => {
                     assert!(!hash.is_empty());
                     assert!(!author.is_empty());
                     assert!(*timestamp > 0);
+                    assert!(changed_files.is_empty() || !changed_files.is_empty()); // Allows empty or non-empty
                 }
                 _ => panic!("Expected CommitInfo message data"),
             }

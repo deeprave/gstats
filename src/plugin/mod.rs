@@ -33,7 +33,7 @@ pub mod tests;
 // Re-export core types for easier access
 pub use traits::{Plugin, ScannerPlugin, NotificationPlugin, PluginLifecycle, PluginFunction};
 pub use error::{PluginError, PluginResult};
-pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType};
+pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType, RequestPriority};
 
 // Plugin metadata and info
 pub use traits::{PluginInfo, PluginDependency, PluginCapability};
