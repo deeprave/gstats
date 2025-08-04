@@ -9,6 +9,7 @@ use crate::plugin::{
 use super::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
 use super::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
 use super::duplication_detector::{DuplicationDetector, DuplicationConfig};
+use super::debt_assessor::{DebtAssessor, DebtConfig};
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use crate::git::RepositoryHandle;
 use async_trait::async_trait;
@@ -257,6 +258,9 @@ impl Plugin for MetricsPlugin {
                     "duplicates" | "duplication" | "clone-detection" => {
                         self.execute_duplication_analysis().await
                     }
+                    "debt" | "technical-debt" | "td-assessment" => {
+                        self.execute_debt_assessment().await
+                    }
                     _ => Err(PluginError::execution_failed(
                         format!("Unknown function: {}", function_name)
                     )),
@@ -312,6 +316,12 @@ impl Plugin for MetricsPlugin {
                 name: "duplicates".to_string(),
                 aliases: vec!["duplication".to_string(), "clone-detection".to_string()],
                 description: "Detect duplicate and similar code patterns using token-based analysis".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "debt".to_string(),
+                aliases: vec!["technical-debt".to_string(), "td-assessment".to_string()],
+                description: "Comprehensive technical debt assessment combining complexity, frequency, and duplication metrics".to_string(),
                 is_default: false,
             },
         ]
@@ -785,6 +795,119 @@ impl MetricsPlugin {
                 content
             }
         }
+    }
+    
+    /// Execute comprehensive technical debt assessment
+    async fn execute_debt_assessment(&self) -> PluginResult<PluginResponse> {
+        if !self.initialized {
+            return Err(PluginError::invalid_state("Plugin not initialized"));
+        }
+        
+        let repository = match &self.repository {
+            Some(repo) => repo.clone(),
+            None => return Err(PluginError::execution_failed("No repository available for change frequency analysis")),
+        };
+        
+        // Build complexity metrics map
+        let mut complexity_metrics = HashMap::new();
+        for (file_path, metrics) in &self.file_metrics {
+            let mut complexity = FileComplexityMetrics::new(file_path.clone());
+            complexity.lines_of_code = metrics.lines_of_code;
+            complexity.cyclomatic_complexity = metrics.cyclomatic_complexity as f64;
+            complexity.comment_ratio = if metrics.lines_of_code > 0 {
+                metrics.comment_lines as f64 / metrics.lines_of_code as f64
+            } else {
+                0.0
+            };
+            complexity.file_size_bytes = metrics.file_size_bytes;
+            complexity_metrics.insert(file_path.clone(), complexity);
+        }
+        
+        // Analyze change frequency
+        let mut analyzer = ChangeFrequencyAnalyzer::new(repository, TimeWindow::Month);
+        let change_stats = match analyzer.analyze() {
+            Ok(_) => analyzer.get_file_stats().clone(),
+            Err(e) => {
+                eprintln!("Warning: Could not analyze change frequency: {}", e);
+                HashMap::new()
+            }
+        };
+        
+        // Generate file contents for duplication analysis (using sample content)
+        let mut file_contents = HashMap::new();
+        for (file_path, metrics) in &self.file_metrics {
+            let content = self.generate_sample_content(file_path, metrics);
+            file_contents.insert(file_path.clone(), content);
+        }
+        
+        // Analyze duplications
+        let duplication_detector = DuplicationDetector::with_defaults();
+        let duplicate_groups = duplication_detector.detect_duplicates(&file_contents);
+        
+        // Perform debt assessment
+        let debt_assessor = DebtAssessor::with_defaults();
+        let assessments = debt_assessor.assess_debt(&complexity_metrics, &change_stats, &duplicate_groups);
+        let summary = debt_assessor.generate_summary(&assessments);
+        
+        // Prepare response data
+        let assessment_data: Vec<_> = assessments.iter().map(|assessment| {
+            json!({
+                "file_path": assessment.file_path,
+                "debt_score": assessment.debt_score,
+                "debt_level": assessment.debt_level.as_str(),
+                "component_scores": {
+                    "complexity": assessment.complexity_score,
+                    "frequency": assessment.frequency_score,
+                    "duplication": assessment.duplication_score,
+                    "size": assessment.size_score,
+                    "age": assessment.age_score
+                },
+                "recommendations": assessment.recommendations,
+                "priority_actions": assessment.priority_actions,
+                "estimated_hours": assessment.estimated_hours
+            })
+        }).collect();
+        
+        let data = json!({
+            "assessments": assessment_data,
+            "summary": {
+                "total_files_with_debt": summary.total_files_with_debt,
+                "debt_levels": {
+                    "critical": summary.critical_debt_files,
+                    "high": summary.high_debt_files,
+                    "medium": summary.medium_debt_files,
+                    "low": summary.low_debt_files,
+                    "minimal": summary.minimal_debt_files
+                },
+                "average_debt_score": summary.average_debt_score,
+                "max_debt_score": summary.max_debt_score,
+                "total_estimated_hours": summary.total_estimated_hours,
+                "config": {
+                    "complexity_weight": summary.config.complexity_weight,
+                    "frequency_weight": summary.config.frequency_weight,
+                    "duplication_weight": summary.config.duplication_weight,
+                    "size_weight": summary.config.size_weight,
+                    "age_weight": summary.config.age_weight,
+                    "debt_threshold": summary.config.debt_threshold,
+                    "time_window": format!("{:?}", summary.config.time_window)
+                }
+            },
+            "function": "debt"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "debt_assessment".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: assessments.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
     }
 }
 
