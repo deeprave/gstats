@@ -10,6 +10,22 @@ use crate::scanner::messages::ScanMessage;
 use super::error::{PluginError, PluginResult};
 use super::context::{PluginContext, PluginRequest, PluginResponse};
 
+/// Function that a plugin can provide
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginFunction {
+    /// Primary function name
+    pub name: String,
+    
+    /// Alternative names/aliases for this function
+    pub aliases: Vec<String>,
+    
+    /// Human-readable description
+    pub description: String,
+    
+    /// Whether this is the default function when plugin is invoked directly
+    pub is_default: bool,
+}
+
 /// Core plugin interface that all plugins must implement
 #[async_trait]
 pub trait Plugin: Send + Sync {
@@ -34,6 +50,18 @@ pub trait Plugin: Send + Sync {
     /// Get plugin state
     fn plugin_state(&self) -> PluginState {
         PluginState::Initialized // Default implementation
+    }
+    
+    /// Get all functions this plugin can handle
+    fn advertised_functions(&self) -> Vec<PluginFunction> {
+        // Default implementation returns empty vec
+        Vec::new()
+    }
+    
+    /// Get the default function name if any
+    fn default_function(&self) -> Option<&str> {
+        // Default implementation returns None
+        None
     }
 }
 
@@ -157,6 +185,15 @@ pub struct PluginCapability {
     
     /// Capability version
     pub version: String,
+    
+    /// Function name this capability represents (if applicable)
+    pub function_name: Option<String>,
+    
+    /// Aliases for the function
+    pub aliases: Vec<String>,
+    
+    /// Whether this is a default function
+    pub is_default: bool,
 }
 
 /// Plugin type classification
@@ -376,6 +413,9 @@ impl PluginInfo {
             name,
             description,
             version,
+            function_name: None,
+            aliases: Vec::new(),
+            is_default: false,
         });
         self
     }

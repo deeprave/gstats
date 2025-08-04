@@ -9,7 +9,7 @@ mod plugin;
 use anyhow::Result;
 use std::process;
 use std::sync::Arc;
-use log::{info, error};
+use log::{info, error, debug};
 
 fn main() {
     if let Err(e) = run() {
@@ -56,7 +56,7 @@ fn run() -> Result<()> {
         .build()?;
     
     // Handle plugin management commands
-    if args.list_plugins || args.plugin_info.is_some() || args.check_plugin.is_some() || args.list_by_type.is_some() {
+    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.check_plugin.is_some() || args.list_by_type.is_some() {
         return runtime.block_on(async {
             handle_plugin_commands(&args).await
         });
@@ -188,7 +188,144 @@ async fn handle_plugin_commands(args: &cli::Args) -> Result<()> {
     use cli::plugin_handler::PluginHandler;
     use crate::plugin::traits::PluginType;
     
-    let handler = PluginHandler::new()?;
+    let mut handler = PluginHandler::new()?;
+    
+    // Handle --plugins command (display plugins with their functions)
+    if args.show_plugins {
+        handler.build_command_mappings().await?;
+        
+        println!("Available Plugins:");
+        println!("==================");
+        
+        let mappings = handler.get_function_mappings();
+        if mappings.is_empty() {
+            println!("No plugins available.");
+        } else {
+            // Group functions by plugin
+            let mut plugins_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+            for mapping in &mappings {
+                plugins_map.entry(mapping.plugin_name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(mapping);
+            }
+            
+            // Sort plugins by name
+            let mut plugin_names: Vec<_> = plugins_map.keys().collect();
+            plugin_names.sort();
+            
+            for (i, plugin_name) in plugin_names.iter().enumerate() {
+                if i > 0 {
+                    println!(); // Add spacing between plugins
+                }
+                
+                let plugin_functions = &plugins_map[*plugin_name];
+                
+                // Find default function for plugin header
+                let has_default = plugin_functions.iter().any(|f| f.is_default);
+                
+                println!("Plugin: {}{}", plugin_name, if has_default { " (has default)" } else { "" });
+                
+                // Sort functions within plugin (default first, then alphabetically)
+                let mut sorted_functions = plugin_functions.clone();
+                sorted_functions.sort_by(|a, b| {
+                    match (a.is_default, b.is_default) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.function_name.cmp(&b.function_name),
+                    }
+                });
+                
+                for function in sorted_functions {
+                    let aliases_str = if function.aliases.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (aliases: {})", function.aliases.join(", "))
+                    };
+                    
+                    let default_marker = if function.is_default { " *" } else { "" };
+                    
+                    println!("  {}{}{}{}", 
+                        function.function_name,
+                        default_marker,
+                        aliases_str,
+                        if !function.description.is_empty() { 
+                            format!(" - {}", function.description) 
+                        } else { 
+                            String::new() 
+                        }
+                    );
+                }
+            }
+            
+            println!();
+            println!("Usage Examples:");
+            println!("  gstats <plugin>                # Use plugin's default function");
+            println!("  gstats <plugin>:<function>     # Use specific plugin function");
+            println!();
+            println!("* = default function for plugin");
+        }
+        
+        return Ok(());
+    }
+    
+    // Handle --plugins-help command (display functions with their providers)
+    if args.plugins_help {
+        handler.build_command_mappings().await?;
+        
+        println!("Available Plugin Functions and Commands:");
+        println!("========================================");
+        
+        let mappings = handler.get_function_mappings();
+        if mappings.is_empty() {
+            println!("No plugin functions available.");
+        } else {
+            // Sort functions alphabetically
+            let mut sorted_mappings = mappings.clone();
+            sorted_mappings.sort_by(|a, b| a.function_name.cmp(&b.function_name));
+            
+            for mapping in &sorted_mappings {
+                let aliases_str = if mapping.aliases.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (aliases: {})", mapping.aliases.join(", "))
+                };
+                
+                let default_marker = if mapping.is_default { " *" } else { "" };
+                
+                println!("{}{}{} → {} plugin{}", 
+                    mapping.function_name,
+                    default_marker,
+                    aliases_str,
+                    mapping.plugin_name,
+                    if !mapping.description.is_empty() { 
+                        format!(" - {}", mapping.description) 
+                    } else { 
+                        String::new() 
+                    }
+                );
+            }
+            
+            println!();
+            println!("Usage Examples:");
+            println!("  gstats <function>              # Use function if unambiguous");
+            println!("  gstats <plugin>                # Use plugin's default function");  
+            println!("  gstats <plugin>:<function>     # Explicit plugin:function syntax");
+            println!();
+            println!("* = default function for plugin");
+        }
+        
+        // Show any ambiguities as warnings
+        let ambiguities = handler.get_ambiguity_reports();
+        if !ambiguities.is_empty() {
+            println!();
+            println!("Ambiguous Functions (require plugin:function syntax):");
+            for ambiguity in ambiguities {
+                println!("  ⚠️  {}", ambiguity);
+            }
+        }
+        
+        return Ok(());
+    }
     
     if args.list_plugins {
         let plugins = handler.list_plugins().await?;
@@ -259,14 +396,15 @@ async fn run_scanner(
     // Initialize built-in plugins
     initialize_builtin_plugins(&plugin_registry).await?;
     
-    // Create plugin handler for discovery
-    let plugin_handler = cli::plugin_handler::PluginHandler::new()?;
+    // Create plugin handler for discovery and command mapping
+    let mut plugin_handler = cli::plugin_handler::PluginHandler::new()?;
+    plugin_handler.build_command_mappings().await?;
     
-    // Validate and get plugin names
+    // Resolve plugin commands using CommandMapper
     let plugin_names = if args.plugins.is_empty() {
         vec!["commits".to_string()] // Default plugin
     } else {
-        plugin_handler.validate_plugin_names(&args.plugins).await?
+        resolve_plugin_commands(&plugin_handler, &args.plugins).await?
     };
     
     info!("Active plugins: {:?}", plugin_names);
@@ -397,4 +535,53 @@ fn determine_scan_modes(plugin_names: &[String]) -> scanner::ScanMode {
     }
     
     modes
+}
+
+/// Resolve plugin commands using CommandMapper
+async fn resolve_plugin_commands(
+    plugin_handler: &cli::plugin_handler::PluginHandler,
+    commands: &[String],
+) -> Result<Vec<String>> {
+    use cli::command_mapper::CommandResolution;
+    
+    let mut resolved_plugins = Vec::new();
+    
+    for command in commands {
+        debug!("Resolving command: '{}'", command);
+        
+        match plugin_handler.resolve_command(command) {
+            Ok(resolution) => {
+                match resolution {
+                    CommandResolution::Function { plugin_name, function_name, .. } => {
+                        debug!("Resolved '{}' to plugin '{}' function '{}'", command, plugin_name, function_name);
+                        resolved_plugins.push(plugin_name);
+                    }
+                    CommandResolution::DirectPlugin { plugin_name, default_function } => {
+                        debug!("Resolved '{}' to plugin '{}' (default: {:?})", command, plugin_name, default_function);
+                        resolved_plugins.push(plugin_name);
+                    }
+                    CommandResolution::Explicit { plugin_name, function_name } => {
+                        debug!("Resolved '{}' to plugin '{}' function '{}'", command, plugin_name, function_name);
+                        resolved_plugins.push(plugin_name);
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e));
+            }
+        }
+    }
+    
+    // Remove duplicates while preserving order
+    let mut unique_plugins = Vec::new();
+    for plugin in resolved_plugins {
+        if !unique_plugins.contains(&plugin) {
+            unique_plugins.push(plugin);
+        }
+    }
+    
+    debug!("Resolved {} commands to {} unique plugins: {:?}", 
+           commands.len(), unique_plugins.len(), unique_plugins);
+    
+    Ok(unique_plugins)
 }

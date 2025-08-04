@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginCapability}
+    PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
 };
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
@@ -372,6 +372,159 @@ impl ExportPlugin {
         
         stats
     }
+    
+    /// Execute data export function (using configured format)
+    async fn execute_data_export(&self) -> PluginResult<PluginResponse> {
+        let exported_data = self.export_data().await?;
+        let format_name = format!("{:?}", self.export_config.output_format).to_lowercase();
+        
+        let data = json!({
+            "exported_data": exported_data,
+            "format": format_name,
+            "entries_count": self.collected_data.len(),
+            "output_path": self.export_config.output_path,
+            "function": "export"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "data_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute JSON export function
+    async fn execute_json_export(&self) -> PluginResult<PluginResponse> {
+        let json_data = self.export_json()?;
+        
+        let data = json!({
+            "json_data": json_data,
+            "entries_count": self.collected_data.len(),
+            "function": "json"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "json_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute CSV export function
+    async fn execute_csv_export(&self) -> PluginResult<PluginResponse> {
+        let csv_data = self.export_csv()?;
+        
+        let data = json!({
+            "csv_data": csv_data,
+            "entries_count": self.collected_data.len(),
+            "function": "csv"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "csv_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute HTML export function
+    async fn execute_html_export(&self) -> PluginResult<PluginResponse> {
+        let html_data = self.export_html()?;
+        
+        let data = json!({
+            "html_data": html_data,
+            "entries_count": self.collected_data.len(),
+            "function": "html"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "html_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute XML export function
+    async fn execute_xml_export(&self) -> PluginResult<PluginResponse> {
+        let xml_data = self.export_xml()?;
+        
+        let data = json!({
+            "xml_data": xml_data,
+            "entries_count": self.collected_data.len(),
+            "function": "xml"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "xml_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute YAML export function
+    async fn execute_yaml_export(&self) -> PluginResult<PluginResponse> {
+        let yaml_data = self.export_yaml()?;
+        
+        let data = json!({
+            "yaml_data": yaml_data,
+            "entries_count": self.collected_data.len(),
+            "function": "yaml"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "yaml_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
 }
 
 impl Default for ExportPlugin {
@@ -441,6 +594,39 @@ impl Plugin for ExportPlugin {
         }
 
         match request {
+            PluginRequest::Execute { invoked_as, invocation_type, .. } => {
+                // Handle function-based execution
+                let function_name = match invocation_type {
+                    crate::plugin::InvocationType::Function(ref func) => func.as_str(),
+                    crate::plugin::InvocationType::Direct => self.default_function().unwrap_or("export"),
+                    crate::plugin::InvocationType::Default => "export",
+                };
+                
+                // Route to appropriate function
+                match function_name {
+                    "export" | "save" | "output" => {
+                        self.execute_data_export().await
+                    }
+                    "json" => {
+                        self.execute_json_export().await
+                    }
+                    "csv" => {
+                        self.execute_csv_export().await
+                    }
+                    "html" | "report" => {
+                        self.execute_html_export().await
+                    }
+                    "xml" => {
+                        self.execute_xml_export().await
+                    }
+                    "yaml" => {
+                        self.execute_yaml_export().await
+                    }
+                    _ => Err(PluginError::execution_failed(
+                        format!("Unknown function: {}", function_name)
+                    )),
+                }
+            }
             PluginRequest::GetStatistics => {
                 // Create a metric info containing export statistics
                 let data = MessageData::MetricInfo {
@@ -476,6 +662,53 @@ impl Plugin for ExportPlugin {
         self.collected_data.clear();
         self.export_config = ExportConfig::default();
         Ok(())
+    }
+    
+    /// Get all functions this plugin can handle
+    fn advertised_functions(&self) -> Vec<PluginFunction> {
+        vec![
+            PluginFunction {
+                name: "export".to_string(),
+                aliases: vec!["save".to_string(), "output".to_string()],
+                description: "Export data in the configured format (JSON by default)".to_string(),
+                is_default: true,
+            },
+            PluginFunction {
+                name: "json".to_string(),
+                aliases: vec![],
+                description: "Export data as structured JSON format".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "csv".to_string(),
+                aliases: vec![],
+                description: "Export data as comma-separated values for spreadsheet applications".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "html".to_string(),
+                aliases: vec!["report".to_string()],
+                description: "Generate HTML reports with interactive visualizations".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "xml".to_string(),
+                aliases: vec![],
+                description: "Export data as XML format".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "yaml".to_string(),
+                aliases: vec![],
+                description: "Export data as YAML format".to_string(),
+                is_default: false,
+            },
+        ]
+    }
+    
+    /// Get the default function name
+    fn default_function(&self) -> Option<&str> {
+        Some("export")
     }
 }
 

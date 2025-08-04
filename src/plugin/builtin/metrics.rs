@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginCapability}
+    PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
 };
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
@@ -222,6 +222,30 @@ impl Plugin for MetricsPlugin {
         }
 
         match request {
+            PluginRequest::Execute { invoked_as, invocation_type, .. } => {
+                // Handle function-based execution
+                let function_name = match invocation_type {
+                    crate::plugin::InvocationType::Function(ref func) => func.as_str(),
+                    crate::plugin::InvocationType::Direct => self.default_function().unwrap_or("metrics"),
+                    crate::plugin::InvocationType::Default => "metrics",
+                };
+                
+                // Route to appropriate function
+                match function_name {
+                    "metrics" | "code" | "quality" => {
+                        self.execute_code_metrics().await
+                    }
+                    "complexity" | "cyclomatic" => {
+                        self.execute_complexity_analysis().await
+                    }
+                    "files" | "file-stats" => {
+                        self.execute_file_statistics().await
+                    }
+                    _ => Err(PluginError::execution_failed(
+                        format!("Unknown function: {}", function_name)
+                    )),
+                }
+            }
             PluginRequest::GetStatistics => {
                 let summary = self.generate_metrics_summary()?;
                 Ok(PluginResponse::Statistics(summary))
@@ -239,6 +263,35 @@ impl Plugin for MetricsPlugin {
         self.total_lines = 0;
         self.total_files = 0;
         Ok(())
+    }
+    
+    /// Get all functions this plugin can handle
+    fn advertised_functions(&self) -> Vec<PluginFunction> {
+        vec![
+            PluginFunction {
+                name: "metrics".to_string(),
+                aliases: vec!["code".to_string(), "quality".to_string()],
+                description: "Analyze code quality metrics including lines of code and overall quality indicators".to_string(),
+                is_default: true,
+            },
+            PluginFunction {
+                name: "complexity".to_string(),
+                aliases: vec!["cyclomatic".to_string()],
+                description: "Calculate cyclomatic complexity and complexity metrics for code files".to_string(),
+                is_default: false,
+            },
+            PluginFunction {
+                name: "files".to_string(),
+                aliases: vec!["file-stats".to_string()],
+                description: "Generate file-level statistics and aggregations".to_string(),
+                is_default: false,
+            },
+        ]
+    }
+    
+    /// Get the default function name
+    fn default_function(&self) -> Option<&str> {
+        Some("metrics")
     }
 }
 
@@ -370,6 +423,131 @@ impl MetricsPlugin {
         );
 
         Ok(ScanMessage::new(header, data))
+    }
+    
+    /// Execute code metrics analysis function
+    async fn execute_code_metrics(&self) -> PluginResult<PluginResponse> {
+        let total_complexity: usize = self.file_metrics.values().map(|m| m.cyclomatic_complexity).sum();
+        let total_comment_lines: usize = self.file_metrics.values().map(|m| m.comment_lines).sum();
+        let total_blank_lines: usize = self.file_metrics.values().map(|m| m.blank_lines).sum();
+        
+        let data = json!({
+            "total_files": self.total_files,
+            "total_lines": self.total_lines,
+            "total_comment_lines": total_comment_lines,
+            "total_blank_lines": total_blank_lines,
+            "average_lines_per_file": if self.total_files > 0 { self.total_lines as f64 / self.total_files as f64 } else { 0.0 },
+            "total_complexity": total_complexity,
+            "average_complexity": if self.total_files > 0 { total_complexity as f64 / self.total_files as f64 } else { 0.0 },
+            "function": "metrics"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "code_metrics".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.total_files as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute complexity analysis function
+    async fn execute_complexity_analysis(&self) -> PluginResult<PluginResponse> {
+        let mut complexity_distribution = HashMap::new();
+        let mut high_complexity_files = Vec::new();
+        
+        for (path, metrics) in &self.file_metrics {
+            let complexity = metrics.cyclomatic_complexity;
+            *complexity_distribution.entry(complexity).or_insert(0) += 1;
+            
+            if complexity > 10 {
+                high_complexity_files.push(json!({
+                    "file": path,
+                    "complexity": complexity,
+                    "lines_of_code": metrics.lines_of_code
+                }));
+            }
+        }
+        
+        let data = json!({
+            "complexity_distribution": complexity_distribution,
+            "high_complexity_files": high_complexity_files,
+            "files_analyzed": self.total_files,
+            "function": "complexity"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "complexity_analysis".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.total_files as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute file statistics function
+    async fn execute_file_statistics(&self) -> PluginResult<PluginResponse> {
+        let mut extension_stats = HashMap::new();
+        let mut size_distribution = HashMap::new();
+        
+        for metrics in self.file_metrics.values() {
+            let ext_stat = extension_stats.entry(metrics.file_extension.clone()).or_insert(json!({
+                "count": 0,
+                "total_lines": 0,
+                "total_size": 0
+            }));
+            
+            ext_stat["count"] = serde_json::Value::Number(serde_json::Number::from(
+                ext_stat["count"].as_u64().unwrap_or(0) + 1
+            ));
+            ext_stat["total_lines"] = serde_json::Value::Number(serde_json::Number::from(
+                ext_stat["total_lines"].as_u64().unwrap_or(0) + metrics.lines_of_code as u64
+            ));
+            ext_stat["total_size"] = serde_json::Value::Number(serde_json::Number::from(
+                ext_stat["total_size"].as_u64().unwrap_or(0) + metrics.file_size_bytes as u64
+            ));
+            
+            let size_bucket = match metrics.file_size_bytes {
+                0..=1024 => "small",
+                1025..=10240 => "medium",
+                10241..=102400 => "large",
+                _ => "very_large",
+            };
+            *size_distribution.entry(size_bucket.to_string()).or_insert(0) += 1;
+        }
+        
+        let data = json!({
+            "extension_statistics": extension_stats,
+            "size_distribution": size_distribution,
+            "total_files": self.total_files,
+            "function": "files"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "file_statistics".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.total_files as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
     }
 }
 

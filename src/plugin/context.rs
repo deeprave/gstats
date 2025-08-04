@@ -50,6 +50,17 @@ pub struct RuntimeInfo {
     pub working_directory: String,
 }
 
+/// How the plugin was invoked
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InvocationType {
+    /// Called as a specific function
+    Function(String),
+    /// Called by plugin name directly
+    Direct,
+    /// Using plugin's default function
+    Default,
+}
+
 /// Request types for plugin execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PluginRequest {
@@ -65,6 +76,10 @@ pub enum PluginRequest {
         timeout_ms: Option<u64>,
         /// Priority level for execution
         priority: RequestPriority,
+        /// How the plugin was invoked (function name or direct)
+        invoked_as: String,
+        /// Type of invocation
+        invocation_type: InvocationType,
     },
     /// Get plugin statistics
     GetStatistics,
@@ -224,14 +239,29 @@ impl PluginRequest {
             parameters: HashMap::new(),
             timeout_ms: None,
             priority: RequestPriority::Normal,
+            invoked_as: "default".to_string(),
+            invocation_type: InvocationType::Default,
+        }
+    }
+    
+    /// Create a new execute plugin request with invocation context
+    pub fn new_with_invocation(scan_modes: ScanMode, invoked_as: String, invocation_type: InvocationType) -> Self {
+        Self::Execute {
+            request_id: uuid::Uuid::now_v7().to_string(),
+            scan_modes,
+            parameters: HashMap::new(),
+            timeout_ms: None,
+            priority: RequestPriority::Normal,
+            invoked_as,
+            invocation_type,
         }
     }
     
     /// Set request priority (only for Execute requests)
     pub fn with_priority(self, priority: RequestPriority) -> Self {
         match self {
-            Self::Execute { request_id, scan_modes, parameters, timeout_ms, .. } => {
-                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority }
+            Self::Execute { request_id, scan_modes, parameters, timeout_ms, invoked_as, invocation_type, .. } => {
+                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority, invoked_as, invocation_type }
             }
             _ => self,
         }
@@ -240,8 +270,8 @@ impl PluginRequest {
     /// Set timeout (only for Execute requests)
     pub fn with_timeout(self, timeout_ms: u64) -> Self {
         match self {
-            Self::Execute { request_id, scan_modes, parameters, priority, .. } => {
-                Self::Execute { request_id, scan_modes, parameters, timeout_ms: Some(timeout_ms), priority }
+            Self::Execute { request_id, scan_modes, parameters, priority, invoked_as, invocation_type, .. } => {
+                Self::Execute { request_id, scan_modes, parameters, timeout_ms: Some(timeout_ms), priority, invoked_as, invocation_type }
             }
             _ => self,
         }
@@ -250,11 +280,11 @@ impl PluginRequest {
     /// Add parameter (only for Execute requests)
     pub fn with_parameter<T: Serialize>(self, key: String, value: T) -> Self {
         match self {
-            Self::Execute { request_id, scan_modes, mut parameters, timeout_ms, priority } => {
+            Self::Execute { request_id, scan_modes, mut parameters, timeout_ms, priority, invoked_as, invocation_type } => {
                 if let Ok(json_value) = serde_json::to_value(value) {
                     parameters.insert(key, json_value);
                 }
-                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority }
+                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority, invoked_as, invocation_type }
             }
             _ => self,
         }

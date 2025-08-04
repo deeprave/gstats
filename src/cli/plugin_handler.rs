@@ -5,9 +5,10 @@
 use crate::plugin::{
     registry::SharedPluginRegistry, 
     discovery::{PluginDiscovery, FileBasedDiscovery},
-    traits::{PluginDescriptor, PluginType},
+    traits::{PluginDescriptor, PluginType, PluginFunction},
     error::{PluginError, PluginResult}
 };
+use crate::cli::command_mapper::{CommandMapper, CommandResolution};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use anyhow::{Result, Context};
@@ -17,6 +18,7 @@ use log::{debug, info};
 pub struct PluginHandler {
     registry: SharedPluginRegistry,
     discovery: FileBasedDiscovery,
+    command_mapper: CommandMapper,
 }
 
 impl PluginHandler {
@@ -41,10 +43,12 @@ impl PluginHandler {
         
         let discovery = FileBasedDiscovery::with_caching(plugin_path, true)?;
         let registry = SharedPluginRegistry::new();
+        let command_mapper = CommandMapper::new();
         
         Ok(Self {
             registry,
             discovery,
+            command_mapper,
         })
     }
     
@@ -233,6 +237,98 @@ impl PluginHandler {
             Err(PluginError::plugin_not_found(plugin_name))
         }
     }
+    
+    /// Build command mappings from discovered plugins and built-in plugins
+    pub async fn build_command_mappings(&mut self) -> PluginResult<()> {
+        // Clear existing mappings
+        self.command_mapper = CommandMapper::new();
+        
+        // Register built-in plugins
+        self.register_builtin_plugins()?;
+        
+        // Discover and register external plugins
+        let descriptors = self.discover_plugins().await?;
+        for descriptor in descriptors {
+            // For now, register external plugins with basic capability mapping
+            // This will be enhanced when external plugins implement function advertisement
+            let functions = self.extract_functions_from_descriptor(&descriptor);
+            self.command_mapper.register_plugin(&descriptor.info.name, functions);
+        }
+        
+        debug!("Built command mappings for {} plugins", self.command_mapper.plugin_count());
+        Ok(())
+    }
+    
+    /// Register built-in plugins with their advertised functions
+    fn register_builtin_plugins(&mut self) -> PluginResult<()> {
+        use crate::plugin::builtin::{CommitsPlugin, MetricsPlugin, ExportPlugin};
+        use crate::plugin::Plugin;
+        
+        // Register CommitsPlugin functions
+        let commits_plugin = CommitsPlugin::new();
+        let commits_functions = commits_plugin.advertised_functions();
+        self.command_mapper.register_plugin("commits", commits_functions);
+        
+        // Register MetricsPlugin functions  
+        let metrics_plugin = MetricsPlugin::new();
+        let metrics_functions = metrics_plugin.advertised_functions();
+        self.command_mapper.register_plugin("metrics", metrics_functions);
+        
+        // Register ExportPlugin functions
+        let export_plugin = ExportPlugin::new();
+        let export_functions = export_plugin.advertised_functions();
+        self.command_mapper.register_plugin("export", export_functions);
+        
+        info!("Registered built-in plugins: commits, metrics, export");
+        Ok(())
+    }
+    
+    /// Extract functions from plugin descriptor (for external plugins)
+    fn extract_functions_from_descriptor(&self, descriptor: &PluginDescriptor) -> Vec<PluginFunction> {
+        // For now, create a basic function from plugin name
+        // This will be enhanced when external plugins implement function advertisement
+        vec![PluginFunction {
+            name: descriptor.info.name.clone(),
+            aliases: vec![],
+            description: descriptor.info.description.clone(),
+            is_default: true,
+        }]
+    }
+    
+    /// Resolve a command to a plugin and function
+    pub fn resolve_command(&self, command: &str) -> Result<CommandResolution, String> {
+        self.command_mapper.resolve_command(command)
+            .map_err(|e| e.to_string())
+    }
+    
+    /// Get all available function mappings for help display
+    pub fn get_function_mappings(&self) -> Vec<FunctionMapping> {
+        let mut mappings = Vec::new();
+        
+        for (plugin_name, functions) in self.command_mapper.get_all_mappings() {
+            for function in functions {
+                mappings.push(FunctionMapping {
+                    function_name: function.name.clone(),
+                    aliases: function.aliases.clone(),
+                    plugin_name: plugin_name.clone(),
+                    description: function.description.clone(),
+                    is_default: function.is_default,
+                });
+            }
+        }
+        
+        // Sort by function name for consistent display
+        mappings.sort_by(|a, b| a.function_name.cmp(&b.function_name));
+        mappings
+    }
+    
+    /// Get ambiguity reports for debugging
+    pub fn get_ambiguity_reports(&self) -> Vec<String> {
+        self.command_mapper.detect_ambiguities()
+            .into_iter()
+            .map(|report| report.to_string())
+            .collect()
+    }
 }
 
 /// Plugin information for CLI display
@@ -256,6 +352,16 @@ pub struct CompatibilityReport {
     pub current_api_version: u32,
     pub is_compatible: bool,
     pub compatibility_message: String,
+}
+
+/// Function mapping information for plugin-help display
+#[derive(Debug, Clone)]
+pub struct FunctionMapping {
+    pub function_name: String,
+    pub aliases: Vec<String>,
+    pub plugin_name: String,
+    pub description: String,
+    pub is_default: bool,
 }
 
 /// Find similar plugin names using basic string distance

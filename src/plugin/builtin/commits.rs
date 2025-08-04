@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginCapability}
+    PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
 };
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
@@ -82,6 +82,63 @@ impl CommitsPlugin {
 
         Ok(ScanMessage::new(header, data))
     }
+    
+    /// Execute commits analysis function
+    async fn execute_commits_analysis(&self) -> PluginResult<PluginResponse> {
+        let data = json!({
+            "total_commits": self.commit_count,
+            "unique_authors": self.author_stats.len(),
+            "avg_commits_per_author": if self.author_stats.is_empty() { 
+                0.0 
+            } else { 
+                self.commit_count as f64 / self.author_stats.len() as f64 
+            },
+            "function": "commits"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "commits_analysis".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.commit_count as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
+    
+    /// Execute author analysis function  
+    async fn execute_author_analysis(&self) -> PluginResult<PluginResponse> {
+        let mut authors: Vec<_> = self.author_stats.iter().collect();
+        authors.sort_by(|a, b| b.1.cmp(a.1)); // Sort by commit count descending
+        
+        let data = json!({
+            "total_authors": self.author_stats.len(),
+            "top_authors": authors.iter().take(10).map(|(name, count)| {
+                json!({ "name": name, "commits": count })
+            }).collect::<Vec<_>>(),
+            "author_stats": self.author_stats,
+            "function": "authors"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "author_analysis".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.author_stats.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
 }
 
 impl Default for CommitsPlugin {
@@ -115,6 +172,27 @@ impl Plugin for CommitsPlugin {
         }
 
         match request {
+            PluginRequest::Execute { invoked_as, invocation_type, .. } => {
+                // Handle function-based execution
+                let function_name = match invocation_type {
+                    crate::plugin::InvocationType::Function(ref func) => func.as_str(),
+                    crate::plugin::InvocationType::Direct => self.default_function().unwrap_or("commits"),
+                    crate::plugin::InvocationType::Default => "commits",
+                };
+                
+                // Route to appropriate function
+                match function_name {
+                    "commits" | "commit" | "history" => {
+                        self.execute_commits_analysis().await
+                    }
+                    "authors" | "contributors" | "committers" => {
+                        self.execute_author_analysis().await
+                    }
+                    _ => Err(PluginError::execution_failed(
+                        format!("Unknown function: {}", function_name)
+                    )),
+                }
+            }
             PluginRequest::GetStatistics => {
                 let summary = self.generate_summary()?;
                 Ok(PluginResponse::Statistics(summary))
@@ -131,6 +209,29 @@ impl Plugin for CommitsPlugin {
         self.commit_count = 0;
         self.author_stats.clear();
         Ok(())
+    }
+    
+    /// Get all functions this plugin can handle
+    fn advertised_functions(&self) -> Vec<PluginFunction> {
+        vec![
+            PluginFunction {
+                name: "commits".to_string(),
+                aliases: vec!["commit".to_string(), "history".to_string()],
+                description: "Analyze git commit history and generate commit statistics".to_string(),
+                is_default: true,
+            },
+            PluginFunction {
+                name: "authors".to_string(),
+                aliases: vec!["contributors".to_string(), "committers".to_string()],
+                description: "Analyze commit authors and contributor statistics".to_string(),
+                is_default: false,
+            },
+        ]
+    }
+    
+    /// Get the default function name
+    fn default_function(&self) -> Option<&str> {
+        Some("commits")
     }
 }
 

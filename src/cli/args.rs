@@ -113,6 +113,14 @@ pub struct Args {
     #[arg(long = "list-plugins")]
     pub list_plugins: bool,
     
+    /// Show all available plugins with their functions and descriptions
+    #[arg(long = "plugins")]
+    pub show_plugins: bool,
+    
+    /// Show all available plugin functions and command mappings
+    #[arg(long = "plugins-help")]
+    pub plugins_help: bool,
+    
     /// Show detailed information about a specific plugin
     #[arg(long = "plugin-info", value_name = "PLUGIN")]
     pub plugin_info: Option<String>,
@@ -236,6 +244,8 @@ mod tests {
             queue_size: None,
             plugins: Vec::new(),
             list_plugins: false,
+            show_plugins: false,
+            plugins_help: false,
             plugin_info: None,
             check_plugin: None,
             list_by_type: None,

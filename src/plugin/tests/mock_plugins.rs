@@ -55,6 +55,9 @@ impl MockPlugin {
             name,
             description,
             version,
+            function_name: None,
+            aliases: Vec::new(),
+            is_default: false,
         });
     }
 }
