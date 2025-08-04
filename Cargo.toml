@@ -102,3 +102,7 @@ path = "tests/performance/async_validation.rs"
 [[test]]
 name = "end_to_end"
 path = "tests/integration/end_to_end.rs"
+
+[[test]]
+name = "system_integration"
+path = "tests/integration/system_integration.rs"
