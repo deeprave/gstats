@@ -24,6 +24,7 @@ pub mod registry;
 pub mod notification;
 pub mod compatibility;
 pub mod discovery;
+pub mod executor;
 pub mod builtin;
 
 #[cfg(test)]
@@ -38,7 +39,8 @@ pub use context::{PluginContext, PluginRequest, PluginResponse};
 pub use traits::{PluginInfo, PluginDependency, PluginCapability};
 
 // Registry and management
-pub use registry::PluginRegistry;
+pub use registry::{PluginRegistry, SharedPluginRegistry};
 pub use notification::AsyncNotificationManager;
 pub use compatibility::VersionCompatibilityChecker;
 pub use discovery::PluginDiscovery;
+pub use executor::{PluginExecutor, PluginMessageProcessor, PluginStreamExt};

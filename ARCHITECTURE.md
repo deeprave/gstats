@@ -10,7 +10,7 @@ gstats is a high-performance Git repository analytics tool built with Rust, desi
 - **Non-blocking Operations**: All I/O operations use async/await with tokio runtime
 - **Concurrent Processing**: Multi-task execution with configurable resource constraints  
 - **Stream Processing**: Memory-efficient data processing with backpressure handling
-- **Task Coordination**: Centralized task management with priority scheduling
+- **Task Coordination**: Centralised task management with priority scheduling
 
 ### Memory-Conscious Operations
 - **Real-time Monitoring**: Continuous memory usage tracking with leak detection
@@ -63,7 +63,7 @@ High-performance async scanning system for repository analysis.
 
 #### Core Features:
 - **Multi-mode Scanning**: FILES, HISTORY, METRICS, SECURITY, DEPENDENCIES
-- **Resource Management**: Memory limits, thread pools, task prioritization
+- **Resource Management**: Memory limits, thread pools, task prioritisation
 - **Stream Processing**: Lazy evaluation with configurable batch sizes
 - **Error Isolation**: Graceful handling of Git operation failures
 
@@ -121,6 +121,11 @@ Extensible plugin architecture with async communication and lifecycle management
 - **Notification Manager** (`notification.rs`): Async event broadcasting
 - **Compatibility Checker** (`compatibility.rs`): Version validation
 
+#### Integration Components:
+- **PluginExecutor** (`executor.rs`): Processes messages through registered plugins in real-time
+- **PluginScanner** (`plugin_scanner.rs`): Wraps base scanners to add plugin processing capabilities
+- **SharedPluginRegistry**: Thread-safe plugin registry wrapper with Arc<RwLock<>>
+
 #### Built-in Plugins (`builtin/`):
 - **CommitsPlugin** (`commits.rs`): Git history analysis with statistics
 - **MetricsPlugin** (`metrics.rs`): Code quality and complexity metrics
@@ -129,7 +134,7 @@ Extensible plugin architecture with async communication and lifecycle management
 ```rust
 // Plugin communication
 pub enum PluginRequest {
-    Execute { scan_modes: ScanMode, ... },
+    Execute { scan_modes: ScanMode, config: serde_json::Value },
     GetStatistics,
     GetCapabilities,
     Export,
@@ -162,17 +167,24 @@ Git repository operations with validation and error handling.
 CLI Args → Configuration → Repository Validation → Plugin Discovery → Scanner Setup
 ```
 
-### 2. Scanning Pipeline
+### 2. Scanning Pipeline (Integrated)
 ```
-Repository → Scanner Engine → Message Queue → Plugin Processing → Output
+Repository → Scanner Engine → Plugin-Wrapped Scanners → Plugin Executor → 
+Message Queue → Consumer → Plugin Processing → Output
 ```
 
-### 3. Plugin Communication
+### 3. Plugin Integration Flow
+```
+CLI Args → Plugin Registry → Scanner Engine → Plugin Scanners → 
+Plugin Executor → Message Queue → Consumer → Plugin Processing
+```
+
+### 4. Plugin Communication
 ```
 Event Trigger → Notification Manager → Plugin Filtering → Async Delivery → Response
 ```
 
-### 4. Memory Management
+### 5. Memory Management
 ```
 Usage Monitoring → Pressure Detection → Backoff Algorithm → Resource Adjustment
 ```
@@ -269,6 +281,53 @@ pub trait NotificationPlugin: Plugin {
 - **Filtered Delivery**: Plugin preferences and capabilities
 - **Rate Limiting**: Frequency controls and backpressure
 - **Graceful Shutdown**: Clean termination and cleanup
+
+### Plugin-Scanner Integration
+
+The plugin system is fully integrated with the async scanner engine through several key components:
+
+#### PluginExecutor
+```rust
+pub struct PluginExecutor {
+    registry: Arc<RwLock<PluginRegistry>>,
+    scan_modes: ScanMode,
+    metrics: Arc<RwLock<ExecutionMetrics>>,
+}
+```
+
+**Responsibilities:**
+- Processes scan messages through registered plugins in real-time
+- Manages plugin execution metrics and performance tracking
+- Provides streaming plugin processing with backpressure handling
+- Handles plugin errors gracefully without system crashes
+
+#### PluginScanner Adapter
+```rust
+pub struct PluginScanner {
+    inner_scanner: Arc<dyn AsyncScanner>,
+    plugin_registry: SharedPluginRegistry,
+    name: String,
+}
+```
+
+**Integration Features:**
+- Wraps existing async scanners to add plugin processing capabilities
+- Maintains scanner interface compatibility for seamless integration
+- Provides transparent plugin execution during scanning operations
+- Supports plugin-generated messages and data transformation
+
+#### Plugin Stream Processing
+- **Streaming Architecture**: Plugin processing integrated into scanner streams
+- **Async Boundaries**: Proper async/sync coordination for plugin execution
+- **Backpressure Handling**: Plugin processing respects scanner flow control
+- **Message Buffering**: Efficient handling of plugin-generated messages
+
+#### Integration Flow
+1. **Scanner Creation**: Base scanners (File, History, Combined) are created
+2. **Plugin Wrapping**: PluginScannerBuilder wraps scanners with plugin processing
+3. **Engine Integration**: Plugin-wrapped scanners added to AsyncScannerEngine
+4. **Stream Processing**: Plugin execution happens during scanning via PluginStream
+5. **Message Flow**: Plugin-processed messages flow through the queue system
 
 ## Memory Management
 

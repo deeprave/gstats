@@ -189,7 +189,7 @@ impl Plugin for MyPlugin {
 
 ### 2. Scanner Plugin Example
 
-Here's a complete example of a scanner plugin that analyzes file extensions:
+Here's a complete example of a scanner plugin that analyses file extensions:
 
 ```rust
 use async_trait::async_trait;
@@ -792,6 +792,39 @@ impl PluginInfo {
 let info = PluginInfo::new(/* ... */)
     .with_dependency("core".to_string(), ">=1.0.0".to_string(), false)
     .with_dependency("metrics".to_string(), "^2.0".to_string(), true);
+```
+
+## Scanner Integration
+
+The plugin system is fully integrated with the async scanner engine, enabling real-time plugin processing during repository scanning:
+
+### Plugin Execution Flow
+
+```
+Repository → Scanner Engine → Plugin-Wrapped Scanners → Plugin Executor → 
+Message Queue → Consumer → Plugin Processing → Output
+```
+
+### Integration Features
+
+1. **Transparent Processing**: Plugins process messages during scanning without blocking
+2. **Stream Integration**: Plugin execution is integrated into scanner streams
+3. **Backpressure Handling**: Plugin processing respects scanner flow control
+4. **Error Isolation**: Plugin failures don't crash the scanning process
+5. **Performance Tracking**: Plugin execution metrics are collected automatically
+
+### Usage Example
+
+```bash
+# Run scanning with specific plugins
+gstats --plugins commits,metrics,export /path/to/repo
+
+# The system will:
+# 1. Initialize the plugin registry
+# 2. Register the specified plugins
+# 3. Wrap scanners with plugin processing
+# 4. Execute scanning with real-time plugin processing
+# 5. Output plugin-processed results
 ```
 
 ## Built-in Plugin Examples

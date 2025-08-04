@@ -1,25 +1,30 @@
-![Project Status](https://img.shields.io/badge/Status-Under Development-red)
+![Project Status](https://img.shields.io/badge/Status-Alpha-orange)
 <!-- noinspection MarkdownUnresolvedFileReference -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 # Git Repository Analytics Tool
-A fast, local-first git analytics tool for analysing Git repositories with comprehensive logging and CLI interface.
+A fast, local-first git analytics tool for analysing Git repositories with comprehensive logging, CLI interface, and extensible plugin architecture.
 
 ## Current Features
 - **Git Repository Detection** - Automatic validation of Git repositories
 - **Comprehensive CLI Interface** - Command-line argument parsing with validation
 - **Advanced Logging System** - Structured logging with JSON/text formats, configurable levels, and file output
 - **Configuration File Support** - TOML-based configuration with discovery hierarchy and CLI overrides
-- **Timestamp Formatting** - Standardised YYYY-MM-DD HH:MM:SS timestamp format
+- **Async Scanner Engine** - High-performance async repository scanning with streaming data processing
+- **Memory-Conscious Queue System** - Efficient message queue with memory pressure handling and backoff algorithms
+- **Plugin Architecture** - Extensible plugin system with trait-based design and async communication
+- **Built-in Plugins** - Commits analysis, code metrics, and data export plugins
+- **Plugin Management** - CLI-based plugin discovery, validation, and execution
+- **Real-time Processing** - Streaming plugin processing with backpressure handling
 - **Multiple Log Destinations** - Console and file logging with independent log levels
-- **Configurable Output** - Support for verbose, quiet, and JSON logging modes
 - **Section-based Configuration** - Module-specific settings with inheritance and override capabilities
 
 ## Planned Features
-- Code complexity trends over time
-- Contributor statistics and visualisations
+- External plugin loading and dynamic discovery
+- Advanced visualization and reporting
 - Performance metrics for large repositories
-- Export to various formats (JSON, CSV, etc.)
+- Extended export formats and destinations
 - Repository URL support for remote analysis
+- Web interface for interactive analytics
 
 ## Usage
 
@@ -48,6 +53,21 @@ gstats --log-file output.log --log-file-level debug .
 
 # Combine options
 gstats --verbose --log-format json --log-file debug.log .
+```
+
+### Plugin Management
+```bash
+# List available plugins
+gstats --list-plugins
+
+# Get plugin information
+gstats --plugin-info commits
+
+# List plugins by type
+gstats --list-by-type scanner
+
+# Use specific plugins (default: commits)
+gstats --plugins commits,metrics,export .
 ```
 
 ### Configuration File Support
@@ -81,7 +101,7 @@ format = "json"
 
 [module.contributors]
 top = 10
-normalize-emails = true
+normalise-emails = true
 ```
 
 #### Configuration Discovery
@@ -100,13 +120,55 @@ gstats --help
 ```
 
 #### Available CLI Options
+
+**Logging Options:**
 - `--verbose, -v` - Enable verbose output (debug level logging)
 - `--quiet, -q` - Enable quiet mode (error level logging only)
 - `--debug` - Enable debug output (trace level logging)
 - `--log-format <FORMAT>` - Set log format: text or json (default: text)
 - `--log-file <FILE>` - Log file path for file output
 - `--log-file-level <LEVEL>` - Log level for file output (independent of console)
+
+**Configuration Options:**
 - `--config-file <FILE>` - Configuration file path
 - `--config-name <SECTION>` - Configuration section name for environment-specific settings
 
-All logging options can be configured via configuration file, with CLI arguments taking precedence.
+**Plugin Options:**
+- `--plugins <LIST>` - Comma-separated list of plugins to use
+- `--list-plugins` - List all available plugins
+- `--plugin-info <NAME>` - Get detailed information about a plugin
+- `--list-by-type <TYPE>` - List plugins by type (scanner, processing, output, notification)
+
+All options can be configured via configuration file, with CLI arguments taking precedence.
+
+## Architecture Overview
+
+gstats is built on a modern, async architecture designed for performance and extensibility:
+
+### Core Components
+- **Async Scanner Engine** - High-performance repository scanning with streaming data processing
+- **Plugin System** - Trait-based plugin architecture with async communication interfaces
+- **Memory-Conscious Queue** - Efficient message handling with backpressure and memory management
+- **Configuration System** - Hierarchical TOML-based configuration with CLI overrides
+
+### Plugin Architecture
+The plugin system provides a flexible, extensible foundation for repository analysis:
+
+```
+CLI Args → Plugin Registry → Scanner Engine → Plugin Scanners → 
+Plugin Executor → Message Queue → Consumer → Plugin Processing
+```
+
+**Built-in Plugins:**
+- **Commits Plugin** - Analyses commit history and patterns
+- **Metrics Plugin** - Calculates code metrics and statistics
+- **Export Plugin** - Handles data export to various formats
+
+**Plugin Types:**
+- **Scanner** - Process repository data during scanning
+- **Processing** - Transform and analyse scan results
+- **Output** - Handle result formatting and export
+- **Notification** - Respond to system events and updates
+
+For detailed information about the plugin system, see [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md).
+For complete architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).

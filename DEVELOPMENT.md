@@ -1,257 +1,168 @@
-# gstats Development Guide
+# gstats Development History
 
-## Overview
-gstats is a high-performance Git repository analytics tool built with Rust, focusing on local-first analysis with comprehensive plugin architecture and async processing capabilities.
+## Project Overview
 
-## Development Philosophy
+gstats is a Git repository analytics tool built with Rust, evolving into a comprehensive system with async processing, memory management, and extensible plugin architecture. This document traces the development journey from its initial concept to the current implementation.
 
-### Test-Driven Development (TDD)
-All development follows strict TDD practices with the Red-Green-Refactor cycle:
-1. **Red**: Write failing tests first to define expected behaviour
-2. **Green**: Implement minimal code to make tests pass
-3. **Refactor**: Improve code quality whilst maintaining test coverage
+## Initial Foundation (Early Development)
 
-### Clean Architecture
-- **SOLID Principles**: Single responsibility, open/closed, Liskov substitution, interface segregation, dependency inversion
-- **Trait-Based Design**: Extensible interfaces with clear contracts
-- **Memory Safety**: Leveraging Rust's ownership system for zero-cost abstractions
-- **Async-First**: Built on tokio runtime with non-blocking operations
+The project started with core infrastructure to establish a solid foundation for Git repository analysis.
 
-## Issue Management
+### Command-Line Interface
 
-### Issue Lifecycle
-Issues follow a structured workflow through YouTrack (project GS):
+The first component implemented was a comprehensive CLI system using Rust's clap library. This provided structured argument parsing, validation, and help generation. The CLI supported various logging modes (verbose, quiet, debug) and output formats (text, JSON).
 
-1. **Backlog**: Issues available for selection and planning
-2. **Open**: Issue selected but implementation not started
-3. **In Progress**: Active TDD implementation following plan
-4. **Queued**: Implementation complete, tests passing, ready for release
-5. **Done**: Released with all queued issues
+### Configuration System
 
-### Issue Types
-- **Feature**: New functionality with complete TDD cycle
-- **Enhancement**: Improvements to existing features
-- **Bug**: Defect fixes with regression tests
-- **Technical Debt**: Refactoring and code quality improvements
+A hierarchical configuration system was built using TOML format with automatic discovery. The system searches for configuration files in multiple locations (project directory, user home, system-wide) with a clear precedence order. Configuration sections allow environment-specific settings while CLI arguments provide overrides.
 
-### Planning Process
-Each issue requires:
-- **Requirements Analysis**: Understanding scope and integration points
-- **Implementation Plan**: Step-by-step TDD breakdown in `.claude/issues/<issue-id>/implementation-plan.md`
-- **Acceptance Criteria**: Clear success metrics and test requirements
-- **Dependencies**: Integration points with existing architecture
+### Logging Infrastructure
 
-## Architecture Overview
+A structured logging system was implemented with support for multiple destinations (console, file) and independent log levels. The system supports both text and JSON output formats with timestamp standardisation.
 
-### Core Components
+### Git Integration
 
-#### Async Scanner Engine (GS-27)
-High-performance async scanning system:
-- **Task Management**: Concurrent task execution with resource constraints
-- **Streaming Producer**: Memory-efficient data streaming
-- **Repository Interface**: Async Git operations
-- **Multi-mode Scanning**: Files, history, metrics, security, dependencies
+Basic Git repository operations were implemented with path resolution, repository validation, and error handling. This provided the foundation for all repository analysis operations.
 
-#### Memory-Conscious Queue System (GS-26)
-Advanced message queue with memory management:
-- **Memory Tracking**: Real-time usage monitoring with leak detection
-- **Backoff Algorithm**: Adaptive pressure response system
-- **Versioned Messages**: Forward/backward compatibility
-- **Listener System**: Event-driven notifications
+## Async Scanner Engine Development
 
-#### Plugin Communication Interface (GS-28)
-Extensible plugin architecture:
-- **Trait Hierarchy**: Core Plugin, ScannerPlugin, NotificationPlugin
-- **Async Notifications**: Real-time event broadcasting
-- **Plugin Registry**: Lifecycle management and discovery
-- **Version Compatibility**: API safety and dependency validation
-- **Built-in Plugins**: Reference implementations (commits, metrics, export)
+The second major phase focused on building a high-performance async scanning system.
 
-#### CLI System
-Comprehensive command-line interface:
-- **Argument Parsing**: Structured CLI with validation
-- **Configuration Management**: TOML-based with discovery hierarchy
-- **Plugin Management**: Discovery, validation, execution
-- **Logging System**: Structured output with multiple destinations
+### Core Async Architecture
 
-### Data Flow Architecture
+The scanner engine was built on tokio runtime with async/await patterns throughout. This established the foundation for non-blocking I/O operations and concurrent processing.
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   CLI Interface │────│  Configuration   │────│ Plugin Registry │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ Scanner Engine  │────│  Message Queue   │────│ Plugin System   │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ Git Repository  │    │  Notifications   │    │ Output Formats  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
+### Repository Interface
 
-## Development Workflow
+An async wrapper around Git operations was created, providing thread-safe access to repository data. This interface abstracted Git library details and provided consistent error handling.
 
-### Phase-Based Implementation
-Major features are implemented in phases:
+### Multi-Mode Scanning
 
-#### Phase Planning
-1. **Requirements Gathering**: Analyse integration points and dependencies
-2. **Architecture Design**: Define traits, structures, and interfaces
-3. **Test Strategy**: Plan comprehensive test coverage
-4. **Implementation Breakdown**: Create detailed task checklist
+The scanner was designed to support different analysis modes: file system scanning, commit history analysis, code metrics calculation, security scanning, and dependency analysis. These modes could be combined using bitflags for flexible operation.
 
-#### TDD Implementation
-1. **Write Tests**: Start with comprehensive test cases
-2. **Implement Features**: Minimal code to pass tests
-3. **Refactor**: Improve code quality and performance
-4. **Validate**: Ensure all tests pass and coverage requirements met
+### Task Management
 
-#### Quality Gates
-- **100% Test Coverage**: All new code must have comprehensive tests
-- **Zero Failing Tests**: No broken tests allowed in any commit
-- **Memory Safety**: Rust compiler checks plus runtime monitoring
-- **Performance**: Benchmarks for critical paths
+A sophisticated task coordination system was implemented to manage concurrent scanning operations. This included resource constraints, priority scheduling, and graceful shutdown capabilities.
 
-### Git Workflow
+### Streaming Data Processing
 
-#### Commit Standards
-- **Descriptive Messages**: Clear purpose and scope
-- **Issue References**: Link to YouTrack issues (GS-XX format)  
-- **Generated Attribution**: Include Claude Code attribution for AI-assisted work
-- **No Secrets**: Never commit API keys, passwords, or sensitive data
+Rather than loading entire repositories into memory, a streaming approach was implemented. This allows processing of large repositories with constant memory usage through lazy evaluation and configurable batch sizes.
 
-#### Branch Strategy
-- **Main Branch**: Production-ready code with all tests passing
-- **Feature Branches**: Individual issue implementation
-- **Release Tags**: Semantic versioning for stable releases
+## Memory-Conscious Queue System
 
-## Testing Strategy
+The third phase introduced advanced memory management and message processing capabilities.
 
-### Test Pyramid
-1. **Unit Tests**: Individual components with mock dependencies
-2. **Integration Tests**: Component interaction and data flow
-3. **End-to-End Tests**: Complete workflows with real Git repositories
-4. **Performance Tests**: Benchmarks and resource usage validation
+### Message Queue Implementation
 
-### Mock Infrastructure
-- **MockPlugin**: Comprehensive plugin testing without external dependencies
-- **MockRepository**: Git operations testing without real repositories
-- **MockQueues**: Message processing testing with controlled scenarios
-- **MockNotifications**: Event system testing with configurable behaviour
+A specialised queue system was built using concurrent data structures (crossbeam) with memory tracking and backpressure handling. The queue supports versioned messages for forward and backward compatibility.
 
-### Test Categories
-- **Happy Path**: Expected behaviour with valid inputs
-- **Edge Cases**: Boundary conditions and unusual inputs
-- **Error Handling**: Failure scenarios and recovery
-- **Concurrency**: Multi-threaded operations and race conditions
-- **Performance**: Resource usage and execution time
+### Memory Monitoring
 
-## Code Standards
+Real-time memory tracking was implemented with leak detection, usage history, and automatic garbage collection triggers. The system monitors both individual message sizes and total memory consumption.
 
-### Rust Best Practices
-- **Ownership Clarity**: Clear lifetimes and borrowing patterns
-- **Error Handling**: Comprehensive Result types with context
-- **Documentation**: Rustdoc for all public APIs
-- **Clippy Compliance**: All linting warnings addressed
-- **fmt Consistency**: Automated formatting with rustfmt
+### Adaptive Backoff
 
-### Naming Conventions
-- **Modules**: Snake_case reflecting functionality
-- **Traits**: PascalCase describing capability
-- **Structs**: PascalCase representing entities
-- **Functions**: Snake_case describing action
-- **Constants**: SCREAMING_SNAKE_CASE
+A pressure response system was created that automatically adjusts processing rates based on memory usage. This includes exponential backoff algorithms, batch size adjustment, and resource scaling.
 
-### Memory Management
-- **Minimal Allocations**: Efficient data structures and algorithms
-- **Memory Monitoring**: Real-time tracking and leak detection
-- **Resource Cleanup**: Proper Drop implementations
-- **Async Safety**: Send + Sync bounds where required
+### Event Notification System
 
-## Plugin Development
+A listener-based event system was implemented allowing components to subscribe to queue updates, memory pressure changes, and system events. This provides real-time monitoring and reactive behaviour.
 
-### Plugin Types
-1. **Scanner Plugins**: Process repository data (files, history, metrics)
-2. **Notification Plugins**: Handle system events and progress updates
-3. **Output Plugins**: Format and export analysis results
+### Consumer Threading
 
-### Plugin Lifecycle
-1. **Discovery**: Automatic detection and metadata parsing
-2. **Registration**: Version compatibility and dependency validation
-3. **Initialization**: Context setup and configuration
-4. **Execution**: Async processing with error handling
-5. **Cleanup**: Resource deallocation and state reset
+Background consumer threads were implemented to process messages asynchronously, with configurable batching and error handling. The consumers can be started, stopped, and reconfigured without interrupting the main scanning operations.
 
-### Built-in Examples
-- **CommitsPlugin**: Git history analysis with issue tracking
-- **MetricsPlugin**: Code quality assessment and complexity analysis
-- **ExportPlugin**: Multi-format output (JSON, CSV, XML, YAML, HTML)
+## Plugin Architecture Development
 
-## Performance Characteristics
+The fourth major phase introduced a comprehensive plugin system for extensibility.
 
-### Benchmarking
-- **Scanner Performance**: Files/second processing rates
-- **Memory Efficiency**: Peak usage and allocation patterns
-- **Queue Throughput**: Messages/second with backpressure
-- **Plugin Overhead**: Execution time and resource impact
+### Core Plugin Traits
 
-### Optimization Targets
-- **Large Repositories**: 100k+ files, 10k+ commits
-- **Memory Constraints**: Configurable limits with graceful degradation
-- **Concurrent Processing**: Multi-core utilization
-- **Network Efficiency**: Minimal remote Git operations
+A trait-based architecture was designed with a base Plugin trait and specialised variants (ScannerPlugin, NotificationPlugin). This provides clean interfaces while enabling diverse plugin functionality.
 
-## Contributing Guidelines
+### Plugin Registry
 
-### Getting Started
-1. **Environment Setup**: Rust toolchain, development dependencies
-2. **Issue Selection**: Choose from Backlog in YouTrack
-3. **Implementation Planning**: Create detailed phase breakdown
-4. **TDD Cycle**: Red-Green-Refactor with comprehensive tests
+A central registry system was implemented for plugin lifecycle management. This handles registration, initialisation, execution, and cleanup with proper error isolation to prevent plugin failures from crashing the system.
 
-### Code Review
-- **Self-Review**: Check tests, documentation, performance
-- **Peer Review**: Code quality, architecture alignment
-- **Integration Testing**: Full system validation
-- **Performance Validation**: Benchmark regression testing
+### Async Communication
 
-### Release Process
-1. **Feature Complete**: All planned functionality implemented
-2. **Quality Gates**: 100% test pass rate, performance targets met
-3. **Documentation**: API docs, user guides, examples
-4. **Versioning**: Semantic version bump with changelog
+Plugin communication was built using async patterns with request/response enums. This enables flexible message passing while maintaining type safety and performance.
 
-## Troubleshooting
+### Version Compatibility
 
-### Common Issues
-- **Memory Pressure**: Monitor queue metrics and adjust limits
-- **Plugin Failures**: Check version compatibility and dependencies
-- **Performance Degradation**: Profile critical paths and optimize
-- **Test Failures**: Ensure clean state and proper mocking
+A compatibility checking system was implemented to validate API versions and plugin dependencies. This ensures plugins can work safely with different system versions.
 
-### Debugging Tools
-- **Logging**: Structured output with configurable levels
-- **Memory Tracking**: Real-time usage monitoring
-- **Async Debugging**: Task coordination and deadlock detection
-- **Plugin Diagnostics**: Execution tracing and error reporting
+### Discovery System
 
-## Future Roadmap
+Automatic plugin discovery was implemented with support for multiple plugin directories and metadata parsing. The system can find plugins in standard locations and load their descriptors automatically.
 
-### Planned Enhancements
-- **Distributed Processing**: Multi-node repository analysis
-- **Web Interface**: Browser-based repository visualization
-- **AI Integration**: Intelligent code analysis and recommendations
-- **Cloud Export**: Integration with external analytics platforms
+### Notification Framework
 
-### Architecture Evolution
-- **Microservices**: Decomposition for scalability
-- **Event Sourcing**: Complete audit trail and replay capability
-- **Plugin Marketplace**: External plugin distribution and updates
-- **API Gateway**: RESTful interface for external integrations
+An async notification manager was created to broadcast system events to interested plugins. This includes rate limiting, preference filtering, and graceful shutdown handling.
 
----
+## Built-in Plugin Implementation
 
-This development guide reflects the current state of the gstats codebase and serves as a reference for contributors and maintainers. The architecture and practices documented here have evolved through rigorous TDD implementation and performance optimization.
+Three reference plugins were developed to demonstrate the plugin system capabilities.
+
+### Commits Plugin
+
+The first plugin analyses Git commit history, extracting statistics about authors, commit patterns, and issue references. This demonstrates scanner plugin patterns and data aggregation.
+
+### Metrics Plugin
+
+A code metrics plugin was implemented to calculate complexity measures, file statistics, and quality indicators. This shows how plugins can process file system data and generate derived metrics.
+
+### Export Plugin
+
+A comprehensive export plugin was created supporting multiple output formats (JSON, CSV, XML, YAML, HTML). This demonstrates output plugin architecture and data transformation capabilities.
+
+## System Integration
+
+The final phase integrated all components into a cohesive system.
+
+### Plugin-Scanner Integration
+
+The plugin system was integrated with the async scanner engine through wrapper adapters. Plugin processing happens in real-time as scanning progresses, with proper backpressure handling and error isolation.
+
+### Streaming Plugin Processing
+
+Plugin execution was integrated into the scanner's streaming architecture. Messages flow through plugins as they are generated, enabling real-time analysis without buffering entire datasets.
+
+### Main Application Flow
+
+The complete application flow was implemented, connecting CLI parsing through configuration loading, plugin initialisation, scanner setup, execution, and result output. The system properly coordinates all components while maintaining async performance.
+
+### Message Flow Architecture
+
+A complete data flow was established: repository data flows through scanners to plugins to the message queue to consumers to final output. Each stage maintains async processing and memory efficiency.
+
+## Current System Architecture
+
+The current implementation consists of several integrated components:
+
+**CLI System** handles user interaction, configuration loading, and plugin management commands.
+
+**Async Scanner Engine** provides high-performance repository scanning with streaming data processing and task coordination.
+
+**Memory-Conscious Queue** manages message flow with real-time memory monitoring and adaptive backpressure.
+
+**Plugin System** enables extensible functionality through trait-based architecture with lifecycle management.
+
+**Built-in Plugins** provide core functionality for commit analysis, code metrics, and data export.
+
+The complete system processes Git repositories through an async pipeline: scanning generates messages that flow through plugins to queues to consumers to output formats. Memory usage is monitored throughout with automatic pressure response. Plugin processing happens in real-time during scanning without blocking operations.
+
+## Development Progression
+
+The development followed a clear progression from foundation to specialisation:
+
+1. **Infrastructure** - CLI, configuration, logging, Git operations
+2. **Async Scanning** - High-performance repository processing
+3. **Memory Management** - Queue system with monitoring and backpressure
+4. **Plugin Architecture** - Extensible functionality framework
+5. **Reference Implementations** - Built-in plugins demonstrating capabilities
+6. **System Integration** - Connecting all components into unified application
+
+Each phase built upon previous work while maintaining architectural consistency. The async-first design established early enabled high performance throughout. The plugin system provides extensibility while maintaining system stability through proper error isolation.
+
+The result is a Git repository analytics tool that can efficiently process large repositories while providing extensible functionality through a well-defined plugin architecture.

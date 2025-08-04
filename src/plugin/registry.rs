@@ -190,6 +190,14 @@ impl SharedPluginRegistry {
     }
 }
 
+impl Clone for SharedPluginRegistry {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 impl Default for SharedPluginRegistry {
     fn default() -> Self {
         Self::new()
