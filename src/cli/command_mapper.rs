@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 use log::debug;
 use crate::plugin::traits::PluginFunction;
+use super::suggestion::{SuggestionEngine, SuggestionConfig};
+use super::contextual_help::{ContextualHelp, HelpLevel, create_help_context};
+use super::help_formatter::HelpFormatter;
 
 /// Resolution result for a command
 #[derive(Debug, Clone)]
@@ -62,6 +65,12 @@ pub struct CommandMapper {
     
     /// Alias to canonical function name mapping
     alias_map: HashMap<String, String>,
+    
+    /// Smart suggestion engine for "did you mean?" functionality
+    suggestion_engine: SuggestionEngine,
+    
+    /// Contextual help system for progressive help discovery
+    contextual_help: ContextualHelp,
 }
 
 impl CommandMapper {
@@ -71,6 +80,8 @@ impl CommandMapper {
             function_map: HashMap::new(),
             plugin_map: HashMap::new(),
             alias_map: HashMap::new(),
+            suggestion_engine: SuggestionEngine::new(SuggestionConfig::default()),
+            contextual_help: ContextualHelp::new(),
         }
     }
     
@@ -120,6 +131,16 @@ impl CommandMapper {
                 debug!("    Aliases: {:?}", func.aliases);
             }
         }
+        
+        // Update suggestion engine with current commands
+        self.update_suggestion_engine();
+    }
+    
+    /// Update the suggestion engine with current available commands
+    fn update_suggestion_engine(&mut self) {
+        let plugins: Vec<String> = self.plugin_map.keys().cloned().collect();
+        let functions: Vec<String> = self.function_map.keys().cloned().collect();
+        self.suggestion_engine.update_commands(&plugins, &functions);
     }
     
     /// Resolve a command string to plugin and function
@@ -204,10 +225,7 @@ impl CommandMapper {
             });
         }
         
-        // Not found
-        let _available_functions: Vec<String> = self.function_map.keys()
-            .cloned()
-            .collect();
+        // Not found - generate smart suggestions
         let available_plugins: Vec<String> = self.plugin_map.keys()
             .cloned()
             .collect();
@@ -216,37 +234,29 @@ impl CommandMapper {
         let mut sorted_plugins = available_plugins;
         sorted_plugins.sort();
         
-        let mut error_msg = format!("Unknown command '{}'.\n\n", input);
+        // Use colored formatter for the error message
+        let formatter = HelpFormatter::from_no_color_flag(false); // TODO: Get no_color from args
+        let suggestion_texts: Vec<String> = self.suggestion_engine.suggest(input)
+            .iter()
+            .map(|s| s.text.clone())
+            .collect();
         
-        if !sorted_plugins.is_empty() {
-            // Create a tabular display using manual formatting
-            error_msg.push_str("Available plugins and functions:\n");
-            error_msg.push_str("┌─────────┬────────────────────────────────────────────────────────┐\n");
-            error_msg.push_str("│ Plugin  │ Functions                                              │\n");
-            error_msg.push_str("├─────────┼────────────────────────────────────────────────────────┤\n");
-            
-            for plugin in &sorted_plugins {
-                let (plugin_name, functions) = match plugin.as_str() {
-                    "commits" => ("commits", "authors, contributors, committers, commits, history"),
-                    "metrics" => ("metrics", "metrics, complexity, quality"),
-                    "export" => ("export", "export, json, csv, xml"),
-                    _ => (plugin.as_str(), ""),
-                };
-                
-                // Format with proper padding
-                error_msg.push_str(&format!("│ {:<7} │ {:<54} │\n", plugin_name, functions));
+        let error_msg = formatter.format_invalid_command(input, &suggestion_texts);
+        
+        // Add contextual help for common commands if no suggestions
+        let final_error = if suggestion_texts.is_empty() && sorted_plugins.len() <= 3 {
+            let help_context = create_help_context(None, Some(format!("Unknown command '{}'", input)));
+            let contextual = self.contextual_help.get_contextual_help(&help_context);
+            if !contextual.trim().is_empty() {
+                format!("{}\n\n{}", error_msg, contextual)
+            } else {
+                error_msg
             }
-            
-            error_msg.push_str("└─────────┴────────────────────────────────────────────────────────┘\n");
-        }
+        } else {
+            error_msg
+        };
         
-        error_msg.push_str("\nUsage:\n");
-        error_msg.push_str("  gstats <plugin>           # Use plugin's default function\n");
-        error_msg.push_str("  gstats <function>         # Use function if unambiguous\n");
-        error_msg.push_str("  gstats <plugin>:<function> # Explicit plugin:function syntax\n");
-        error_msg.push_str("\nRun 'gstats --help' to see all available commands.");
-        
-        bail!("{}", error_msg);
+        bail!("{}", final_error);
     }
     
     /// Detect all ambiguous function names
@@ -274,6 +284,17 @@ impl CommandMapper {
     /// Get all available functions
     pub fn available_functions(&self) -> Vec<&str> {
         self.function_map.keys().map(|s| s.as_str()).collect()
+    }
+    
+    /// Get contextual help for a command or error
+    pub fn get_contextual_help(&self, command: Option<String>, error: Option<String>) -> String {
+        let context = create_help_context(command, error);
+        self.contextual_help.get_contextual_help(&context)
+    }
+    
+    /// Get command-specific help with progressive detail
+    pub fn get_command_help(&self, command: &str, level: HelpLevel) -> Option<String> {
+        self.contextual_help.get_command_help(command, level)
     }
 }
 

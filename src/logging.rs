@@ -27,6 +27,7 @@ use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use anyhow::{Context, Result};
+use crate::display::{ColourManager, ColourConfig};
 
 /// Log output format options
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +73,8 @@ pub struct LogConfig {
     pub file_level: Option<LevelFilter>,
     pub format: LogFormat,
     pub destination: LogDestination,
+    pub colour_config: Option<ColourConfig>,
+    pub enable_colours: bool,
 }
 
 impl Default for LogConfig {
@@ -81,18 +84,54 @@ impl Default for LogConfig {
             file_level: None,
             format: LogFormat::Text,
             destination: LogDestination::Console,
+            colour_config: None,
+            enable_colours: true,
         }
+    }
+}
+
+impl LogConfig {
+    /// Create a new LogConfig with color support
+    pub fn with_colors(mut self, enable: bool) -> Self {
+        self.enable_colours = enable;
+        self
+    }
+    
+    /// Create a new LogConfig with specific color configuration
+    pub fn with_color_config(mut self, color_config: ColourConfig) -> Self {
+        self.colour_config = Some(color_config);
+        self.enable_colours = true;
+        self
+    }
+    
+    /// Create a LogConfig that respects the no-color flag
+    pub fn from_args(no_color: bool) -> Self {
+        Self::default().with_colors(!no_color)
     }
 }
 
 /// Custom logger implementation
 pub struct GstatsLogger {
     config: LogConfig,
+    colour_manager: Option<ColourManager>,
 }
 
 impl GstatsLogger {
     pub fn new(config: LogConfig) -> Self {
-        Self { config }
+        let colour_manager = if config.enable_colours {
+            Some(if let Some(colour_config) = config.colour_config.clone() {
+                ColourManager::with_config(colour_config)
+            } else {
+                ColourManager::new()
+            })
+        } else {
+            None
+        };
+
+        Self {
+            config,
+            colour_manager,
+        }
     }
 
     fn format_timestamp() -> String {
@@ -102,15 +141,47 @@ impl GstatsLogger {
 
     fn format_text_message(&self, level: Level, message: &str) -> String {
         let timestamp = Self::format_timestamp();
-        format!("{} [{}] {}", timestamp, level.to_string().to_uppercase(), message)
+        let level_str = level.to_string().to_uppercase();
+        
+        if let Some(colour_manager) = &self.colour_manager {
+            let coloured_level = match level {
+                Level::Error => colour_manager.error(&level_str),
+                Level::Warn => colour_manager.warning(&level_str),
+                Level::Info => colour_manager.info(&level_str),
+                Level::Debug => colour_manager.debug(&level_str),
+                Level::Trace => colour_manager.debug(&level_str), // Use debug color for trace
+            };
+            format!("{} [{}] {}", timestamp, coloured_level, message)
+        } else {
+            format!("{} [{}] {}", timestamp, level_str, message)
+        }
     }
 
     fn format_json_message(&self, level: Level, message: &str) -> Result<String> {
+        let level_str = level.to_string().to_uppercase();
+        
+        // Add color information to JSON when colors are enabled
+        let detail = if let Some(colour_manager) = &self.colour_manager {
+            let color_name = match level {
+                Level::Error => "error",
+                Level::Warn => "warning", 
+                Level::Info => "info",
+                Level::Debug => "debug",
+                Level::Trace => "debug",
+            };
+            Some(serde_json::json!({
+                "color": color_name,
+                "colored": colour_manager.colours_enabled()
+            }))
+        } else {
+            None
+        };
+        
         let entry = JsonLogEntry {
             timestamp: Self::format_timestamp(),
-            level: level.to_string().to_uppercase(),
+            level: level_str,
             message: message.to_string(),
-            detail: None, // Initially empty as specified
+            detail,
         };
         
         serde_json::to_string(&entry)
@@ -317,6 +388,19 @@ mod tests {
     }
 
     #[test]
+    fn test_text_message_formatting_no_colors() {
+        let config = LogConfig::default().with_colors(false);
+        let logger = GstatsLogger::new(config);
+        
+        let formatted = logger.format_text_message(Level::Info, "Test message");
+        assert!(formatted.contains("[INFO]"));
+        assert!(formatted.contains("Test message"));
+        assert!(formatted.contains("2025-")); // Should contain current year
+        // Should not contain ANSI color codes
+        assert!(!formatted.contains("\x1b["));
+    }
+
+    #[test]
     fn test_json_message_formatting() {
         let config = LogConfig::default();
         let logger = GstatsLogger::new(config);
@@ -325,5 +409,44 @@ mod tests {
         assert!(formatted.contains(r#""level":"INFO""#));
         assert!(formatted.contains(r#""message":"Test message""#));
         assert!(formatted.contains(r#""timestamp":"#));
+        // Should contain color information when colors are enabled
+        assert!(formatted.contains(r#""detail""#));
+        assert!(formatted.contains(r#""color":"info""#));
+    }
+
+    #[test]
+    fn test_json_message_formatting_no_colors() {
+        let config = LogConfig::default().with_colors(false);
+        let logger = GstatsLogger::new(config);
+        
+        let formatted = logger.format_json_message(Level::Info, "Test message").unwrap();
+        assert!(formatted.contains(r#""level":"INFO""#));
+        assert!(formatted.contains(r#""message":"Test message""#));
+        assert!(formatted.contains(r#""timestamp":"#));
+        // Should not contain color information when colors are disabled
+        assert!(!formatted.contains(r#""detail""#));
+        assert!(!formatted.contains(r#""color""#));
+    }
+
+    #[test]
+    fn test_color_level_mapping() {
+        let config = LogConfig::default();
+        let logger = GstatsLogger::new(config);
+        
+        // Test all log levels have appropriate color mapping
+        let error_json = logger.format_json_message(Level::Error, "Error").unwrap();
+        assert!(error_json.contains(r#""color":"error""#));
+        
+        let warn_json = logger.format_json_message(Level::Warn, "Warning").unwrap();
+        assert!(warn_json.contains(r#""color":"warning""#));
+        
+        let info_json = logger.format_json_message(Level::Info, "Info").unwrap();
+        assert!(info_json.contains(r#""color":"info""#));
+        
+        let debug_json = logger.format_json_message(Level::Debug, "Debug").unwrap();
+        assert!(debug_json.contains(r#""color":"debug""#));
+        
+        let trace_json = logger.format_json_message(Level::Trace, "Trace").unwrap();
+        assert!(trace_json.contains(r#""color":"debug""#)); // Trace uses debug color
     }
 }

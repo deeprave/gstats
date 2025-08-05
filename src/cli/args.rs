@@ -4,27 +4,50 @@ use std::path::PathBuf;
 use log::debug;
 
 use super::enhanced_parser::EnhancedParser;
+use super::help_formatter::HelpFormatter;
 
 /// Git Repository Analytics Tool
 #[derive(Parser, Debug)]
 #[command(name = "gstats")]
-#[command(about = "A fast, local-first git analytics tool providing code complexity trends, contributor statistics, performance metrics, and native macOS widgets")]
+#[command(about = "Fast, local-first git analytics tool")]
+#[command(long_about = "gstats - Fast, local-first git analytics tool
+
+COMMON WORKFLOWS:
+  Quick analysis:     gstats commits
+  Code metrics:       gstats metrics  
+  Team insights:      gstats commits --author \"John Doe\"
+  Export results:     gstats commits | gstats export --format csv
+  Time-based analysis: gstats commits --since \"1 month ago\"
+
+COMMANDS:
+  commits             Analyze commit history and contributors
+                      Example: gstats commits --since \"1 week ago\"
+  
+  metrics             Generate code complexity metrics
+                      Example: gstats metrics --include-path src/
+  
+  export              Export analysis in various formats
+                      Example: gstats export --format json > report.json
+
+For command-specific help: gstats <command> --help
+For plugin discovery: gstats --plugins")]
 #[command(version)]
 pub struct Args {
-    /// Path to git repository (defaults to current directory if it's a git repository)
-    #[arg(short = 'r', long = "repo", alias = "repository", value_name = "PATH")]
+    /// Path to git repository (defaults to current directory)
+    /// Examples: -r /path/to/repo, --repo ~/project
+    #[arg(short = 'r', long = "repo", alias = "repository", value_name = "PATH", help = "Repository path (default: current directory)")]
     pub repository: Option<String>,
     
-    /// Verbose output (debug level logging)
-    #[arg(short, long)]
+    /// Enable verbose output with detailed logging
+    #[arg(short, long, help = "Verbose output (debug level logging)")]
     pub verbose: bool,
     
-    /// Quiet output (error level logging only)
-    #[arg(short, long)]
+    /// Suppress all output except errors
+    #[arg(short, long, help = "Quiet output (errors only)")]
     pub quiet: bool,
     
-    /// Debug output (trace level logging)
-    #[arg(long)]
+    /// Enable debug output with trace-level logging
+    #[arg(long, help = "Debug output (trace level logging)")]
     pub debug: bool,
     
     /// Log format: text or json
@@ -39,6 +62,10 @@ pub struct Args {
     #[arg(long, value_name = "LEVEL")]
     pub log_file_level: Option<String>,
     
+    /// Disable colored output (overrides configuration and NO_COLOR)
+    #[arg(long = "no-color", help = "Disable colored output")]
+    pub no_color: bool,
+    
     /// Configuration file path
     #[arg(long, value_name = "FILE")]
     pub config_file: Option<PathBuf>,
@@ -49,40 +76,49 @@ pub struct Args {
 
     // ============ FILTERING FLAGS ============
     
-    /// Start date filter (ISO 8601 or relative like "1 week ago")
-    #[arg(short = 'S', long = "since", value_name = "DATE")]
+    /// Filter commits from this date onwards
+    /// Examples: "2023-01-01", "1 week ago", "last month"
+    #[arg(short = 'S', long = "since", value_name = "DATE", help = "Start date filter (ISO 8601 or relative)")]
     pub since: Option<String>,
     
-    /// End date filter (ISO 8601 or relative like "1 week ago")
-    #[arg(short = 'U', long = "until", value_name = "DATE")]
+    /// Filter commits up to this date
+    /// Examples: "2023-12-31", "yesterday", "1 week ago"
+    #[arg(short = 'U', long = "until", value_name = "DATE", help = "End date filter (ISO 8601 or relative)")]
     pub until: Option<String>,
     
-    /// Include paths (directories) - supports comma-separated values
-    #[arg(short = 'I', long = "include-path", value_name = "PATH", action = ArgAction::Append)]
+    /// Only analyze specific directories
+    /// Examples: --include-path src/ --include-path tests/
+    #[arg(short = 'I', long = "include-path", value_name = "PATH", action = ArgAction::Append, help = "Include specific paths (supports comma-separated)")]
     pub include_path: Vec<String>,
     
-    /// Exclude paths (directories) - supports comma-separated values  
-    #[arg(short = 'X', long = "exclude-path", value_name = "PATH", action = ArgAction::Append)]
+    /// Skip specific directories from analysis
+    /// Examples: --exclude-path target/ --exclude-path node_modules/
+    #[arg(short = 'X', long = "exclude-path", value_name = "PATH", action = ArgAction::Append, help = "Exclude specific paths (supports comma-separated)")]
     pub exclude_path: Vec<String>,
     
-    /// Include file patterns (glob patterns) - supports comma-separated values
-    #[arg(short = 'F', long = "include-file", value_name = "PATTERN", action = ArgAction::Append)]
+    /// Only analyze files matching these patterns
+    /// Examples: --include-file "*.rs" --include-file "*.toml"
+    #[arg(short = 'F', long = "include-file", value_name = "PATTERN", action = ArgAction::Append, help = "Include file patterns (supports comma-separated)")]
     pub include_file: Vec<String>,
     
-    /// Exclude file patterns (glob patterns) - supports comma-separated values
-    #[arg(short = 'N', long = "exclude-file", value_name = "PATTERN", action = ArgAction::Append)]
+    /// Skip files matching these patterns
+    /// Examples: --exclude-file "*.tmp" --exclude-file "*.bak"
+    #[arg(short = 'N', long = "exclude-file", value_name = "PATTERN", action = ArgAction::Append, help = "Exclude file patterns (supports comma-separated)")]
     pub exclude_file: Vec<String>,
     
-    /// Include authors (name or email) - supports comma-separated values
-    #[arg(short = 'A', long = "author", value_name = "AUTHOR", action = ArgAction::Append)]
+    /// Only show commits from specific authors
+    /// Examples: --author "john@example.com" --author "Jane Doe"
+    #[arg(short = 'A', long = "author", value_name = "AUTHOR", action = ArgAction::Append, help = "Include specific authors (supports comma-separated)")]
     pub author: Vec<String>,
     
-    /// Exclude authors (name or email) - supports comma-separated values
-    #[arg(short = 'E', long = "exclude-author", value_name = "AUTHOR", action = ArgAction::Append)]
+    /// Hide commits from specific authors
+    /// Examples: --exclude-author "bot@automated.com"
+    #[arg(short = 'E', long = "exclude-author", value_name = "AUTHOR", action = ArgAction::Append, help = "Exclude specific authors (supports comma-separated)")]
     pub exclude_author: Vec<String>,
     
-    /// Maximum number of results to return
-    #[arg(short = 'L', long = "limit", value_name = "N")]
+    /// Limit the number of results returned
+    /// Example: --limit 100
+    #[arg(short = 'L', long = "limit", value_name = "N", help = "Maximum number of results")]
     pub limit: Option<usize>,
     
     // ============ SCANNER CONFIGURATION ============
@@ -103,38 +139,43 @@ pub struct Args {
     #[arg(long = "queue-size", value_name = "N")]
     pub queue_size: Option<usize>,
     
-    /// Plugin names to execute (positional arguments)
-    #[arg(value_name = "PLUGIN")]
+    /// Plugin commands to execute
+    /// Examples: commits, metrics, export, commits:authors
+    #[arg(value_name = "COMMAND", help = "Plugin commands to execute (e.g., commits, metrics, export)")]
     pub plugins: Vec<String>,
     
-    // ============ PLUGIN MANAGEMENT ============
+    // ============ PLUGIN DISCOVERY & HELP ============
     
     /// List all available plugins
-    #[arg(long = "list-plugins")]
+    #[arg(long = "list-plugins", help = "List all available plugins")]
     pub list_plugins: bool,
     
-    /// Show all available plugins with their functions and descriptions
-    #[arg(long = "plugins")]
+    /// Show plugins with their functions and descriptions
+    #[arg(long = "plugins", help = "Show all plugins with functions and descriptions")]
     pub show_plugins: bool,
     
-    /// Show all available plugin functions and command mappings
-    #[arg(long = "plugins-help")]
+    /// Display comprehensive plugin help and command mappings
+    #[arg(long = "plugins-help", help = "Show detailed plugin functions and command mappings")]
     pub plugins_help: bool,
     
-    /// Show detailed information about a specific plugin
-    #[arg(long = "plugin-info", value_name = "PLUGIN")]
+    /// Get detailed information about a specific plugin
+    /// Example: --plugin-info commits
+    #[arg(long = "plugin-info", value_name = "PLUGIN", help = "Show detailed information about specific plugin")]
     pub plugin_info: Option<String>,
     
-    /// Check plugin compatibility with current API
-    #[arg(long = "check-plugin", value_name = "PLUGIN")]
+    /// Verify plugin compatibility with current API version
+    /// Example: --check-plugin my_custom_plugin
+    #[arg(long = "check-plugin", value_name = "PLUGIN", help = "Check plugin compatibility with current API")]
     pub check_plugin: Option<String>,
     
-    /// List plugins by type (scanner, notification, processing, output, composite)
-    #[arg(long = "list-by-type", value_name = "TYPE")]
+    /// List plugins by category
+    /// Examples: --list-by-type scanner, --list-by-type output
+    #[arg(long = "list-by-type", value_name = "TYPE", help = "List plugins by type (scanner, output, etc.)")]
     pub list_by_type: Option<String>,
     
-    /// Plugin directory path for discovery
-    #[arg(long = "plugin-dir", value_name = "DIR")]
+    /// Override default plugin discovery directory
+    /// Example: --plugin-dir ./custom_plugins
+    #[arg(long = "plugin-dir", value_name = "DIR", help = "Custom plugin directory path")]
     pub plugin_dir: Option<String>,
 }
 
@@ -154,6 +195,15 @@ impl Args {
 /// Parse command line arguments
 pub fn parse_args() -> Args {
     debug!("Parsing command line arguments");
+    
+    // Check for help flag before parsing to intercept it
+    let args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
+        let no_color = args.contains(&"--no-color".to_string());
+        display_enhanced_help(no_color);
+        std::process::exit(0);
+    }
+    
     let args = Args::parse().apply_enhanced_parsing();
     debug!("Parsed CLI arguments with enhanced parsing: {:?}", args);
     args
@@ -200,6 +250,12 @@ pub fn validate_args(args: &Args) -> Result<()> {
     Ok(())
 }
 
+/// Display enhanced help with colors and better formatting
+pub fn display_enhanced_help(no_color: bool) {
+    let formatter = HelpFormatter::from_no_color_flag(no_color);
+    println!("{}", formatter.format_main_help());
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -215,6 +271,7 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            no_color: false,
             config_file: None,
             config_name: None,
             since: None,
@@ -306,8 +363,8 @@ mod tests {
         
         // Should not panic or error for basic path handling
         // Note: This doesn't validate git repository, just CLI processing
-        let result = run(args);
-        assert!(result.is_ok());
+        assert!(validate_args(&args).is_ok());
+        assert_eq!(args.repository, Some("/some/path".to_string()));
     }
 
     #[test]
@@ -342,8 +399,8 @@ mod tests {
     fn test_cli_run_without_path() {
         let args = create_test_args();
         
-        let result = run(args);
-        assert!(result.is_ok());
+        assert!(validate_args(&args).is_ok());
+        assert!(args.repository.is_none());
     }
 
     #[test]

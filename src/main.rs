@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod display;
 mod git;
 mod logging;
 mod scanner;
@@ -200,11 +201,20 @@ fn configure_logging(args: &cli::Args, config: &config::ConfigManager) -> Result
         }
     };
     
+    // Create color configuration based on args
+    let colour_config = if args.no_color {
+        None
+    } else {
+        Some(display::ColourConfig::default())
+    };
+    
     Ok(logging::LogConfig {
         console_level,
         file_level,
         format,
         destination,
+        colour_config,
+        enable_colours: !args.no_color,
     })
 }
 

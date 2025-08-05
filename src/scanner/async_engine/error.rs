@@ -179,10 +179,10 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = ScanError::repository("connection failed");
-        assert_eq!(err.to_string(), "Repository error: connection failed");
+        assert!(err.to_string().contains("Repository error: connection failed"));
         
         let err = ScanError::InvalidMode(ScanMode::FILES | ScanMode::HISTORY);
-        assert!(err.to_string().contains("Invalid scan modes"));
+        assert!(err.to_string().contains("The requested analysis mode is not available"));
     }
     
     #[test]

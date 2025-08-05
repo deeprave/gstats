@@ -7,5 +7,9 @@ pub mod converter;
 pub mod memory_parser;
 pub mod plugin_handler;
 pub mod command_mapper;
+pub mod suggestion;
+pub mod contextual_help;
+pub mod help_formatter;
 
 pub use args::Args;
+pub use help_formatter::HelpFormatter;

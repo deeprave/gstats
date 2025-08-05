@@ -262,7 +262,7 @@ mod tests {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
         let plugin_error: PluginError = io_error.into();
         assert!(matches!(plugin_error, PluginError::Generic { .. }));
-        assert!(plugin_error.to_string().contains("IO error"));
+        assert!(plugin_error.to_string().contains("Plugin file not found"));
     }
     
     #[test]

@@ -382,7 +382,7 @@ since = "30d"
         assert_eq!(manager.get_value("base", "quiet").unwrap(), "true");
         assert_eq!(manager.get_value("base", "log-format").unwrap(), "json");
         assert_eq!(manager.get_value("module.commits", "since").unwrap(), "30d");
-        assert_eq!(manager.config_file_path.as_ref().unwrap(), temp_file.path());
+        assert_eq!(manager._config_file_path.as_ref().unwrap(), temp_file.path());
     }
 
     #[test]

@@ -235,7 +235,7 @@ mod tests {
         let result = validate_git_repository("/definitely/does/not/exist");
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Path does not exist"));
+        assert!(error_msg.contains("Directory does not exist"));
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         // The error message now comes from git2 library via validate_git_repository_handle
-        assert!(error_msg.contains("Failed to open repository"));
+        assert!(error_msg.contains("Not a valid git repository"));
     }
 
     #[test]

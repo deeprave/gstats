@@ -217,9 +217,9 @@ impl Default for PluginScannerBuilder {
 mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, MessageData};
-    use crate::plugin::registry::PluginRegistry;
     use crate::plugin::tests::mock_plugins::MockScannerPlugin;
     use futures::stream;
+    use tokio_stream::StreamExt;
 
     struct MockAsyncScanner {
         name: String,

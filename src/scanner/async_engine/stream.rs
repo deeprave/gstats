@@ -355,6 +355,7 @@ pub mod stream_utils {
 mod tests {
     use super::*;
     use futures::stream;
+    use tokio_stream::StreamExt;
     use crate::scanner::modes::ScanMode;
     use crate::scanner::messages::{MessageHeader, MessageData};
     
