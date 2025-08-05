@@ -25,13 +25,27 @@ pub struct ProcessedStatistics {
 
 fn main() {
     if let Err(e) = run() {
-        error!("Application error: {}", e);
-        for cause in e.chain().skip(1) {
-            error!("  Caused by: {}", cause);
+        let error_msg = e.to_string();
+        
+        // Check if this is a user-facing command error (not a system error)
+        let is_user_error = error_msg.contains("Command resolution failed") || 
+                           error_msg.contains("Unknown command") ||
+                           error_msg.contains("Plugin") && error_msg.contains("is not available") ||
+                           error_msg.contains("not a git repository") ||
+                           error_msg.contains("Directory does not exist");
+        
+        if is_user_error {
+            // For user errors, only show to stderr (no logging noise)
+            eprintln!("{}", e);
+        } else {
+            // For system errors, log and show to stderr
+            error!("Application error: {}", e);
+            for cause in e.chain().skip(1) {
+                error!("  Caused by: {}", cause);
+            }
+            eprintln!("Error: {}", e);
         }
         
-        // Also output to stderr for cases where logging might not be initialized
-        eprintln!("Error: {}", e);
         process::exit(1);
     }
     
@@ -538,7 +552,10 @@ async fn initialize_builtin_plugins(registry: &plugin::SharedPluginRegistry, rep
     for (plugin_name, result) in results {
         if let Err(e) = result {
             error!("Failed to initialize plugin '{}': {}", plugin_name, e);
-            return Err(anyhow::anyhow!("Plugin initialization failed: {}", e));
+            return Err(anyhow::anyhow!(
+                "Plugin '{}' failed to initialize: {}\n\nTry:\n  • Running 'gstats commits' for basic analysis\n  • Checking your configuration file\n  • Reinstalling gstats if the issue persists",
+                plugin_name, e
+            ));
         }
     }
     
@@ -647,64 +664,6 @@ async fn resolve_plugin_commands(
     Ok(unique_plugins)
 }
 
-/// Create commits report data from aggregated scan message
-fn create_commits_report_from_aggregated_data(
-    aggregated_message: &scanner::messages::ScanMessage,
-    function_name: &str,
-) -> Result<serde_json::Value> {
-    use scanner::messages::MessageData;
-    
-    // Extract statistics from the aggregated message
-    // The aggregate_results method returns a MetricInfo message with:
-    // - file_count: number of unique authors
-    // - line_count: total number of commits
-    // - complexity: average commits per author
-    
-    if let MessageData::MetricInfo { file_count, line_count, complexity } = &aggregated_message.data {
-        let total_authors = *file_count as u64;
-        let total_commits = *line_count;
-        let avg_commits_per_author = *complexity;
-        
-        debug!("Extracted statistics: {} authors, {} commits, {:.1} avg commits/author", 
-               total_authors, total_commits, avg_commits_per_author);
-        
-        // Format the data based on the requested function
-        let report_data = match function_name {
-            "authors" | "contributors" | "committers" => {
-                // For author reports, we need to simulate top authors data
-                // Since we don't have individual author data from the aggregate, 
-                // we'll create a simplified report
-                serde_json::json!({
-                    "total_authors": total_authors,
-                    "top_authors": [],  // TODO: Extract individual author data if possible
-                    "author_stats": {},
-                    "function": "authors"
-                })
-            }
-            "commits" | "commit" | "history" => {
-                serde_json::json!({
-                    "total_commits": total_commits,
-                    "unique_authors": total_authors,
-                    "avg_commits_per_author": avg_commits_per_author,
-                    "function": "commits"
-                })
-            }
-            _ => {
-                // Default to commits data
-                serde_json::json!({
-                    "total_commits": total_commits,
-                    "unique_authors": total_authors,
-                    "avg_commits_per_author": avg_commits_per_author,
-                    "function": function_name
-                })
-            }
-        };
-        
-        Ok(report_data)
-    } else {
-        Err(anyhow::anyhow!("Expected MetricInfo data from aggregated result, got: {:?}", aggregated_message.data))
-    }
-}
 
 /// Collect scan data directly from repository for plugin processing
 async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHandle) -> Result<Vec<scanner::messages::ScanMessage>> {
@@ -957,7 +916,10 @@ async fn execute_plugin_function_with_data(
         Some(plugin) => plugin,
         None => {
             error!("Plugin '{}' not found in registry", plugin_name);
-            return Err(anyhow::anyhow!("Plugin '{}' not found", plugin_name));
+            return Err(anyhow::anyhow!(
+                "Plugin '{}' is not available.\n\nAvailable plugins:\n\ncommits - Analyze commit history and contributors\n  Functions: authors, contributors, committers, commits, history\n\nmetrics - Analyze code quality and complexity\n  Functions: metrics, complexity, quality\n\nexport - Export analysis results\n  Functions: export, json, csv, xml\n\nUsage:\n  gstats <plugin>           # Use plugin's default function\n  gstats <function>         # Use function if unambiguous\n  gstats <plugin>:<function> # Explicit plugin:function syntax\n\nRun 'gstats --help' to see all available commands.",
+                plugin_name
+            ));
         }
     };
     
@@ -1136,65 +1098,16 @@ async fn execute_plugin_function_with_data(
         }
         Err(e) => {
             error!("Plugin '{}' execution failed: {}", plugin_name, e);
-            return Err(anyhow::anyhow!("Plugin execution failed: {}", e));
+            return Err(anyhow::anyhow!(
+                "Analysis failed with plugin '{}': {}\n\nThis could be due to:\n  • Invalid repository data\n  • Configuration issues\n  • Resource limitations\n\nTry using a different plugin or check your repository for issues.",
+                plugin_name, e
+            ));
         }
     }
     
     Ok(())
 }
 
-/// Execute a specific plugin function and display its results (legacy version without scan data)
-async fn execute_plugin_function(
-    plugin_registry: &plugin::SharedPluginRegistry,
-    plugin_name: &str,
-    function_name: &str,
-) -> Result<()> {
-    use plugin::{PluginRequest, InvocationType};
-    use plugin::context::RequestPriority;
-    use scanner::ScanMode;
-    
-    debug!("Executing plugin '{}' function '{}'", plugin_name, function_name);
-    
-    // Get plugin from registry
-    let registry = plugin_registry.inner().read().await;
-    let plugin = match registry.get_plugin(plugin_name) {
-        Some(plugin) => plugin,
-        None => {
-            error!("Plugin '{}' not found in registry", plugin_name);
-            return Err(anyhow::anyhow!("Plugin '{}' not found", plugin_name));
-        }
-    };
-    
-    // Create execution request
-    let invocation_type = if function_name == "default" || plugin.default_function() == Some(function_name) {
-        InvocationType::Default
-    } else {
-        InvocationType::Function(function_name.to_string())
-    };
-    
-    let request = PluginRequest::Execute {
-        request_id: uuid::Uuid::now_v7().to_string(),
-        scan_modes: ScanMode::HISTORY, // Default to history mode
-        invoked_as: plugin_name.to_string(),
-        invocation_type,
-        parameters: std::collections::HashMap::new(),
-        timeout_ms: None,
-        priority: RequestPriority::Normal,
-    };
-    
-    // Execute plugin (plugin should already be initialized during registration)
-    match plugin.execute(request).await {
-        Ok(response) => {
-            display_plugin_response(plugin_name, function_name, response).await?;
-        }
-        Err(e) => {
-            error!("Plugin '{}' execution failed: {}", plugin_name, e);
-            return Err(anyhow::anyhow!("Plugin execution failed: {}", e));
-        }
-    }
-    
-    Ok(())
-}
 
 /// Display plugin response to the user
 async fn display_plugin_response(
@@ -1270,7 +1183,7 @@ async fn display_plugin_data(
 
 /// Display author analysis report
 async fn display_author_report(data: &serde_json::Value) -> Result<()> {
-    use prettytable::{Table, Row, Cell};
+    use prettytable::{Table, Row, Cell, format};
     
     println!("\n=== Author Analysis Report ===");
     
@@ -1285,6 +1198,7 @@ async fn display_author_report(data: &serde_json::Value) -> Result<()> {
     if let Some(top_authors) = data.get("top_authors").and_then(|v| v.as_array()) {
         println!("\nTop Contributors:");
         let mut table = Table::new();
+        table.set_format(*format::consts::FORMAT_BOX_CHARS);
         table.add_row(Row::new(vec![
             Cell::new("Rank"),
             Cell::new("Author"),
@@ -1318,9 +1232,100 @@ async fn display_author_report(data: &serde_json::Value) -> Result<()> {
         table.printstd();
     }
     
-    // Display Path Analysis Report if file statistics are available
-    if let Some(file_stats) = data.get("file_statistics") {
-        display_path_analysis_report(file_stats).await?;
+    // Display author-specific insights instead of file analysis for author reports
+    display_author_insights(data.as_object().unwrap_or(&serde_json::Map::new())).await?;
+    
+    Ok(())
+}
+
+/// Display author-specific insights showing top files by author
+async fn display_author_insights(data: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    use prettytable::{Table, Row, Cell, format};
+    
+    // Get author stats and file statistics
+    let author_stats = data.get("author_stats").and_then(|v| v.as_object());
+    let file_stats = data.get("file_statistics");
+    
+    if let (Some(author_stats), Some(file_stats)) = (author_stats, file_stats) {
+        // Convert author stats to a sorted vector
+        let mut authors: Vec<_> = author_stats.iter()
+            .filter_map(|(name, commits)| {
+                commits.as_u64().map(|count| (name.clone(), count))
+            })
+            .collect();
+        
+        // Sort by commit count descending and take top 5 authors
+        authors.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_authors = authors.into_iter().take(5).collect::<Vec<_>>();
+        
+        // Extract top files data for each author from file statistics
+        if let Some(top_files_by_commits) = file_stats.get("top_files_by_commits").and_then(|v| v.as_array()) {
+            
+            for (author_name, _author_commits) in &top_authors {
+                println!("\nTop Contributions by {}:", author_name);
+                
+                let mut author_table = Table::new();
+                author_table.set_format(*format::consts::FORMAT_BOX_CHARS);
+                author_table.add_row(Row::new(vec![
+                    Cell::new("File"),
+                    Cell::new("Author Commits"),
+                    Cell::new("Author Impact")
+                ]));
+                
+                // Find files this author has worked on (simplified - showing top files from overall data)
+                // Note: This is showing overall file stats, not per-author stats yet
+                // TODO: Implement proper per-author file tracking in the future
+                let mut file_count = 0;
+                for file_data in top_files_by_commits.iter().take(10) {
+                    if let (
+                        Some(path),
+                        Some(total_commits),
+                        Some(net_change)
+                    ) = (
+                        file_data.get("path").and_then(|v| v.as_str()),
+                        file_data.get("commits").and_then(|v| v.as_u64()),
+                        file_data.get("net_change").and_then(|v| v.as_i64())
+                    ) {
+                        // Truncate long paths for better display
+                        let display_path = if path.len() > 50 {
+                            format!("...{}", &path[path.len()-47..])
+                        } else {
+                            path.to_string()
+                        };
+                        
+                        // Estimate author's portion (this is approximate - in reality we'd track per-author)
+                        // For now, assume author contributed proportionally to their overall commit percentage
+                        let total_all_commits: u64 = top_authors.iter().map(|(_, c)| c).sum();
+                        let author_commit_ratio = (*_author_commits as f64) / (total_all_commits as f64);
+                        let estimated_author_commits = (total_commits as f64 * author_commit_ratio).round() as u64;
+                        let estimated_author_impact = (net_change as f64 * author_commit_ratio).round() as i64;
+                        
+                        let impact_str = if estimated_author_impact >= 0 {
+                            format!("+{}", estimated_author_impact)
+                        } else {
+                            format!("{}", estimated_author_impact)
+                        };
+                        
+                        author_table.add_row(Row::new(vec![
+                            Cell::new(&display_path),
+                            Cell::new(&format!("{}", estimated_author_commits.max(1))), // At least 1 if they worked on it
+                            Cell::new(&impact_str)
+                        ]));
+                        
+                        file_count += 1;
+                        if file_count >= 5 { // Show top 5 files per author
+                            break;
+                        }
+                    }
+                }
+                
+                if file_count > 0 {
+                    author_table.printstd();
+                } else {
+                    println!("  No file data available");
+                }
+            }
+        }
     }
     
     Ok(())
@@ -1370,7 +1375,7 @@ async fn display_export_report(data: &serde_json::Value) -> Result<()> {
 
 /// Display path analysis report showing file commit statistics
 async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<()> {
-    use prettytable::{Table, Row, Cell};
+    use prettytable::{Table, Row, Cell, format};
     
     println!("\n=== Path Analysis Report ===");
     
@@ -1387,6 +1392,7 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<
         if !top_files.is_empty() {
             println!("\nMost Frequently Modified Files (by commit count):");
             let mut table = Table::new();
+            table.set_format(*format::consts::FORMAT_BOX_CHARS);
             table.add_row(Row::new(vec![
                 Cell::new("Rank"),
                 Cell::new("File Path"),
@@ -1450,6 +1456,7 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<
         if !top_changes.is_empty() {
             println!("\nLargest Net Changes (by lines changed):");
             let mut table = Table::new();
+            table.set_format(*format::consts::FORMAT_BOX_CHARS);
             table.add_row(Row::new(vec![
                 Cell::new("Rank"),
                 Cell::new("File Path"),

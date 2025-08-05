@@ -200,18 +200,6 @@ pub fn validate_args(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// Main CLI logic - processes parsed arguments and coordinates repository operations
-pub fn run(args: Args) -> Result<()> {
-    let repo_path = match args.repository {
-        Some(path) => path,
-        None => ".".to_string(), // Default to current directory
-    };
-
-    // TODO: Replace with actual git analysis implementation
-    println!("Analyzing git repository at: {}", repo_path);
-
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

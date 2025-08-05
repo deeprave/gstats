@@ -186,6 +186,7 @@ pub struct TaskManager {
     queue_ref: Option<Arc<MemoryQueue>>,
     
     /// Task scheduler handle
+    #[allow(dead_code)]
     scheduler_handle: Option<JoinHandle<()>>,
 }
 
@@ -552,10 +553,10 @@ impl TaskManager {
     
     /// Static method to process pending tasks (used in spawned task)
     async fn try_process_pending_static(
-        pending_tasks: Arc<Mutex<BinaryHeap<PendingTask>>>,
-        semaphore: Arc<Semaphore>,
-        constraints: ResourceConstraints,
-        queue_ref: Option<Arc<MemoryQueue>>,
+        _pending_tasks: Arc<Mutex<BinaryHeap<PendingTask>>>,
+        _semaphore: Arc<Semaphore>,
+        _constraints: ResourceConstraints,
+        _queue_ref: Option<Arc<MemoryQueue>>,
     ) -> ScanResult<usize> {
         // This is a simplified version that just tries to notify about available resources
         // The actual processing should be done through the main TaskManager instance

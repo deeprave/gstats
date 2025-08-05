@@ -26,7 +26,7 @@ pub trait AsyncScanner: Send + Sync {
     async fn scan_async(&self, modes: ScanMode) -> ScanResult<ScanMessageStream>;
     
     /// Get estimated message count for progress tracking (optional)
-    async fn estimate_message_count(&self, modes: ScanMode) -> Option<usize> {
+    async fn estimate_message_count(&self, _modes: ScanMode) -> Option<usize> {
         None
     }
 }

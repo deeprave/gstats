@@ -19,12 +19,14 @@ use super::error::{ScanError, ScanResult};
 pub struct AsyncScannerEngine {
     /// Tokio runtime for async operations
     #[cfg(not(test))]
+    #[allow(dead_code)]
     runtime: Arc<Runtime>,
     
     /// Repository handle
     repository: Arc<RepositoryHandle>,
     
     /// Scanner configuration
+    #[allow(dead_code)]
     config: ScannerConfig,
     
     /// Task coordination manager
@@ -104,7 +106,7 @@ impl AsyncScannerEngine {
     /// Execute scan with specified modes
     pub async fn scan(&self, modes: ScanMode) -> ScanResult<()> {
         if self.scanners.is_empty() {
-            return Err(ScanError::configuration("No scanners registered"));
+            return Err(ScanError::no_scanners_registered());
         }
         
         // Find scanners that support the requested modes

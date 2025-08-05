@@ -199,7 +199,18 @@ impl PluginError {
 // Allow conversion from common error types
 impl From<std::io::Error> for PluginError {
     fn from(err: std::io::Error) -> Self {
-        PluginError::generic(format!("IO error: {}", err))
+        let user_msg = match err.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("Plugin file not found: {}\n\nCheck that the plugin exists and the path is correct.", err)
+            },
+            std::io::ErrorKind::PermissionDenied => {
+                format!("Cannot access plugin: {}\n\nCheck file permissions and ensure the plugin directory is readable.", err)
+            },
+            _ => {
+                format!("Plugin file system error: {}\n\nCheck the plugin path and permissions.", err)
+            }
+        };
+        PluginError::generic(user_msg)
     }
 }
 

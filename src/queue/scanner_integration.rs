@@ -59,7 +59,7 @@ impl MessageProducer for QueueMessageProducer {
             Ok(()) => {
                 log::debug!("Producer '{}' enqueued message", self.name);
             }
-            Err(e) => {
+            Err(_e) => {
                 // Try with backoff if regular enqueue fails
                 match self.queue.enqueue_with_backoff(message) {
                     Ok(()) => {

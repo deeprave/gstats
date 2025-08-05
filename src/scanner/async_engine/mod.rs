@@ -12,14 +12,14 @@ pub mod repository;
 pub mod scanners;
 
 // Re-export core types
-pub use error::{ScanError, ScanResult};
-pub use engine::{AsyncScannerEngine, AsyncScannerEngineBuilder, EngineStats};
+// pub use error::ScanResult;
+pub use engine::{AsyncScannerEngineBuilder, EngineStats};
 
 // Re-export statistics types for convenience
 
 // Module metadata
-pub const MODULE_NAME: &str = "Async Scanner Engine";
-pub const MODULE_VERSION: &str = "1.0.0";
+const MODULE_NAME: &str = "Async Scanner Engine";
+const MODULE_VERSION: &str = "1.0.0";
 
 /// Check if async engine is available
 pub fn is_async_available() -> bool {

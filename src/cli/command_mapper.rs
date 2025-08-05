@@ -205,17 +205,48 @@ impl CommandMapper {
         }
         
         // Not found
-        let available_functions: Vec<String> = self.function_map.keys()
+        let _available_functions: Vec<String> = self.function_map.keys()
             .cloned()
             .collect();
         let available_plugins: Vec<String> = self.plugin_map.keys()
             .cloned()
             .collect();
         
-        bail!(
-            "Unknown command '{}'. Available functions: {:?}, Available plugins: {:?}",
-            input, available_functions, available_plugins
-        );
+        // Sort the lists for better readability
+        let mut sorted_plugins = available_plugins;
+        sorted_plugins.sort();
+        
+        let mut error_msg = format!("Unknown command '{}'.\n\n", input);
+        
+        if !sorted_plugins.is_empty() {
+            // Create a tabular display using manual formatting
+            error_msg.push_str("Available plugins and functions:\n");
+            error_msg.push_str("┌─────────┬────────────────────────────────────────────────────────┐\n");
+            error_msg.push_str("│ Plugin  │ Functions                                              │\n");
+            error_msg.push_str("├─────────┼────────────────────────────────────────────────────────┤\n");
+            
+            for plugin in &sorted_plugins {
+                let (plugin_name, functions) = match plugin.as_str() {
+                    "commits" => ("commits", "authors, contributors, committers, commits, history"),
+                    "metrics" => ("metrics", "metrics, complexity, quality"),
+                    "export" => ("export", "export, json, csv, xml"),
+                    _ => (plugin.as_str(), ""),
+                };
+                
+                // Format with proper padding
+                error_msg.push_str(&format!("│ {:<7} │ {:<54} │\n", plugin_name, functions));
+            }
+            
+            error_msg.push_str("└─────────┴────────────────────────────────────────────────────────┘\n");
+        }
+        
+        error_msg.push_str("\nUsage:\n");
+        error_msg.push_str("  gstats <plugin>           # Use plugin's default function\n");
+        error_msg.push_str("  gstats <function>         # Use function if unambiguous\n");
+        error_msg.push_str("  gstats <plugin>:<function> # Explicit plugin:function syntax\n");
+        error_msg.push_str("\nRun 'gstats --help' to see all available commands.");
+        
+        bail!("{}", error_msg);
     }
     
     /// Detect all ambiguous function names

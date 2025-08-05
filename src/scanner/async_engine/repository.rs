@@ -386,7 +386,7 @@ fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<
         let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), Some(&mut diff_opts))?;
         
         // Get diff stats for line counts
-        let stats = diff.stats()?;
+        let _stats = diff.stats()?;
         
         // Process patches to get accurate line statistics
         diff.foreach(
@@ -413,7 +413,7 @@ fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<
         // Calculate line changes using patch analysis
         let mut patches = Vec::new();
         diff.foreach(
-            &mut |delta, _progress| true,
+            &mut |_delta, _progress| true,
             None,
             Some(&mut |delta, hunk| {
                 if let Some(path) = delta.new_file().path().or(delta.old_file().path()) {

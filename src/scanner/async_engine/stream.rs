@@ -4,7 +4,7 @@
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream;
 use futures::stream::BoxStream;
 use pin_project::pin_project;
 use crate::scanner::messages::ScanMessage;
@@ -138,7 +138,9 @@ where
 
 /// Stream combinator for merging multiple scan streams
 pub struct MergedScanStream {
+    #[allow(dead_code)]
     streams: Vec<ScanMessageStream>,
+    #[allow(dead_code)]
     active_streams: usize,
 }
 

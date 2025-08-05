@@ -22,23 +22,23 @@ pub enum ScanError {
     Stream(String),
     
     /// Cancellation was requested
-    #[error("Scan cancelled")]
+    #[error("Analysis was cancelled")]
     Cancelled,
     
     /// Resource limit exceeded
-    #[error("Resource limit exceeded: {0}")]
+    #[error("Resource limit exceeded: {0}\n\nTry reducing the scope with filters like --since or --max-files, or increase memory limits.")]
     ResourceLimit(String),
     
     /// Invalid scan mode combination
-    #[error("Invalid scan modes: {0:?}")]
+    #[error("The requested analysis mode is not available: {0:?}\n\nAvailable options:\n  • 'gstats commits' - Analyze commit history and contributors\n  • 'gstats metrics' - Analyze code metrics (requires metrics plugin)\n\nRun 'gstats --help' to see all available commands.")]
     InvalidMode(ScanMode),
     
     /// Configuration error
-    #[error("Configuration error: {0}")]
+    #[error("Configuration problem: {0}\n\nCheck your configuration file or command line arguments. Run 'gstats --help' for usage information.")]
     Configuration(String),
     
     /// Generic async operation error
-    #[error("Async operation failed: {0}")]
+    #[error("Analysis operation failed: {0}")]
     AsyncOperation(String),
     
     /// Wrapped errors from other sources
@@ -47,9 +47,25 @@ pub enum ScanError {
 }
 
 impl ScanError {
-    /// Create a repository error
+    /// Create a repository error with context
     pub fn repository(msg: impl Into<String>) -> Self {
-        Self::Repository(msg.into())
+        let msg = msg.into();
+        let enhanced_msg = if msg.contains("not a git repository") {
+            format!("{}\n\nMake sure you're running this command from within a git repository, or specify a repository path with the --repository option.", msg)
+        } else if msg.contains("Permission denied") {
+            format!("{}\n\nCheck that you have read access to the repository directory and files.", msg)
+        } else {
+            format!("{}\n\nVerify the repository path exists and is accessible.", msg)
+        };
+        Self::Repository(enhanced_msg)
+    }
+    
+    /// Create a repository error for a specific path
+    pub fn repository_with_path(msg: impl Into<String>, path: impl AsRef<std::path::Path>) -> Self {
+        let path_display = path.as_ref().display();
+        let msg = msg.into();
+        let enhanced_msg = format!("{}\n\nRepository path: {}\n\nSuggestions:\n  • Check that the path exists and is accessible\n  • Ensure it's a valid git repository\n  • Verify you have proper permissions", msg, path_display);
+        Self::Repository(enhanced_msg)
     }
     
     /// Create a task error
@@ -67,9 +83,14 @@ impl ScanError {
         Self::ResourceLimit(msg.into())
     }
     
-    /// Create a configuration error
+    /// Create a configuration error with helpful suggestions
     pub fn configuration(msg: impl Into<String>) -> Self {
         Self::Configuration(msg.into())
+    }
+    
+    /// Create a configuration error for missing scanners
+    pub fn no_scanners_registered() -> Self {
+        Self::Configuration("No analysis modules are available.\n\nThis usually means plugins failed to load. Try:\n  • Running 'gstats commits' for basic commit analysis\n  • Checking your plugin configuration\n  • Reinstalling gstats if the problem persists".to_string())
     }
     
     /// Create an async operation error
@@ -88,7 +109,24 @@ pub type ScanResult<T> = Result<T, ScanError>;
 /// Convert from std::io::Error
 impl From<std::io::Error> for ScanError {
     fn from(error: std::io::Error) -> Self {
-        Self::Other(error.into())
+        let user_msg = match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("File or directory not found: {}\n\nCheck that the path exists and is spelled correctly.", error)
+            },
+            std::io::ErrorKind::PermissionDenied => {
+                format!("Permission denied: {}\n\nYou don't have the necessary permissions to access this file or directory.\nTry:\n  • Running with appropriate permissions\n  • Checking file/directory ownership\n  • Ensuring the path is readable", error)
+            },
+            std::io::ErrorKind::ConnectionRefused => {
+                format!("Connection refused: {}\n\nThis usually indicates a network or service issue.", error)
+            },
+            std::io::ErrorKind::TimedOut => {
+                format!("Operation timed out: {}\n\nThe operation took too long to complete. Try again or check your network connection.", error)
+            },
+            _ => {
+                format!("File system error: {}\n\nCheck the file path and your system permissions.", error)
+            }
+        };
+        Self::Other(anyhow::anyhow!(user_msg))
     }
 }
 

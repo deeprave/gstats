@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -132,7 +132,7 @@ impl Stream for PluginProcessingStream {
                 // Process through plugins asynchronously
                 // We need to spawn this as a separate task to avoid blocking
                 let executor_clone = Arc::clone(&executor);
-                let handle = tokio::spawn(async move {
+                let _handle = tokio::spawn(async move {
                     executor_clone.process_message(message_clone).await
                 });
                 

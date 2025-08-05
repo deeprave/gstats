@@ -340,7 +340,7 @@ impl CommitsPlugin {
             
             // Analyze commit message
             let is_merge_commit = message.contains("Merge");
-            let issue_refs_count = message
+            let _issue_refs_count = message
                 .split_whitespace()
                 .filter(|word| word.starts_with('#') || word.contains("GS-"))
                 .count();

@@ -26,11 +26,11 @@ pub struct PluginExecutor {
 }
 
 #[derive(Debug, Default, Clone)]
-struct ExecutionMetrics {
-    messages_processed: u64,
-    plugin_executions: u64,
-    errors: u64,
-    total_processing_time_ms: u64,
+pub struct ExecutionMetrics {
+    pub messages_processed: u64,
+    pub plugin_executions: u64,
+    pub errors: u64,
+    pub total_processing_time_ms: u64,
 }
 
 impl PluginExecutor {
@@ -92,7 +92,7 @@ impl PluginExecutor {
         
         let mut applicable = Vec::new();
         for name in scanner_plugin_names {
-            if let Some(plugin) = registry.get_plugin(&name) {
+            if let Some(_plugin) = registry.get_plugin(&name) {
                 // Try to downcast to ScannerPlugin to check modes
                 // For now, just add all scanner plugins
                 applicable.push(name);

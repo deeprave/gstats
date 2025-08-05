@@ -16,7 +16,7 @@ use log::debug;
 
 /// CLI Plugin Handler for managing plugin operations
 pub struct PluginHandler {
-    registry: SharedPluginRegistry,
+    _registry: SharedPluginRegistry,
     discovery: FileBasedDiscovery,
     command_mapper: CommandMapper,
 }
@@ -46,7 +46,7 @@ impl PluginHandler {
         let command_mapper = CommandMapper::new();
         
         Ok(Self {
-            registry,
+            _registry: registry,
             discovery,
             command_mapper,
         })

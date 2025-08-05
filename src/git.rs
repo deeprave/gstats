@@ -158,11 +158,17 @@ pub fn validate_git_repository_handle<P: AsRef<Path>>(path: P) -> Result<Reposit
     
     if !path.exists() {
         error!("Path does not exist: {}", path.display());
-        anyhow::bail!("Path does not exist: {}", path.display());
+        anyhow::bail!(
+            "Directory does not exist: {}\n\nPlease check the path and try again. Make sure you have permission to access the directory.", 
+            path.display()
+        );
     }
     
     let repo = Repository::open(path)
-        .with_context(|| format!("Failed to open repository at: {}", path.display()))?;
+        .with_context(|| format!(
+            "Not a valid git repository: {}\n\nMake sure this directory contains a git repository (initialized with 'git init' or cloned from a remote).\nIf this is the correct path, check that the .git directory exists and is accessible.", 
+            path.display()
+        ))?;
     
     if repo.is_bare() {
         debug!("Repository is bare: {}", path.display());
@@ -188,7 +194,7 @@ pub fn resolve_repository_handle(repository_arg: Option<String>) -> Result<Repos
             
             let repo = Repository::open(&current_dir)
                 .with_context(|| format!(
-                    "Current directory '{}' is not a git repository. Please run this command from within a git repository or specify a repository path.",
+                    "Current directory '{}' is not a git repository.\n\nTo fix this:\n  • Navigate to a git repository directory\n  • Or specify a repository path: gstats --repository /path/to/repo\n  • Or initialize a git repository: git init", 
                     current_dir.display()
                 ))?;
             

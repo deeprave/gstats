@@ -3,7 +3,7 @@
 //! Provides async implementations of different scan modes using streaming patterns.
 
 use std::sync::Arc;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream;
 use futures::stream::{self, StreamExt as FuturesStreamExt};
 use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};

@@ -8,10 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use crossbeam_channel::{self, Receiver, Sender};
-use crate::queue::{Queue, MemoryQueue, QueueError, MessageListener, ListenerRegistry};
+use crate::queue::{Queue, MemoryQueue, QueueError, ListenerRegistry};
 use crate::queue::listener::DefaultListenerRegistry;
 use crate::scanner::messages::ScanMessage;
-use crate::scanner::ScanMode;
 
 /// Consumer thread configuration
 #[derive(Debug, Clone)]
@@ -206,7 +205,7 @@ impl MessageConsumer {
             }
 
             // Process a batch of messages
-            let batch_start = Instant::now();
+            let _batch_start = Instant::now();
             let mut batch_count = 0;
 
             for _ in 0..config.batch_size {
@@ -237,7 +236,7 @@ impl MessageConsumer {
             if batch_count > 0 {
                 if let Ok(mut metrics_guard) = metrics.lock() {
                     metrics_guard.batches_processed += 1;
-                    let total_messages = metrics_guard.messages_processed + batch_count;
+                    let _total_messages = metrics_guard.messages_processed + batch_count;
                     metrics_guard.average_batch_size = 
                         (metrics_guard.average_batch_size * (metrics_guard.batches_processed - 1) as f64 + batch_count as f64) 
                         / metrics_guard.batches_processed as f64;

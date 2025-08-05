@@ -439,7 +439,7 @@ impl MetricsPlugin {
     }
 
     /// Generate metrics message for a specific file
-    fn generate_file_metrics_message(&self, file_path: &str, metrics: &FileMetrics) -> PluginResult<ScanMessage> {
+    fn generate_file_metrics_message(&self, _file_path: &str, metrics: &FileMetrics) -> PluginResult<ScanMessage> {
         // Calculate complexity per lines of code
         let complexity_per_loc = if metrics.lines_of_code > 0 {
             metrics.cyclomatic_complexity as f64 / metrics.lines_of_code as f64

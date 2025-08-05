@@ -29,7 +29,7 @@ struct ExportConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum ExportFormat {
+pub enum ExportFormat {
     Json,
     Csv,
     Xml,

@@ -13,7 +13,7 @@ pub type Configuration = HashMap<String, HashMap<String, String>>;
 /// Configuration manager
 pub struct ConfigManager {
     config: Configuration,
-    config_file_path: Option<PathBuf>,
+    _config_file_path: Option<PathBuf>,
     selected_section: Option<String>,
 }
 
@@ -22,7 +22,7 @@ impl ConfigManager {
     pub fn from_config(config: Configuration) -> Self {
         Self {
             config,
-            config_file_path: None,
+            _config_file_path: None,
             selected_section: None,
         }
     }
@@ -44,7 +44,7 @@ impl ConfigManager {
         info!("No configuration file found, using empty configuration");
         Ok(Self {
             config: Configuration::new(),
-            config_file_path: None,
+            _config_file_path: None,
             selected_section: None,
         })
     }
@@ -62,7 +62,7 @@ impl ConfigManager {
         info!("Successfully loaded configuration from: {}", path.display());
         Ok(Self {
             config,
-            config_file_path: Some(path),
+            _config_file_path: Some(path),
             selected_section: None,
         })
     }
@@ -138,7 +138,7 @@ impl ConfigManager {
         }
         
         // Handle performance-mode preset
-        if let Some(performance_mode_str) = self.get_value("scanner", "performance-mode") {
+        if let Some(_performance_mode_str) = self.get_value("scanner", "performance-mode") {
             let performance_mode = self.get_bool("scanner", "performance-mode")?
                 .unwrap_or(false);
                 
@@ -325,7 +325,7 @@ format = "json"
         
         let mut manager = ConfigManager {
             config,
-            config_file_path: None,
+            _config_file_path: None,
             selected_section: None,
         };
         
@@ -389,7 +389,7 @@ since = "30d"
     fn test_scanner_config_default() {
         let manager = ConfigManager {
             config: Configuration::new(),
-            config_file_path: None,
+            _config_file_path: None,
             selected_section: None,
         };
         
