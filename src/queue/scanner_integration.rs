@@ -416,7 +416,11 @@ mod tests {
                 author: "test@example.com".to_string(),
                 message: "Test commit".to_string(),
                 timestamp: 1234567890,
-                changed_files: vec!["src/lib.rs".to_string()],
+                changed_files: vec![crate::scanner::messages::FileChangeData {
+                    path: "src/lib.rs".to_string(),
+                    lines_added: 20,
+                    lines_removed: 5,
+                }],
             }
         );
         

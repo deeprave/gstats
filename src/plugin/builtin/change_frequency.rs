@@ -4,11 +4,11 @@
 
 use crate::git::RepositoryHandle;
 use anyhow::{Result, Context};
-use git2::{Repository, Commit, Oid, DiffOptions, DiffFormat};
+use git2::{Commit, DiffOptions};
 use std::collections::HashMap;
 use std::time::{SystemTime, Duration, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
-use log::{debug, info, warn};
+use log::{debug, info};
 
 /// Time window for change frequency analysis
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

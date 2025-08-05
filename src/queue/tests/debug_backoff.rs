@@ -1,6 +1,7 @@
 //! Debug tests for understanding backoff behavior
 
-use crate::queue::{MemoryQueue, Queue, MemoryTracker};
+use crate::queue::{MemoryQueue, Queue};
+use crate::queue::memory_tracker::MemoryTracker;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::modes::ScanMode;
 use std::sync::Arc;

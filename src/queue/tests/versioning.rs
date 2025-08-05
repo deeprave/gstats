@@ -1,6 +1,6 @@
 //! Versioned message integration tests
 
-use crate::queue::{MemoryQueue, Queue, QueueError};
+use crate::queue::{MemoryQueue, QueueError};
 use crate::queue::versioned_message::{QueueMessage, MessageType, MessagePayload};
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::modes::ScanMode;

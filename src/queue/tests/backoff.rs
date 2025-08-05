@@ -1,6 +1,7 @@
 //! Backoff algorithm tests
 
-use crate::queue::{MemoryQueue, Queue, MemoryTracker, QueueError, BackoffConfig, BackoffStrategy, PressureResponseConfig};
+use crate::queue::{MemoryQueue, Queue, QueueError, BackoffConfig, BackoffStrategy, PressureResponseConfig};
+use crate::queue::memory_tracker::MemoryTracker;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::modes::ScanMode;
 use std::sync::Arc;

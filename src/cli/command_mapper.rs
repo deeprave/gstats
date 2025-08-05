@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use anyhow::{Result, bail};
-use log::{debug, info, warn};
+use log::debug;
 use crate::plugin::traits::PluginFunction;
 
 /// Resolution result for a command

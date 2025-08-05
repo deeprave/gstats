@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 use async_trait::async_trait;
-use tokio::sync::RwLock;
 use futures::{Stream, StreamExt};
 use pin_project::pin_project;
 use std::pin::Pin;
@@ -15,7 +14,7 @@ use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::ScanMessage;
 use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
 use crate::scanner::async_engine::error::{ScanError, ScanResult};
-use crate::plugin::{SharedPluginRegistry, PluginExecutor, PluginStreamExt};
+use crate::plugin::{SharedPluginRegistry, PluginExecutor};
 
 /// Scanner adapter that processes messages through plugins
 pub struct PluginScanner {

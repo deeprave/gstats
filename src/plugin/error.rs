@@ -2,7 +2,6 @@
 //! 
 //! Comprehensive error handling for plugin operations with context-aware error types.
 
-use std::fmt;
 use thiserror::Error;
 
 /// Result type for plugin operations

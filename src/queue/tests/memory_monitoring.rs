@@ -1,6 +1,7 @@
 //! Memory monitoring system tests
 
-use crate::queue::{MemoryQueue, Queue, MemoryTracker, MemoryPressureLevel, MemoryStatistics, LeakInformation, MemoryHistorySample};
+use crate::queue::{MemoryQueue, Queue, MemoryPressureLevel};
+use crate::queue::memory_tracker::{MemoryTracker, MemoryStatistics, LeakInformation, MemoryHistorySample};
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::modes::ScanMode;
 use std::sync::Arc;

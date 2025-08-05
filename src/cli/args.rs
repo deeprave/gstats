@@ -1,7 +1,7 @@
 use clap::{Parser, ArgAction};
 use anyhow::Result;
 use std::path::PathBuf;
-use log::{debug, info};
+use log::debug;
 
 use super::enhanced_parser::EnhancedParser;
 

@@ -5,11 +5,15 @@ mod logging;
 mod queue;
 mod scanner;
 mod plugin;
+mod stats;
 
 use anyhow::Result;
 use std::process;
 use std::sync::Arc;
+use std::collections::HashMap;
 use log::{info, error, debug, warn};
+use crate::stats::RepositoryFileStats;
+use crate::scanner::async_engine::repository::AsyncRepositoryHandle;
 
 /// Statistics about what was actually processed during scanning
 #[derive(Debug, Clone)]
@@ -708,7 +712,7 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
     use scanner::modes::ScanMode;
     
     // Only collect data for plugins that need it
-    if plugin_name != "commits" {
+    if plugin_name != "commits" && plugin_name != "metrics" {
         return Ok(Vec::new());
     }
     
@@ -716,28 +720,108 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
     
     // Create async repository handle for data collection
     let async_repo = Arc::new(scanner::async_engine::repository::AsyncRepositoryHandle::new(repo));
-    
-    // Collect commit history (limit to reasonable number)
-    let commits = async_repo.get_commit_history(Some(1000)).await
-        .map_err(|e| anyhow::anyhow!("Failed to get commit history: {}", e))?;
-    
-    debug!("Collected {} commits from repository", commits.len());
-    
-    // Convert commits to scan messages
     let mut scan_messages = Vec::new();
-    for (index, commit_info) in commits.into_iter().enumerate() {
-        let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
-        let data = MessageData::CommitInfo {
-            hash: commit_info.id,
-            author: commit_info.author,
-            message: commit_info.message,
-            timestamp: commit_info.timestamp,
-            changed_files: commit_info.changed_files,
-        };
-        scan_messages.push(ScanMessage::new(header, data));
+    
+    // Collect data based on plugin requirements
+    match plugin_name {
+        "commits" => {
+            // Collect commit history (limit to reasonable number)
+            let commits = async_repo.get_commit_history(Some(1000)).await
+                .map_err(|e| anyhow::anyhow!("Failed to get commit history: {}", e))?;
+            
+            debug!("Collected {} commits from repository", commits.len());
+            
+            // Convert commits to scan messages
+            for (index, commit_info) in commits.into_iter().enumerate() {
+                let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
+                let data = MessageData::CommitInfo {
+                    hash: commit_info.id,
+                    author: commit_info.author,
+                    message: commit_info.message,
+                    timestamp: commit_info.timestamp,
+                    changed_files: commit_info.changed_files.into_iter()
+                        .map(|fc| scanner::messages::FileChangeData {
+                            path: fc.path,
+                            lines_added: fc.lines_added,
+                            lines_removed: fc.lines_removed,
+                        })
+                        .collect(),
+                };
+                scan_messages.push(ScanMessage::new(header, data));
+            }
+        }
+        "metrics" => {
+            // Collect file data for metrics analysis
+            let files = async_repo.list_files().await
+                .map_err(|e| anyhow::anyhow!("Failed to get file list: {}", e))?;
+            
+            debug!("Collected {} files from repository", files.len());
+            
+            // Convert files to scan messages
+            for (index, file_info) in files.into_iter().enumerate() {
+                let header = MessageHeader::new(ScanMode::FILES, index as u64);
+                let data = MessageData::FileInfo {
+                    path: file_info.path,
+                    size: file_info.size as u64,
+                    lines: estimate_line_count(file_info.size) as u32,
+                };
+                scan_messages.push(ScanMessage::new(header, data));
+            }
+        }
+        _ => {
+            // For other plugins, collect no data
+            debug!("No specific data collection implemented for plugin: {}", plugin_name);
+        }
     }
     
     Ok(scan_messages)
+}
+
+/// Estimate line count from file size (rough heuristic)
+fn estimate_line_count(size: usize) -> usize {
+    if size == 0 {
+        0
+    } else {
+        // Assume average of 50 characters per line
+        (size / 50).max(1)
+    }
+}
+
+/// Create a summary of file statistics for JSON output
+fn create_file_statistics_summary(file_stats: &RepositoryFileStats) -> serde_json::Value {
+    let top_files_by_commits = file_stats.files_by_commit_count();
+    let top_files_by_changes = file_stats.files_by_net_change();
+    
+    serde_json::json!({
+        "total_files": file_stats.file_count(),
+        "total_commits_across_files": file_stats.total_commits(),
+        "top_files_by_commits": top_files_by_commits.iter().take(10).map(|(path, stats)| {
+            serde_json::json!({
+                "path": path,
+                "commits": stats.commit_count,
+                "lines_added": stats.lines_added,
+                "lines_removed": stats.lines_removed,
+                "net_change": stats.net_change,
+                "current_lines": stats.current_lines,
+                "current_lines_display": stats.current_lines_display(),
+                "status": format!("{:?}", stats.status),
+                "authors": stats.author_count()
+            })
+        }).collect::<Vec<_>>(),
+        "top_files_by_changes": top_files_by_changes.iter().take(10).map(|(path, stats)| {
+            serde_json::json!({
+                "path": path,
+                "commits": stats.commit_count,
+                "lines_added": stats.lines_added,
+                "lines_removed": stats.lines_removed,
+                "net_change": stats.net_change,
+                "current_lines": stats.current_lines,
+                "current_lines_display": stats.current_lines_display(),
+                "status": format!("{:?}", stats.status),
+                "authors": stats.author_count()
+            })
+        }).collect::<Vec<_>>()
+    })
 }
 
 /// Execute plugins and display their reports
@@ -768,6 +852,13 @@ async fn execute_plugins_and_display_reports(
                     files_processed: 0, // No file analysis for commit-based commands
                     commits_processed: repo_stats.total_commits as usize,
                     authors_processed: repo_stats.total_authors as usize,
+                }
+            }
+            "metrics" => {
+                ProcessedStatistics {
+                    files_processed: repo_stats.total_files as usize, // File analysis for metrics
+                    commits_processed: 0, // No commit analysis for metrics
+                    authors_processed: 0, // No author analysis for metrics
                 }
             }
             _ => ProcessedStatistics {
@@ -816,19 +907,26 @@ async fn execute_plugins_and_display_reports(
     
     // Create processed statistics from the scan data we collected
     let processed_stats = if !scan_data.is_empty() {
-        // Count unique authors from the scan data
+        // Count unique authors, commits, and files from the scan data
         let mut unique_authors = std::collections::HashSet::new();
         let mut commits_count = 0;
+        let mut files_count = 0;
         
         for message in &scan_data {
-            if let scanner::messages::MessageData::CommitInfo { author, .. } = &message.data {
-                unique_authors.insert(author.clone());
-                commits_count += 1;
+            match &message.data {
+                scanner::messages::MessageData::CommitInfo { author, .. } => {
+                    unique_authors.insert(author.clone());
+                    commits_count += 1;
+                }
+                scanner::messages::MessageData::FileInfo { .. } => {
+                    files_count += 1;
+                }
+                _ => {}
             }
         }
         
         Some(ProcessedStatistics {
-            files_processed: 0, // TODO: Track file processing if needed
+            files_processed: files_count,
             commits_processed: commits_count,
             authors_processed: unique_authors.len(),
         })
@@ -865,28 +963,62 @@ async fn execute_plugin_function_with_data(
     
     // For the commits plugin specifically, create a new instance and process the scan data
     if plugin_name == "commits" && !scan_data.is_empty() {
-        use plugin::{Plugin, ScannerPlugin};
-        use std::collections::HashMap;
         
         // Process scan data directly to extract detailed author and file statistics
         let mut author_stats: HashMap<String, usize> = HashMap::new();
         let mut commit_count = 0;
-        let mut unique_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut file_stats = RepositoryFileStats::new();
         
         for message in &scan_data {
-            if let scanner::messages::MessageData::CommitInfo { author, changed_files, .. } = &message.data {
+            if let scanner::messages::MessageData::CommitInfo { author, changed_files, timestamp, .. } = &message.data {
                 commit_count += 1;
                 *author_stats.entry(author.clone()).or_insert(0) += 1;
                 
-                // Track unique files across all commits
-                for file in changed_files {
-                    unique_files.insert(file.clone());
+                // Track detailed file statistics across all commits
+                for file_change in changed_files {
+                    file_stats.update_file(
+                        &file_change.path,
+                        author,
+                        file_change.lines_added,
+                        file_change.lines_removed,
+                        *timestamp,
+                    );
+                }
+            }
+        }
+        
+        // Check file existence and get current line counts using direct git queries
+        let async_repo = AsyncRepositoryHandle::new(repo.clone());
+        
+        // Get all files that need existence checking
+        let unknown_files = file_stats.get_unknown_file_paths();
+        
+        debug!("Checking existence for {} files from commit history", unknown_files.len());
+        
+        // Check each file's existence in the current HEAD commit
+        for file_path in unknown_files {
+            match async_repo.get_file_info(&file_path).await {
+                Ok(Some((line_count, _is_binary))) => {
+                    // File exists in current repository
+                    file_stats.set_file_current_lines(&file_path, line_count);
+                    debug!("File '{}' exists with {} lines", file_path, line_count);
+                }
+                Ok(None) => {
+                    // File doesn't exist in current repository - it's been deleted
+                    if let Some(file_stat) = file_stats.files.get_mut(&file_path) {
+                        file_stat.set_deleted();
+                        debug!("File '{}' has been deleted", file_path);
+                    }
+                }
+                Err(e) => {
+                    // Error checking file - treat as unknown
+                    debug!("Error checking file '{}': {}", file_path, e);
                 }
             }
         }
         
         debug!("Processed {} commits, found {} unique authors, {} unique files", 
-               commit_count, author_stats.len(), unique_files.len());
+               commit_count, author_stats.len(), file_stats.file_count());
         
         // Create the report data with detailed author information
         let mut authors: Vec<_> = author_stats.iter().collect();
@@ -900,7 +1032,8 @@ async fn execute_plugin_function_with_data(
                         serde_json::json!({ "name": name, "commits": count })
                     }).collect::<Vec<_>>(),
                     "author_stats": author_stats,
-                    "unique_files": unique_files.len(),
+                    "unique_files": file_stats.file_count(),
+                    "file_statistics": create_file_statistics_summary(&file_stats),
                     "function": "authors"
                 })
             }
@@ -914,7 +1047,8 @@ async fn execute_plugin_function_with_data(
                 serde_json::json!({
                     "total_commits": commit_count,
                     "unique_authors": author_stats.len(),
-                    "unique_files": unique_files.len(),
+                    "unique_files": file_stats.file_count(),
+                    "file_statistics": create_file_statistics_summary(&file_stats),
                     "avg_commits_per_author": avg_commits_per_author,
                     "function": "commits"
                 })
@@ -926,11 +1060,52 @@ async fn execute_plugin_function_with_data(
                         serde_json::json!({ "name": name, "commits": count })
                     }).collect::<Vec<_>>(),
                     "author_stats": author_stats,
-                    "unique_files": unique_files.len(),
+                    "unique_files": file_stats.file_count(),
+                    "file_statistics": create_file_statistics_summary(&file_stats),
                     "function": function_name
                 })
             }
         };
+        
+        // Display the report directly
+        display_plugin_data(plugin_name, function_name, &report_data).await?;
+        return Ok(()); // Success, return early
+    }
+    
+    // For the metrics plugin specifically, process file data
+    if plugin_name == "metrics" && !scan_data.is_empty() {
+        // Process scan data to extract file metrics
+        let mut file_count = 0;
+        let mut total_lines = 0u64;
+        let mut total_size = 0u64;
+        
+        for message in &scan_data {
+            if let scanner::messages::MessageData::FileInfo { path: _, size, lines } = &message.data {
+                file_count += 1;
+                total_lines += *lines as u64;
+                total_size += *size;
+            }
+        }
+        
+        debug!("Processed {} files, {} total lines, {} total bytes", file_count, total_lines, total_size);
+        
+        // Calculate metrics
+        let average_lines_per_file = if file_count > 0 {
+            total_lines as f64 / file_count as f64
+        } else {
+            0.0
+        };
+        
+        let report_data = serde_json::json!({
+            "total_files": file_count,
+            "total_lines": total_lines,
+            "total_blank_lines": 0, // TODO: Calculate from actual file content
+            "total_comment_lines": 0, // TODO: Calculate from actual file content
+            "total_complexity": 0, // TODO: Calculate complexity metrics
+            "average_lines_per_file": average_lines_per_file,
+            "average_complexity": 0.0, // TODO: Calculate average complexity
+            "function": "metrics"
+        });
         
         // Display the report directly
         display_plugin_data(plugin_name, function_name, &report_data).await?;
@@ -1095,22 +1270,57 @@ async fn display_plugin_data(
 
 /// Display author analysis report
 async fn display_author_report(data: &serde_json::Value) -> Result<()> {
+    use prettytable::{Table, Row, Cell};
+    
     println!("\n=== Author Analysis Report ===");
     
     if let Some(total_authors) = data.get("total_authors").and_then(|v| v.as_u64()) {
         println!("Total Authors: {}", total_authors);
     }
     
+    if let Some(unique_files) = data.get("unique_files").and_then(|v| v.as_u64()) {
+        println!("Files Modified: {}", unique_files);
+    }
+    
     if let Some(top_authors) = data.get("top_authors").and_then(|v| v.as_array()) {
         println!("\nTop Contributors:");
+        let mut table = Table::new();
+        table.add_row(Row::new(vec![
+            Cell::new("Rank"),
+            Cell::new("Author"),
+            Cell::new("Commits"),
+            Cell::new("Percentage")
+        ]));
+        
+        let total_commits: u64 = top_authors.iter()
+            .filter_map(|author| author.get("commits").and_then(|v| v.as_u64()))
+            .sum();
+        
         for (i, author) in top_authors.iter().enumerate() {
             if let (Some(name), Some(commits)) = (
                 author.get("name").and_then(|v| v.as_str()),
                 author.get("commits").and_then(|v| v.as_u64())
             ) {
-                println!("  {:2}. {} ({} commits)", i + 1, name, commits);
+                let percentage = if total_commits > 0 {
+                    (commits as f64 / total_commits as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                table.add_row(Row::new(vec![
+                    Cell::new(&format!("{}", i + 1)),
+                    Cell::new(name),
+                    Cell::new(&format!("{}", commits)),
+                    Cell::new(&format!("{:.1}%", percentage))
+                ]));
             }
         }
+        table.printstd();
+    }
+    
+    // Display Path Analysis Report if file statistics are available
+    if let Some(file_stats) = data.get("file_statistics") {
+        display_path_analysis_report(file_stats).await?;
     }
     
     Ok(())
@@ -1128,8 +1338,17 @@ async fn display_commit_report(data: &serde_json::Value) -> Result<()> {
         println!("Unique Authors: {}", unique_authors);
     }
     
+    if let Some(unique_files) = data.get("unique_files").and_then(|v| v.as_u64()) {
+        println!("Files Modified: {}", unique_files);
+    }
+    
     if let Some(avg_commits) = data.get("avg_commits_per_author").and_then(|v| v.as_f64()) {
         println!("Average Commits per Author: {:.1}", avg_commits);
+    }
+    
+    // Display Path Analysis Report if file statistics are available
+    if let Some(file_stats) = data.get("file_statistics") {
+        display_path_analysis_report(file_stats).await?;
     }
     
     Ok(())
@@ -1146,5 +1365,144 @@ async fn display_metrics_report(data: &serde_json::Value) -> Result<()> {
 async fn display_export_report(data: &serde_json::Value) -> Result<()> {
     println!("\n=== Export Report ===");
     println!("{}", serde_json::to_string_pretty(data)?);
+    Ok(())
+}
+
+/// Display path analysis report showing file commit statistics
+async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<()> {
+    use prettytable::{Table, Row, Cell};
+    
+    println!("\n=== Path Analysis Report ===");
+    
+    if let Some(total_files) = file_stats.get("total_files").and_then(|v| v.as_u64()) {
+        println!("Total Files: {}", total_files);
+    }
+    
+    if let Some(total_commits) = file_stats.get("total_commits_across_files").and_then(|v| v.as_u64()) {
+        println!("Total File Modifications: {}", total_commits);
+    }
+    
+    // Display top files by commit count
+    if let Some(top_files) = file_stats.get("top_files_by_commits").and_then(|v| v.as_array()) {
+        if !top_files.is_empty() {
+            println!("\nMost Frequently Modified Files (by commit count):");
+            let mut table = Table::new();
+            table.add_row(Row::new(vec![
+                Cell::new("Rank"),
+                Cell::new("File Path"),
+                Cell::new("Commits"),
+                Cell::new("Lines +"),
+                Cell::new("Lines -"),
+                Cell::new("Net Change"),
+                Cell::new("Current Lines"),
+                Cell::new("Authors")
+            ]));
+            
+            for (i, file) in top_files.iter().take(10).enumerate() {
+                if let (
+                    Some(path),
+                    Some(commits),
+                    Some(lines_added),
+                    Some(lines_removed), 
+                    Some(net_change),
+                    Some(current_lines_display),
+                    Some(authors)
+                ) = (
+                    file.get("path").and_then(|v| v.as_str()),
+                    file.get("commits").and_then(|v| v.as_u64()),
+                    file.get("lines_added").and_then(|v| v.as_u64()),
+                    file.get("lines_removed").and_then(|v| v.as_u64()),
+                    file.get("net_change").and_then(|v| v.as_i64()),
+                    file.get("current_lines_display").and_then(|v| v.as_str()),
+                    file.get("authors").and_then(|v| v.as_u64())
+                ) {
+                    // Truncate long paths
+                    let display_path = if path.len() > 40 {
+                        format!("...{}", &path[path.len()-37..])
+                    } else {
+                        path.to_string()
+                    };
+                    
+                    let net_change_str = if net_change >= 0 {
+                        format!("+{}", net_change)
+                    } else {
+                        format!("{}", net_change)
+                    };
+                    
+                    table.add_row(Row::new(vec![
+                        Cell::new(&format!("{}", i + 1)),
+                        Cell::new(&display_path),
+                        Cell::new(&format!("{}", commits)),
+                        Cell::new(&format!("{}", lines_added)),
+                        Cell::new(&format!("{}", lines_removed)),
+                        Cell::new(&net_change_str),
+                        Cell::new(current_lines_display),
+                        Cell::new(&format!("{}", authors))
+                    ]));
+                }
+            }
+            table.printstd();
+        }
+    }
+    
+    // Display top files by net change
+    if let Some(top_changes) = file_stats.get("top_files_by_changes").and_then(|v| v.as_array()) {
+        if !top_changes.is_empty() {
+            println!("\nLargest Net Changes (by lines changed):");
+            let mut table = Table::new();
+            table.add_row(Row::new(vec![
+                Cell::new("Rank"),
+                Cell::new("File Path"),
+                Cell::new("Net Change"),
+                Cell::new("Lines +"),
+                Cell::new("Lines -"),
+                Cell::new("Current Lines"),
+                Cell::new("Commits")
+            ]));
+            
+            for (i, file) in top_changes.iter().take(10).enumerate() {
+                if let (
+                    Some(path),
+                    Some(net_change),
+                    Some(lines_added),
+                    Some(lines_removed),
+                    Some(current_lines_display),
+                    Some(commits)
+                ) = (
+                    file.get("path").and_then(|v| v.as_str()),
+                    file.get("net_change").and_then(|v| v.as_i64()),
+                    file.get("lines_added").and_then(|v| v.as_u64()),
+                    file.get("lines_removed").and_then(|v| v.as_u64()),
+                    file.get("current_lines_display").and_then(|v| v.as_str()),
+                    file.get("commits").and_then(|v| v.as_u64())
+                ) {
+                    // Truncate long paths
+                    let display_path = if path.len() > 40 {
+                        format!("...{}", &path[path.len()-37..])
+                    } else {
+                        path.to_string()
+                    };
+                    
+                    let net_change_str = if net_change >= 0 {
+                        format!("+{}", net_change)
+                    } else {
+                        format!("{}", net_change)
+                    };
+                    
+                    table.add_row(Row::new(vec![
+                        Cell::new(&format!("{}", i + 1)),
+                        Cell::new(&display_path),
+                        Cell::new(&net_change_str),
+                        Cell::new(&format!("{}", lines_added)),
+                        Cell::new(&format!("{}", lines_removed)),
+                        Cell::new(current_lines_display),
+                        Cell::new(&format!("{}", commits))
+                    ]));
+                }
+            }
+            table.printstd();
+        }
+    }
+    
     Ok(())
 }

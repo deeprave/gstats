@@ -140,7 +140,11 @@ mod tests {
                 author: "developer".to_string(),
                 message: "Fix bug".to_string(),
                 timestamp: 1234567890,
-                changed_files: vec!["src/main.rs".to_string()],
+                changed_files: vec![crate::scanner::messages::FileChangeData {
+                    path: "src/main.rs".to_string(),
+                    lines_added: 15,
+                    lines_removed: 3,
+                }],
             }
         );
         

@@ -9,10 +9,9 @@ use tokio::sync::RwLock;
 use futures::{Stream, StreamExt};
 use crate::scanner::messages::ScanMessage;
 use crate::scanner::modes::ScanMode;
-use crate::scanner::async_traits::ScanMessageStream;
 use crate::scanner::async_engine::error::{ScanError, ScanResult};
 use crate::plugin::{
-    ScannerPlugin, PluginResult, SharedPluginRegistry, PluginRegistry
+    PluginResult, SharedPluginRegistry, PluginRegistry
 };
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -47,7 +46,7 @@ impl PluginExecutor {
     /// Process a single message through all applicable plugins
     pub async fn process_message(&self, message: ScanMessage) -> Vec<ScanMessage> {
         let start_time = std::time::Instant::now();
-        let mut results = vec![message.clone()];
+        let results = vec![message.clone()];
         
         // Get scanner plugins that support current scan mode
         let plugin_names = match self.get_applicable_plugins().await {

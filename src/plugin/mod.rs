@@ -31,16 +31,13 @@ pub mod builtin;
 pub mod tests;
 
 // Re-export core types for easier access
-pub use traits::{Plugin, ScannerPlugin, NotificationPlugin, PluginLifecycle, PluginFunction};
+pub use traits::{Plugin, ScannerPlugin};
 pub use error::{PluginError, PluginResult};
-pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType, RequestPriority};
+pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType};
 
 // Plugin metadata and info
-pub use traits::{PluginInfo, PluginDependency, PluginCapability};
+pub use traits::PluginInfo;
 
 // Registry and management
 pub use registry::{PluginRegistry, SharedPluginRegistry};
-pub use notification::AsyncNotificationManager;
-pub use compatibility::VersionCompatibilityChecker;
-pub use discovery::PluginDiscovery;
-pub use executor::{PluginExecutor, PluginMessageProcessor, PluginStreamExt};
+pub use executor::PluginExecutor;

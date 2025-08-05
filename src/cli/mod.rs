@@ -9,5 +9,3 @@ pub mod plugin_handler;
 pub mod command_mapper;
 
 pub use args::Args;
-pub use plugin_handler::{PluginHandler, PluginInfo, CompatibilityReport, format_plugin_info, format_compatibility_report};
-pub use command_mapper::{CommandMapper, CommandResolution, AmbiguityReport};

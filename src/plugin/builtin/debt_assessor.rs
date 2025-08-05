@@ -4,7 +4,7 @@
 //! a comprehensive technical debt assessment for each file in the codebase.
 
 use super::change_frequency::{FileChangeStats, TimeWindow};
-use super::hotspot_detector::{FileComplexityMetrics, HotspotConfig};
+use super::hotspot_detector::FileComplexityMetrics;
 use super::duplication_detector::DuplicateGroup;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;

@@ -12,7 +12,7 @@ use crate::cli::command_mapper::{CommandMapper, CommandResolution};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use anyhow::{Result, Context};
-use log::{debug, info};
+use log::debug;
 
 /// CLI Plugin Handler for managing plugin operations
 pub struct PluginHandler {

@@ -238,13 +238,61 @@ impl AsyncRepositoryHandle {
                 message: commit_info.message,
                 author: commit_info.author,
                 timestamp: commit_info.timestamp,
-                changed_files: commit_info.changed_files,
+                changed_files: commit_info.changed_files.into_iter()
+                    .map(|fc| crate::scanner::messages::FileChangeData {
+                        path: fc.path,
+                        lines_added: fc.lines_added,
+                        lines_removed: fc.lines_removed,
+                    })
+                    .collect(),
             };
             
             messages.push(ScanMessage::new(header, data));
         }
         
         Ok(messages)
+    }
+    
+    /// Check if a file exists in the current HEAD commit and get its line count
+    pub async fn get_file_info(&self, file_path: &str) -> ScanResult<Option<(usize, bool)>> {
+        let file_path = file_path.to_string();
+        self.with_repository(move |repo| {
+            // Get the HEAD commit
+            let head = repo.head()
+                .context("Failed to get HEAD reference")?;
+            let tree = head.peel_to_tree()
+                .context("Failed to peel HEAD to tree")?;
+            
+            // Try to find the file in the tree
+            match tree.get_path(std::path::Path::new(&file_path)) {
+                Ok(tree_entry) => {
+                    if tree_entry.kind() == Some(ObjectType::Blob) {
+                        // File exists, get its content to count lines
+                        if let Ok(blob) = tree_entry.to_object(repo).and_then(|obj| obj.peel_to_blob()) {
+                            let content = blob.content();
+                            let line_count = if content.is_empty() {
+                                0
+                            } else {
+                                std::str::from_utf8(content)
+                                    .map(|s| s.lines().count())
+                                    .unwrap_or_else(|_| estimate_line_count(content.len()))
+                            };
+                            Ok(Some((line_count, false))) // (line_count, is_binary)
+                        } else {
+                            // File exists but can't read as text, might be binary
+                            Ok(Some((0, true)))
+                        }
+                    } else {
+                        // Path exists but it's not a file (might be a directory)
+                        Ok(None)
+                    }
+                }
+                Err(_) => {
+                    // File doesn't exist in current HEAD
+                    Ok(None)
+                }
+            }
+        }).await
     }
 }
 
@@ -274,19 +322,27 @@ pub struct CommitInfo {
     pub author_email: String,
     pub timestamp: i64,
     pub parent_count: usize,
-    pub changed_files: Vec<String>,
+    pub changed_files: Vec<FileChangeInfo>,
 }
 
-/// Get the list of files changed in a commit by comparing with its parent(s)
-fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<Vec<String>, git2::Error> {
-    let mut changed_files = std::collections::HashSet::new();
+/// Information about file changes in a commit
+#[derive(Debug, Clone)]
+pub struct FileChangeInfo {
+    pub path: String,
+    pub lines_added: usize,
+    pub lines_removed: usize,
+}
+
+/// Get the list of files changed in a commit with line statistics
+fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<Vec<FileChangeInfo>, git2::Error> {
+    let mut file_changes: HashMap<String, FileChangeInfo> = HashMap::new();
     
     // Get the commit tree
     let commit_tree = commit.tree()?;
     
-    // If this is the initial commit (no parents), return all files in the tree
+    // If this is the initial commit (no parents), all files are "added"
     if commit.parent_count() == 0 {
-        let mut file_paths = Vec::new();
+        let mut initial_files = Vec::new();
         commit_tree.walk(TreeWalkMode::PreOrder, |root, entry| {
             if entry.kind() == Some(ObjectType::Blob) {
                 if let Some(name) = entry.name() {
@@ -295,12 +351,28 @@ fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<
                     } else {
                         format!("{}/{}", root, name)
                     };
-                    file_paths.push(full_path);
+                    
+                    // For initial commit, try to get actual line count from the blob
+                    let blob_oid = entry.id();
+                    let lines_added = if let Ok(blob) = repo.find_blob(blob_oid) {
+                        // Count lines in the blob content
+                        std::str::from_utf8(blob.content())
+                            .map(|content| content.lines().count())
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    
+                    initial_files.push(FileChangeInfo {
+                        path: full_path,
+                        lines_added,
+                        lines_removed: 0, // No lines removed in initial commit
+                    });
                 }
             }
             TreeWalkResult::Ok
         })?;
-        return Ok(file_paths);
+        return Ok(initial_files);
     }
     
     // Compare with each parent (handles merge commits)
@@ -309,26 +381,67 @@ fn get_commit_changed_files(repo: &Repository, commit: &git2::Commit) -> Result<
         let parent_tree = parent.tree()?;
         
         // Create diff between parent and current commit
-        let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?;
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.include_untracked(false);
+        let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), Some(&mut diff_opts))?;
         
-        // Extract file paths from diff
-        diff.foreach(&mut |delta, _progress| {
-            if let Some(new_file) = delta.new_file().path() {
-                if let Some(path_str) = new_file.to_str() {
-                    changed_files.insert(path_str.to_string());
+        // Get diff stats for line counts
+        let stats = diff.stats()?;
+        
+        // Process patches to get accurate line statistics
+        diff.foreach(
+            &mut |delta, _progress| {
+                if let Some(path) = delta.new_file().path().or(delta.old_file().path()) {
+                    if let Some(path_str) = path.to_str() {
+                        let file_path = path_str.to_string();
+                        
+                        // Initialize file change info
+                        file_changes.entry(file_path.clone()).or_insert(FileChangeInfo {
+                            path: file_path,
+                            lines_added: 0,
+                            lines_removed: 0,
+                        });
+                    }
                 }
-            }
-            if let Some(old_file) = delta.old_file().path() {
-                if let Some(path_str) = old_file.to_str() {
-                    changed_files.insert(path_str.to_string());
+                true // continue iteration
+            },
+            None, // binary callback
+            None, // hunk callback  
+            None, // line callback - we'll calculate manually
+        )?;
+        
+        // Calculate line changes using patch analysis
+        let mut patches = Vec::new();
+        diff.foreach(
+            &mut |delta, _progress| true,
+            None,
+            Some(&mut |delta, hunk| {
+                if let Some(path) = delta.new_file().path().or(delta.old_file().path()) {
+                    if let Some(path_str) = path.to_str() {
+                        let file_path = path_str.to_string();
+                        let lines_added = hunk.new_lines() as usize;
+                        let lines_removed = hunk.old_lines() as usize;
+                        patches.push((file_path, lines_added, lines_removed));
+                    }
                 }
+                true
+            }),
+            None,
+        )?;
+        
+        // Apply patch statistics to file changes
+        for (file_path, lines_added, lines_removed) in patches {
+            if let Some(file_change) = file_changes.get_mut(&file_path) {
+                file_change.lines_added += lines_added;
+                file_change.lines_removed += lines_removed;
             }
-            true // continue iteration
-        }, None, None, None)?;
+        }
     }
     
-    Ok(changed_files.into_iter().collect())
+    Ok(file_changes.into_values().collect())
 }
+
+use std::collections::HashMap;
 
 /// Estimate line count from file size (rough heuristic)
 fn estimate_line_count(size: usize) -> usize {

@@ -4,8 +4,7 @@
 //! descriptor parsing, and plugin validation.
 
 use super::error::{PluginError, PluginResult};
-use super::traits::{PluginDescriptor, PluginInfo, PluginType};
-use std::collections::HashMap;
+use super::traits::{PluginDescriptor, PluginType};
 use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::fs;

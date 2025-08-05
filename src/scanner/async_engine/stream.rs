@@ -8,7 +8,7 @@ use tokio_stream::{Stream, StreamExt};
 use futures::stream::BoxStream;
 use pin_project::pin_project;
 use crate::scanner::messages::ScanMessage;
-use super::error::{ScanError, ScanResult};
+use super::error::ScanResult;
 
 /// Type alias for scan message streams
 pub type ScanMessageStream = BoxStream<'static, ScanResult<ScanMessage>>;
@@ -343,7 +343,7 @@ pub mod stream_utils {
     where
         S: Stream<Item = ScanResult<ScanMessage>>,
     {
-        use futures::StreamExt;
+        
         let interval = std::time::Duration::from_secs_f64(1.0 / max_per_second);
         stream.throttle(interval)
     }
@@ -443,7 +443,17 @@ mod tests {
             )),
             Ok(ScanMessage::new(
                 MessageHeader::new(ScanMode::HISTORY, 2),
-                MessageData::CommitInfo { hash: "abc123".to_string(), author: "test".to_string(), message: "test commit".to_string(), timestamp: 1234567890, changed_files: vec!["test.rs".to_string()] }
+                MessageData::CommitInfo { 
+                    hash: "abc123".to_string(), 
+                    author: "test".to_string(), 
+                    message: "test commit".to_string(), 
+                    timestamp: 1234567890, 
+                    changed_files: vec![crate::scanner::messages::FileChangeData {
+                        path: "test.rs".to_string(),
+                        lines_added: 5,
+                        lines_removed: 2,
+                    }] 
+                }
             )),
             Ok(ScanMessage::new(
                 MessageHeader::new(ScanMode::FILES, 3),

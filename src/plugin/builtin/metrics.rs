@@ -4,12 +4,12 @@
 
 use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
+    PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
 use super::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
 use super::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
-use super::duplication_detector::{DuplicationDetector, DuplicationConfig};
-use super::debt_assessor::{DebtAssessor, DebtConfig};
+use super::duplication_detector::DuplicationDetector;
+use super::debt_assessor::DebtAssessor;
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use crate::git::RepositoryHandle;
 use async_trait::async_trait;
@@ -233,7 +233,7 @@ impl Plugin for MetricsPlugin {
         }
 
         match request {
-            PluginRequest::Execute { invoked_as, invocation_type, .. } => {
+            PluginRequest::Execute {  invocation_type, .. } => {
                 // Handle function-based execution
                 let function_name = match invocation_type {
                     crate::plugin::InvocationType::Function(ref func) => func.as_str(),

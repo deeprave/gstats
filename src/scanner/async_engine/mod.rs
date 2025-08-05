@@ -12,16 +12,10 @@ pub mod repository;
 pub mod scanners;
 
 // Re-export core types
-pub use error::{ScanError, ScanResult, TaskError};
-pub use task_manager::{TaskManager, TaskId, TaskInfo, TaskPriority, ResourceConstraints, TaskResourceStats};
+pub use error::{ScanError, ScanResult};
 pub use engine::{AsyncScannerEngine, AsyncScannerEngineBuilder, EngineStats};
-pub use stream::{ScanMessageStream, StreamConfig, BufferedStream, StreamProgress, ProgressTrackingStream};
-pub use streaming_producer::{StreamingQueueProducer, StreamingConfig, StreamingStats, StreamToQueueAdapter};
-pub use repository::{AsyncRepositoryHandle, RepositoryStats, FileInfo, CommitInfo};
-pub use scanners::{AsyncFileScanner, AsyncHistoryScanner, AsyncCombinedScanner};
 
 // Re-export statistics types for convenience
-pub use crate::scanner::statistics::{RepositoryStatistics, RepositoryStatsCollector};
 
 // Module metadata
 pub const MODULE_NAME: &str = "Async Scanner Engine";

@@ -4,12 +4,11 @@
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
+    PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::Path;
 use serde_json::json;
 
 /// Data export plugin for various output formats
@@ -594,7 +593,7 @@ impl Plugin for ExportPlugin {
         }
 
         match request {
-            PluginRequest::Execute { invoked_as, invocation_type, .. } => {
+            PluginRequest::Execute {  invocation_type, .. } => {
                 // Handle function-based execution
                 let function_name = match invocation_type {
                     crate::plugin::InvocationType::Function(ref func) => func.as_str(),
@@ -818,7 +817,11 @@ mod tests {
             author: "test@example.com".to_string(),
             message: "Test commit".to_string(),
             timestamp: 123456789,
-            changed_files: vec!["src/main.rs".to_string()],
+            changed_files: vec![crate::scanner::messages::FileChangeData {
+                path: "src/main.rs".to_string(),
+                lines_added: 12,
+                lines_removed: 4,
+            }],
         };
         let message = create_test_message(ScanMode::HISTORY, data);
         plugin.add_data(message).unwrap();

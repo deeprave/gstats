@@ -132,7 +132,13 @@ impl AsyncHistoryScanner {
                     author: commit_info.author,
                     message: commit_info.message,
                     timestamp: commit_info.timestamp,
-                    changed_files: commit_info.changed_files,
+                    changed_files: commit_info.changed_files.into_iter()
+                        .map(|fc| crate::scanner::messages::FileChangeData {
+                            path: fc.path,
+                            lines_added: fc.lines_added,
+                            lines_removed: fc.lines_removed,
+                        })
+                        .collect(),
                 };
                 
                 Ok(ScanMessage::new(header, data))

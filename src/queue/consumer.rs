@@ -11,7 +11,7 @@ use crossbeam_channel::{self, Receiver, Sender};
 use crate::queue::{Queue, MemoryQueue, QueueError, MessageListener, ListenerRegistry};
 use crate::queue::listener::DefaultListenerRegistry;
 use crate::scanner::messages::ScanMessage;
-use crate::scanner::modes::ScanMode;
+use crate::scanner::ScanMode;
 
 /// Consumer thread configuration
 #[derive(Debug, Clone)]

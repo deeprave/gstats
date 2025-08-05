@@ -8,7 +8,6 @@ use tokio::runtime::Runtime;
 use futures::StreamExt;
 use crate::scanner::config::ScannerConfig;
 use crate::scanner::modes::ScanMode;
-use crate::scanner::messages::ScanMessage;
 use crate::scanner::traits::MessageProducer;
 use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
 use crate::scanner::statistics::{RepositoryStatistics, RepositoryStatsCollector};
@@ -369,7 +368,7 @@ impl Default for AsyncScannerEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::messages::{MessageHeader, MessageData};
+    use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
     use futures::stream;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};

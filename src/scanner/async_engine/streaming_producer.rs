@@ -8,9 +8,9 @@ use tokio::sync::mpsc;
 use tokio_stream::{Stream, StreamExt};
 use crate::scanner::traits::MessageProducer;
 use crate::scanner::messages::ScanMessage;
-use crate::queue::{self, Queue, MemoryQueue, MemoryPressureLevel};
+use crate::queue::{Queue, MemoryQueue, MemoryPressureLevel};
 use super::error::{ScanError, ScanResult};
-use super::stream::{StreamProgress, ScanMessageStream};
+use super::stream::StreamProgress;
 
 /// Configuration for streaming producer
 #[derive(Debug, Clone)]
@@ -388,7 +388,7 @@ impl StreamToQueueAdapter {
         F: FnMut(&StreamProgress),
     {
         use super::stream::ProgressTrackingStream;
-        use futures::StreamExt;
+        
         
         let progress_stream = ProgressTrackingStream::new(stream, None);
         let message_stream = futures::StreamExt::map(progress_stream, |result| {

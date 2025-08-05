@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginCapability, PluginFunction}
+    PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
@@ -172,7 +172,7 @@ impl Plugin for CommitsPlugin {
         }
 
         match request {
-            PluginRequest::Execute { invoked_as, invocation_type, .. } => {
+            PluginRequest::Execute {  invocation_type, .. } => {
                 // Handle function-based execution
                 let function_name = match invocation_type {
                     crate::plugin::InvocationType::Function(ref func) => func.as_str(),
@@ -334,7 +334,7 @@ impl CommitsPlugin {
 
     /// Generate analysis for a single commit
     fn generate_commit_analysis(&self, commit: &ScanMessage) -> PluginResult<ScanMessage> {
-        if let MessageData::CommitInfo { hash, author, message, timestamp, .. } = &commit.data {
+        if let MessageData::CommitInfo {  author, message,  .. } = &commit.data {
             // Get author commit count
             let count = self.author_stats.get(author).unwrap_or(&0);
             
@@ -382,7 +382,11 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64,
-            changed_files: vec!["src/main.rs".to_string()], // Add test file
+            changed_files: vec![crate::scanner::messages::FileChangeData {
+                path: "src/main.rs".to_string(),
+                lines_added: 10,
+                lines_removed: 2,
+            }], // Add test file
         };
 
         let header = MessageHeader::new(

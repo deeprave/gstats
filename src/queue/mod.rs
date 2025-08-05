@@ -19,17 +19,15 @@ pub mod cli;
 mod tests;
 
 // Re-export core types for easier access
-pub use versioned_message::{QueueMessage, MessageType, MessagePayload};
-pub use memory_queue::{MemoryQueue, VersionedMemoryQueue, QueueMemoryStatistics, PressureResponseConfig, PressureResponseStatus, PressureResponseMetrics};
-pub use memory_tracker::{MemoryTracker, MemoryStatistics, MemoryPressureLevel, LeakInformation, MemoryHistorySample};
-pub use backoff::{BackoffAlgorithm, BackoffConfig, BackoffStrategy, BackoffMetrics};
+pub use memory_queue::{MemoryQueue, PressureResponseConfig};
+pub use memory_tracker::MemoryPressureLevel;
+pub use backoff::{BackoffConfig, BackoffStrategy};
 pub use listener::{MessageListener, ListenerRegistry, DefaultListenerRegistry};
 pub use consumer::{MessageConsumer, ConsumerConfig, ConsumerMetrics};
-pub use processor_bridge::{ScanProcessorBridge, ScanProcessorBridgeBuilder};
-pub use debug::{QueueDebug, QueueDebugStatus, QueueStatusLogger, format_consumer_metrics};
-pub use scanner_integration::{QueueMessageProducer, ScannerQueueIntegration, ScannerQueueBuilder};
-pub use config::{QueueConfig, QueuePreset, load_queue_config, save_queue_config};
-pub use cli::{QueueArgs, QueueCommand, handle_queue_command};
+pub use processor_bridge::ScanProcessorBridge;
+pub use debug::QueueDebug;
+pub use scanner_integration::{QueueMessageProducer, ScannerQueueIntegration};
+pub use config::{QueueConfig, QueuePreset};
 
 use anyhow::Result;
 

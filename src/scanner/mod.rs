@@ -44,16 +44,12 @@ pub mod statistics;
 
 // Re-export core types for easier access
 pub use config::ScannerConfig;
-pub use traits::{Scanner, MessageProducer, ScanProcessor, VersionCompatible, ScanAggregator};
-pub use modes::{get_supported_modes, get_all_modes, ScanMode, ModeInfo};
-pub use version::{get_api_version, get_version_info, is_api_compatible};
-pub use query::{QueryParams, QueryBuilder, DateRange, FilePathFilter, AuthorFilter, QueryValidationError};
-pub use messages::{MessageHeader, ScanMessage};
-pub use filters::{FilterResult, DateFilter, PathFilter, AuthorFilter as AuthorFilterImpl, CommitData};
-pub use async_engine::{AsyncScannerEngine, AsyncScannerEngineBuilder, ScanError, ScanResult};
-pub use async_traits::{AsyncScanner, StreamingMessageProducer, AsyncScanProgress, ScanMessageStream};
-pub use plugin_scanner::{PluginScanner, PluginScannerBuilder};
-pub use statistics::{RepositoryStatistics, RepositoryStatsCollector};
+pub use traits::MessageProducer;
+pub use modes::ScanMode;
+pub use version::{get_api_version, is_api_compatible};
+pub use query::QueryParams;
+pub use async_engine::AsyncScannerEngineBuilder;
+pub use plugin_scanner::PluginScannerBuilder;
 
 use anyhow::Result;
 

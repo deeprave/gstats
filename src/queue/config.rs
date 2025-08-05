@@ -4,7 +4,6 @@
 //! integrating with the application's configuration discovery.
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use crate::queue::{BackoffConfig, BackoffStrategy, PressureResponseConfig, ConsumerConfig};
 
 /// Main queue configuration
