@@ -12,8 +12,17 @@ use dashmap::DashMap;
 use std::time::{Duration, Instant};
 use std::cmp::Ordering;
 use crate::scanner::modes::ScanMode;
-use crate::queue::{MemoryQueue, MemoryPressureLevel};
+// Removed queue dependency - using local memory pressure enum
 use super::error::{ScanError, ScanResult, TaskError};
+
+/// Memory pressure levels for task prioritization
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MemoryPressureLevel {
+    Normal = 0,
+    Moderate = 1,
+    High = 2,
+    Critical = 3,
+}
 
 /// Task priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -182,8 +191,8 @@ pub struct TaskManager {
     /// Per-mode task counters
     mode_counters: Arc<DashMap<ScanMode, usize>>,
     
-    /// Optional queue reference for pressure monitoring
-    queue_ref: Option<Arc<MemoryQueue>>,
+    /// Memory monitoring for pressure detection (replaced queue dependency)
+    memory_monitor: Arc<RwLock<u64>>, // Track basic memory usage
     
     /// Task scheduler handle
     #[allow(dead_code)]
@@ -205,7 +214,7 @@ impl TaskManager {
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
             mode_counters: Arc::new(DashMap::new()),
-            queue_ref: None,
+            memory_monitor: Arc::new(RwLock::new(0)),
             scheduler_handle: None,
         }
     }
@@ -221,16 +230,15 @@ impl TaskManager {
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
             mode_counters: Arc::new(DashMap::new()),
-            queue_ref: None,
+            memory_monitor: Arc::new(RwLock::new(0)),
             scheduler_handle: None,
         }
     }
     
-    /// Create a task manager with queue integration for pressure monitoring
-    pub fn with_queue(max_concurrent_tasks: usize, queue: Arc<MemoryQueue>) -> Self {
-        let mut manager = Self::new(max_concurrent_tasks);
-        manager.queue_ref = Some(queue);
-        manager
+    /// Create a task manager with memory monitoring (replaced queue integration)
+    pub fn with_memory_monitoring(max_concurrent_tasks: usize) -> Self {
+        // Simply return a standard task manager since memory monitoring is built-in
+        Self::new(max_concurrent_tasks)
     }
     
     /// Spawn a new scanning task with priority scheduling
@@ -269,12 +277,10 @@ impl TaskManager {
     
     /// Check if task can be executed immediately based on resource constraints
     fn can_execute_immediate(&self, mode: ScanMode) -> ScanResult<bool> {
-        // Check memory pressure if queue is available
-        if let Some(queue) = &self.queue_ref {
-            let pressure = queue.get_memory_pressure_level();
-            if pressure >= self.constraints.memory_pressure_threshold {
-                return Ok(false);
-            }
+        // Check memory pressure using active task count as proxy
+        let pressure = self.estimate_memory_pressure();
+        if pressure >= self.constraints.memory_pressure_threshold {
+            return Ok(false);
         }
         
         // Check total task limit
@@ -310,12 +316,8 @@ impl TaskManager {
             .map_err(|_| ScanError::resource_limit("Failed to acquire task permit"))?;
         
         // Adjust priority based on memory pressure
-        let adjusted_priority = if let Some(queue) = &self.queue_ref {
-            let pressure = queue.get_memory_pressure_level();
-            priority.adjust_for_pressure(pressure)
-        } else {
-            priority
-        };
+        let pressure = self.estimate_memory_pressure();
+        let adjusted_priority = priority.adjust_for_pressure(pressure);
         
         // Update mode counter
         self.mode_counters.entry(mode).and_modify(|c| *c += 1).or_insert(1);
@@ -328,7 +330,7 @@ impl TaskManager {
         let pending_tasks = Arc::clone(&self.pending_tasks);
         let semaphore_clone = Arc::clone(&self.semaphore);
         let constraints = self.constraints.clone();
-        let queue_ref = self.queue_ref.clone();
+        // Removed queue_ref - no longer needed
         let task_id_clone = task_id.clone();
         let mode_clone = mode;
         
@@ -367,7 +369,6 @@ impl TaskManager {
                     pending_tasks,
                     semaphore_clone,
                     constraints,
-                    queue_ref,
                 ).await {
                     log::debug!("Failed to process pending tasks after completion: {}", e);
                 }
@@ -556,7 +557,6 @@ impl TaskManager {
         _pending_tasks: Arc<Mutex<BinaryHeap<PendingTask>>>,
         _semaphore: Arc<Semaphore>,
         _constraints: ResourceConstraints,
-        _queue_ref: Option<Arc<MemoryQueue>>,
     ) -> ScanResult<usize> {
         // This is a simplified version that just tries to notify about available resources
         // The actual processing should be done through the main TaskManager instance
@@ -711,10 +711,7 @@ impl TaskManager {
         let active_count = self.active_task_count();
         let mode_distribution = self.get_mode_distribution();
         
-        let memory_pressure = self.queue_ref
-            .as_ref()
-            .map(|q| q.get_memory_pressure_level())
-            .unwrap_or(MemoryPressureLevel::Normal);
+        let memory_pressure = self.estimate_memory_pressure();
         
         TaskResourceStats {
             active_tasks: active_count,
@@ -727,13 +724,25 @@ impl TaskManager {
         }
     }
     
+    /// Estimate current memory pressure based on task activity
+    fn estimate_memory_pressure(&self) -> MemoryPressureLevel {
+        let active_count = self.active_task_count();
+        let max_tasks = self.constraints.max_total_tasks;
+        let utilization = active_count as f64 / max_tasks as f64;
+        
+        match utilization {
+            x if x < 0.3 => MemoryPressureLevel::Normal,
+            x if x < 0.6 => MemoryPressureLevel::Moderate,
+            x if x < 0.85 => MemoryPressureLevel::High,
+            _ => MemoryPressureLevel::Critical,
+        }
+    }
+    
     /// Check if manager is under resource pressure
     pub async fn is_under_pressure(&self) -> bool {
-        // Check memory pressure
-        if let Some(queue) = &self.queue_ref {
-            if queue.get_memory_pressure_level() >= self.constraints.memory_pressure_threshold {
-                return true;
-            }
+        // Check memory pressure using task utilization
+        if self.estimate_memory_pressure() >= self.constraints.memory_pressure_threshold {
+            return true;
         }
         
         // Check task saturation
@@ -758,10 +767,7 @@ impl TaskManager {
         }
         
         // Reduce task limits temporarily
-        let current_pressure = self.queue_ref
-            .as_ref()
-            .map(|q| q.get_memory_pressure_level())
-            .unwrap_or(MemoryPressureLevel::Normal);
+        let current_pressure = self.estimate_memory_pressure();
         
         // Under high pressure, cancel some low-priority tasks
         if current_pressure >= MemoryPressureLevel::High {

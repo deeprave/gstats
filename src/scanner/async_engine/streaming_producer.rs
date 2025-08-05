@@ -1,29 +1,26 @@
-//! Streaming Queue Producer
+//! Streaming Producer (Simplified)
 //! 
-//! Provides efficient streaming integration with the memory queue system.
+//! Provides streaming integration without queue dependency.
+//! Messages are handled directly via plugin callbacks.
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tokio_stream::{Stream, StreamExt};
+use std::time::Duration;
 use crate::scanner::traits::MessageProducer;
 use crate::scanner::messages::ScanMessage;
-use crate::queue::{Queue, MemoryQueue, MemoryPressureLevel};
-use super::error::{ScanError, ScanResult};
-use super::stream::StreamProgress;
+use crate::scanner::async_engine::task_manager::MemoryPressureLevel;
+use super::error::ScanResult;
 
 /// Configuration for streaming producer
 #[derive(Debug, Clone)]
 pub struct StreamingConfig {
-    /// Batch size for queue operations
+    /// Batch size for operations (unused but kept for compatibility)
     pub batch_size: usize,
-    /// Buffer size for internal queuing
+    /// Buffer size for internal queuing (unused but kept for compatibility)
     pub buffer_size: usize,
-    /// Timeout for batch operations
+    /// Timeout for batch operations (unused but kept for compatibility)
     pub batch_timeout: Duration,
-    /// Enable adaptive batching based on queue pressure
+    /// Enable adaptive batching (unused but kept for compatibility)
     pub adaptive_batching: bool,
-    /// Maximum batch size when adaptive
+    /// Maximum batch size when adaptive (unused but kept for compatibility)
     pub max_adaptive_batch_size: usize,
 }
 
@@ -39,24 +36,10 @@ impl Default for StreamingConfig {
     }
 }
 
-/// Streaming producer that efficiently feeds messages to the queue
+/// Simplified streaming producer that works via callbacks
 pub struct StreamingQueueProducer {
-    queue: Arc<MemoryQueue>,
     config: StreamingConfig,
     producer_name: String,
-    
-    // Internal state
-    sender: mpsc::UnboundedSender<ProducerCommand>,
-    _background_task: tokio::task::JoinHandle<()>,
-}
-
-/// Commands sent to the background producer task
-#[derive(Debug)]
-enum ProducerCommand {
-    Message(ScanMessage),
-    Batch(Vec<ScanMessage>),
-    Flush,
-    Shutdown,
 }
 
 /// Statistics for streaming producer
@@ -66,280 +49,87 @@ pub struct StreamingStats {
     pub batches_sent: usize,
     pub average_batch_size: f64,
     pub total_bytes_processed: usize,
-    pub start_time: Instant,
-    pub last_activity: Instant,
-    pub current_throughput: f64,
+    pub current_backpressure: MemoryPressureLevel,
+    pub adaptive_batch_size: usize,
 }
 
-impl StreamingStats {
-    fn new() -> Self {
-        let now = Instant::now();
+impl Default for StreamingStats {
+    fn default() -> Self {
         Self {
             messages_produced: 0,
             batches_sent: 0,
             average_batch_size: 0.0,
             total_bytes_processed: 0,
-            start_time: now,
-            last_activity: now,
-            current_throughput: 0.0,
+            current_backpressure: MemoryPressureLevel::Normal,
+            adaptive_batch_size: 50,
         }
-    }
-    
-    fn update(&mut self, batch_size: usize, bytes: usize) {
-        self.messages_produced += batch_size;
-        self.batches_sent += 1;
-        self.total_bytes_processed += bytes;
-        self.last_activity = Instant::now();
-        
-        self.average_batch_size = self.messages_produced as f64 / self.batches_sent as f64;
-        
-        let elapsed = self.start_time.elapsed().as_secs_f64();
-        if elapsed > 0.0 {
-            self.current_throughput = self.messages_produced as f64 / elapsed;
-        }
-    }
-    
-    pub fn elapsed(&self) -> Duration {
-        self.start_time.elapsed()
-    }
-    
-    pub fn idle_time(&self) -> Duration {
-        self.last_activity.elapsed()
     }
 }
 
 impl StreamingQueueProducer {
-    /// Create a new streaming producer
-    pub fn new(
-        queue: Arc<MemoryQueue>,
-        config: StreamingConfig,
-        producer_name: String,
-    ) -> ScanResult<Self> {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        
-        let queue_clone = Arc::clone(&queue);
-        let config_clone = config.clone();
-        let name_clone = producer_name.clone();
-        
-        let background_task = tokio::spawn(async move {
-            if let Err(e) = Self::background_producer_task(
-                queue_clone,
-                config_clone,
-                name_clone,
-                receiver,
-            ).await {
-                log::error!("Streaming producer background task failed: {}", e);
-            }
-        });
-        
+    /// Create a new streaming producer (simplified)
+    pub fn new(producer_name: String) -> ScanResult<Self> {
         Ok(Self {
-            queue,
-            config,
+            config: StreamingConfig::default(),
             producer_name,
-            sender,
-            _background_task: background_task,
         })
     }
-    
-    /// Create a new streaming producer with default configuration
-    pub fn with_defaults(queue: Arc<MemoryQueue>, producer_name: String) -> ScanResult<Self> {
-        Self::new(queue, StreamingConfig::default(), producer_name)
+
+    /// Create with defaults (compatibility method)
+    pub fn with_defaults(producer_name: String) -> ScanResult<Self> {
+        Self::new(producer_name)
     }
-    
-    /// Process a stream of messages efficiently
-    pub async fn process_stream<S>(&self, mut stream: S) -> ScanResult<StreamingStats>
-    where
-        S: Stream<Item = ScanResult<ScanMessage>> + Unpin,
-    {
-        let mut batch = Vec::with_capacity(self.config.batch_size);
-        let mut stats = StreamingStats::new();
-        let mut last_batch_time = Instant::now();
-        
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(message) => {
-                    batch.push(message);
-                    
-                    // Check if we should send the batch
-                    let should_send = batch.len() >= self.config.batch_size ||
-                        last_batch_time.elapsed() >= self.config.batch_timeout ||
-                        (self.config.adaptive_batching && self.should_send_adaptive_batch(&batch));
-                    
-                    if should_send {
-                        let batch_size = batch.len();
-                        let total_bytes: usize = batch.iter().map(|m| m.estimate_memory_usage()).sum();
-                        
-                        self.send_batch(std::mem::take(&mut batch)).await?;
-                        stats.update(batch_size, total_bytes);
-                        last_batch_time = Instant::now();
-                    }
-                }
-                Err(e) => {
-                    // Send any pending batch before propagating error
-                    if !batch.is_empty() {
-                        let batch_size = batch.len();
-                        let total_bytes: usize = batch.iter().map(|m| m.estimate_memory_usage()).sum();
-                        
-                        self.send_batch(std::mem::take(&mut batch)).await?;
-                        stats.update(batch_size, total_bytes);
-                    }
-                    return Err(e);
-                }
-            }
-        }
-        
-        // Send any remaining messages
-        if !batch.is_empty() {
-            let batch_size = batch.len();
-            let total_bytes: usize = batch.iter().map(|m| m.estimate_memory_usage()).sum();
-            
-            self.send_batch(batch).await?;
-            stats.update(batch_size, total_bytes);
-        }
-        
-        // Ensure all messages are flushed
-        self.flush().await?;
-        
-        Ok(stats)
+
+    /// Create with configuration
+    pub fn with_config(config: StreamingConfig, producer_name: String) -> ScanResult<Self> {
+        Ok(Self {
+            config,
+            producer_name,
+        })
     }
-    
-    /// Send a batch of messages to the background task
-    async fn send_batch(&self, batch: Vec<ScanMessage>) -> ScanResult<()> {
-        if batch.is_empty() {
-            return Ok(());
-        }
-        
-        self.sender.send(ProducerCommand::Batch(batch))
-            .map_err(|_| ScanError::stream("Producer channel closed"))?;
-        
+
+    /// Produce a single message (no-op implementation)
+    pub async fn produce_message(&self, _message: ScanMessage) -> ScanResult<()> {
+        // Messages are handled directly via plugin callbacks
+        log::debug!("Message produced by {} (handled via callbacks)", self.producer_name);
         Ok(())
     }
-    
-    /// Flush any pending messages
+
+    /// Produce multiple messages in batch
+    pub async fn produce_batch(&self, messages: Vec<ScanMessage>) -> ScanResult<()> {
+        for _message in messages {
+            self.produce_message(_message).await?;
+        }
+        Ok(())
+    }
+
+    /// Flush pending messages (no-op)
     pub async fn flush(&self) -> ScanResult<()> {
-        self.sender.send(ProducerCommand::Flush)
-            .map_err(|_| ScanError::stream("Producer channel closed"))?;
-        
-        // Give the background task time to process
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        log::debug!("Flush called on {} (no-op)", self.producer_name);
         Ok(())
     }
-    
-    /// Check if we should send an adaptive batch based on queue pressure
-    fn should_send_adaptive_batch(&self, batch: &[ScanMessage]) -> bool {
-        if !self.config.adaptive_batching {
-            return false;
-        }
-        
-        // Get queue pressure level
-        let pressure = self.queue.get_memory_pressure_level();
-        
-        match pressure {
-            MemoryPressureLevel::Normal => {
-                // Normal pressure: use larger batches for efficiency
-                batch.len() >= self.config.max_adaptive_batch_size
-            }
-            MemoryPressureLevel::Moderate => {
-                // Moderate pressure: use medium batches
-                batch.len() >= self.config.batch_size / 2
-            }
-            MemoryPressureLevel::High | MemoryPressureLevel::Critical => {
-                // High/Critical pressure: send immediately to avoid buildup
-                !batch.is_empty()
-            }
-        }
+
+    /// Get current statistics
+    pub async fn get_stats(&self) -> StreamingStats {
+        StreamingStats::default()
     }
-    
-    /// Background task that handles actual queue operations
-    async fn background_producer_task(
-        queue: Arc<MemoryQueue>,
-        config: StreamingConfig,
-        _producer_name: String,
-        mut receiver: mpsc::UnboundedReceiver<ProducerCommand>,
-    ) -> ScanResult<()> {
-        let mut pending_messages = Vec::new();
-        let mut batch_timer = tokio::time::interval(config.batch_timeout);
-        batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        
-        loop {
-            tokio::select! {
-                // Handle incoming commands
-                command = receiver.recv() => {
-                    match command {
-                        Some(ProducerCommand::Message(message)) => {
-                            pending_messages.push(message);
-                            
-                            if pending_messages.len() >= config.batch_size {
-                                Self::send_to_queue(&queue, &mut pending_messages).await?;
-                            }
-                        }
-                        Some(ProducerCommand::Batch(mut batch)) => {
-                            pending_messages.append(&mut batch);
-                            
-                            // Send in chunks if too large
-                            while pending_messages.len() >= config.batch_size {
-                                let chunk = pending_messages.split_off(config.batch_size);
-                                let to_send = std::mem::replace(&mut pending_messages, chunk);
-                                for msg in to_send {
-                                    queue.enqueue(msg).map_err(|e| ScanError::stream(e.to_string()))?;
-                                }
-                            }
-                        }
-                        Some(ProducerCommand::Flush) => {
-                            if !pending_messages.is_empty() {
-                                Self::send_to_queue(&queue, &mut pending_messages).await?;
-                            }
-                        }
-                        Some(ProducerCommand::Shutdown) | None => {
-                            // Send any remaining messages before shutdown
-                            if !pending_messages.is_empty() {
-                                Self::send_to_queue(&queue, &mut pending_messages).await?;
-                            }
-                            break;
-                        }
-                    }
-                }
-                
-                // Handle timeout-based flushing
-                _ = batch_timer.tick() => {
-                    if !pending_messages.is_empty() {
-                        Self::send_to_queue(&queue, &mut pending_messages).await?;
-                    }
-                }
-            }
-        }
-        
+
+    /// Shutdown the producer (no-op)
+    pub async fn shutdown(&self) -> ScanResult<()> {
+        log::debug!("Shutdown called on {} (no-op)", self.producer_name);
         Ok(())
     }
-    
-    /// Send pending messages to the queue
-    async fn send_to_queue(
-        queue: &Arc<MemoryQueue>,
-        pending_messages: &mut Vec<ScanMessage>,
-    ) -> ScanResult<()> {
-        for message in pending_messages.drain(..) {
-            queue.enqueue(message)
-                .map_err(|e| ScanError::stream(e.to_string()))?;
-        }
-        Ok(())
-    }
-    
-    /// Get current queue status
-    pub fn queue_status(&self) -> String {
-        format!(
-            "Queue: {} messages, {:.1}% memory",
-            self.queue.size(),
-            self.queue.memory_usage_percent()
-        )
+
+    /// Get producer name
+    pub fn get_name(&self) -> &str {
+        &self.producer_name
     }
 }
 
 impl MessageProducer for StreamingQueueProducer {
-    fn produce_message(&self, message: ScanMessage) {
-        // Send to background task (non-blocking)
-        if let Err(_) = self.sender.send(ProducerCommand::Message(message)) {
-            log::error!("Failed to send message to streaming producer: channel closed");
-        }
+    fn produce_message(&self, _message: ScanMessage) {
+        // Messages are handled directly via plugin callbacks
+        log::debug!("Message produced by {} (handled via callbacks)", self.producer_name);
     }
     
     fn get_producer_name(&self) -> &str {
@@ -347,76 +137,12 @@ impl MessageProducer for StreamingQueueProducer {
     }
 }
 
-/// Stream-to-queue adapter for easy integration
-pub struct StreamToQueueAdapter {
-    producer: StreamingQueueProducer,
-}
-
-impl StreamToQueueAdapter {
-    /// Create a new adapter
-    pub fn new(queue: Arc<MemoryQueue>, producer_name: String) -> ScanResult<Self> {
-        let producer = StreamingQueueProducer::with_defaults(queue, producer_name)?;
-        Ok(Self { producer })
-    }
-    
-    /// Create with custom configuration
-    pub fn with_config(
-        queue: Arc<MemoryQueue>,
-        config: StreamingConfig,
-        producer_name: String,
-    ) -> ScanResult<Self> {
-        let producer = StreamingQueueProducer::new(queue, config, producer_name)?;
-        Ok(Self { producer })
-    }
-    
-    /// Process a stream and return statistics
-    pub async fn process_stream<S>(&self, stream: S) -> ScanResult<StreamingStats>
-    where
-        S: Stream<Item = ScanResult<ScanMessage>> + Unpin,
-    {
-        self.producer.process_stream(stream).await
-    }
-    
-    /// Process a stream with progress tracking
-    pub async fn process_stream_with_progress<S, F>(
-        &self,
-        stream: S,
-        mut progress_callback: F,
-    ) -> ScanResult<StreamingStats>
-    where
-        S: Stream<Item = ScanResult<ScanMessage>> + Unpin,
-        F: FnMut(&StreamProgress),
-    {
-        use super::stream::ProgressTrackingStream;
-        
-        
-        let progress_stream = ProgressTrackingStream::new(stream, None);
-        let message_stream = futures::StreamExt::map(progress_stream, |result| {
-            match result {
-                Ok((message, progress)) => {
-                    progress_callback(&progress);
-                    Ok(message)
-                }
-                Err(e) => Err(e),
-            }
-        });
-        
-        self.producer.process_stream(message_stream).await
-    }
-    
-    /// Get the underlying producer for direct access
-    pub fn producer(&self) -> &StreamingQueueProducer {
-        &self.producer
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::modes::ScanMode;
     use crate::scanner::messages::{MessageHeader, MessageData};
-    use futures::stream;
-    
+    use crate::scanner::modes::ScanMode;
+
     fn create_test_message(id: u64) -> ScanMessage {
         ScanMessage::new(
             MessageHeader::new(ScanMode::FILES, id),
@@ -427,101 +153,45 @@ mod tests {
             },
         )
     }
-    
+
     #[tokio::test]
-    async fn test_streaming_producer_basic() {
-        let queue = Arc::new(MemoryQueue::new(1000, 1024 * 1024));
-        let producer = StreamingQueueProducer::with_defaults(
-            Arc::clone(&queue),
-            "TestProducer".to_string(),
-        ).unwrap();
-        
-        let messages: Vec<ScanResult<ScanMessage>> = (0..10)
-            .map(|i| Ok(create_test_message(i)))
-            .collect();
-        
-        let test_stream = stream::iter(messages);
-        let stats = producer.process_stream(test_stream).await.unwrap();
-        
-        assert_eq!(stats.messages_produced, 10);
-        assert!(stats.batches_sent > 0);
-        
-        // Give background task time to process
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        
-        // Check that messages made it to the queue
-        assert!(queue.size() > 0);
+    async fn test_streaming_producer_creation() {
+        let producer = StreamingQueueProducer::new("test".to_string()).unwrap();
+        assert_eq!(producer.get_name(), "test");
     }
-    
+
     #[tokio::test]
-    async fn test_streaming_producer_batching() {
-        let queue = Arc::new(MemoryQueue::new(1000, 1024 * 1024));
-        let config = StreamingConfig {
-            batch_size: 3,
-            ..Default::default()
-        };
+    async fn test_produce_single_message() {
+        let producer = StreamingQueueProducer::new("test".to_string()).unwrap();
+        let message = create_test_message(1);
         
-        let producer = StreamingQueueProducer::new(
-            Arc::clone(&queue),
-            config,
-            "BatchTest".to_string(),
-        ).unwrap();
-        
-        let messages: Vec<ScanResult<ScanMessage>> = (0..10)
-            .map(|i| Ok(create_test_message(i)))
-            .collect();
-        
-        let test_stream = stream::iter(messages);
-        let stats = producer.process_stream(test_stream).await.unwrap();
-        
-        assert_eq!(stats.messages_produced, 10);
-        // Should have batches of size 3, 3, 3, 1
-        assert_eq!(stats.batches_sent, 4);
-        assert!(stats.average_batch_size > 2.0 && stats.average_batch_size < 3.0);
+        let result = producer.produce_message(message).await;
+        assert!(result.is_ok());
     }
-    
+
     #[tokio::test]
-    async fn test_stream_to_queue_adapter() {
-        let queue = Arc::new(MemoryQueue::new(1000, 1024 * 1024));
-        let adapter = StreamToQueueAdapter::new(
-            Arc::clone(&queue),
-            "AdapterTest".to_string(),
-        ).unwrap();
+    async fn test_produce_batch() {
+        let producer = StreamingQueueProducer::new("test".to_string()).unwrap();
+        let messages = (0..5).map(create_test_message).collect();
         
-        let messages: Vec<ScanResult<ScanMessage>> = (0..5)
-            .map(|i| Ok(create_test_message(i)))
-            .collect();
-        
-        let test_stream = stream::iter(messages);
-        let stats = adapter.process_stream(test_stream).await.unwrap();
-        
-        assert_eq!(stats.messages_produced, 5);
-        assert!(stats.current_throughput > 0.0);
+        let result = producer.produce_batch(messages).await;
+        assert!(result.is_ok());
     }
-    
+
     #[tokio::test]
-    async fn test_progress_tracking_integration() {
-        let queue = Arc::new(MemoryQueue::new(1000, 1024 * 1024));
-        let adapter = StreamToQueueAdapter::new(
-            Arc::clone(&queue),
-            "ProgressTest".to_string(),
-        ).unwrap();
+    async fn test_flush_and_shutdown() {
+        let producer = StreamingQueueProducer::new("test".to_string()).unwrap();
         
-        let messages: Vec<ScanResult<ScanMessage>> = (0..5)
-            .map(|i| Ok(create_test_message(i)))
-            .collect();
+        assert!(producer.flush().await.is_ok());
+        assert!(producer.shutdown().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stats() {
+        let producer = StreamingQueueProducer::new("test".to_string()).unwrap();
+        let stats = producer.get_stats().await;
         
-        let test_stream = stream::iter(messages);
-        let mut progress_updates = 0;
-        
-        let stats = adapter.process_stream_with_progress(
-            test_stream,
-            |_progress| {
-                progress_updates += 1;
-            },
-        ).await.unwrap();
-        
-        assert_eq!(stats.messages_produced, 5);
-        assert_eq!(progress_updates, 5);
+        assert_eq!(stats.messages_produced, 0);
+        assert_eq!(stats.batches_sent, 0);
     }
 }

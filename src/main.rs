@@ -2,7 +2,6 @@ mod cli;
 mod config;
 mod git;
 mod logging;
-mod queue;
 mod scanner;
 mod plugin;
 mod stats;
@@ -431,13 +430,8 @@ async fn run_scanner(
     
     debug!("Active plugins: {:?}", plugin_names);
     
-    // Create message queue
-    let queue_config = queue::QueueConfig::default();
-    let memory_queue = Arc::new(queue::MemoryQueue::new(queue_config.capacity, queue_config.memory_limit));
-    
-    // Create message producer
-    let message_producer = Arc::new(queue::QueueMessageProducer::new(
-        Arc::clone(&memory_queue), 
+    // Create callback-based message producer (queue bypassed via plugin callbacks)
+    let message_producer = Arc::new(scanner::CallbackMessageProducer::new(
         "ScannerProducer".to_string()
     ));
     

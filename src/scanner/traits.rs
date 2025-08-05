@@ -47,6 +47,29 @@ pub trait MessageProducer {
     fn get_producer_name(&self) -> &str;
 }
 
+/// Simple callback-based message producer that bypasses queues
+pub struct CallbackMessageProducer {
+    name: String,
+}
+
+impl CallbackMessageProducer {
+    /// Create a new callback-based message producer
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+impl MessageProducer for CallbackMessageProducer {
+    fn produce_message(&self, _message: ScanMessage) {
+        // Messages are handled directly via plugin callbacks, so this is a no-op
+        log::debug!("Message produced by {} (handled via plugin callbacks)", self.name);
+    }
+    
+    fn get_producer_name(&self) -> &str {
+        &self.name
+    }
+}
+
 /// Version compatibility checking trait
 pub trait VersionCompatible {
     /// Check if this component is compatible with a required API version

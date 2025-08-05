@@ -44,7 +44,7 @@ pub mod statistics;
 
 // Re-export core types for easier access
 pub use config::ScannerConfig;
-pub use traits::MessageProducer;
+pub use traits::{MessageProducer, CallbackMessageProducer};
 pub use modes::ScanMode;
 pub use version::{get_api_version, is_api_compatible};
 pub use query::QueryParams;
