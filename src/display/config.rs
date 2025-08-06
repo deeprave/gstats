@@ -15,6 +15,9 @@ pub struct ColourConfig {
     pub theme: ColourTheme,
     /// Whether to respect NO_COLOR environment variable
     pub respect_no_color: bool,
+    /// Force colours even when not in a TTY (--color flag)
+    #[serde(skip, default)]
+    pub color_forced: bool,
 }
 
 impl Default for ColourConfig {
@@ -23,6 +26,7 @@ impl Default for ColourConfig {
             enabled: true,
             theme: ColourTheme::Auto,
             respect_no_color: true,
+            color_forced: false,
         }
     }
 }
@@ -147,6 +151,7 @@ impl ColourConfig {
             enabled: false,
             theme: ColourTheme::Auto,
             respect_no_color: true,
+            color_forced: false,
         }
     }
     
@@ -156,6 +161,7 @@ impl ColourConfig {
             enabled: true,
             theme,
             respect_no_color: true,
+            color_forced: false,
         }
     }
     
@@ -174,17 +180,35 @@ impl ColourConfig {
         self.respect_no_color = respect;
     }
     
+    /// Force colours to be enabled (--color flag)
+    pub fn set_color_forced(&mut self, forced: bool) {
+        self.color_forced = forced;
+    }
+    
     /// Check if colours should be enabled based on configuration and environment
     pub fn should_use_colours(&self) -> bool {
         if !self.enabled {
             return false;
         }
         
+        // If color_forced is true (--color flag), ignore TTY and NO_COLOR
+        if self.color_forced {
+            return true;
+        }
+        
+        // Check NO_COLOR environment variable
         if self.respect_no_color && std::env::var("NO_COLOR").is_ok() {
             return false;
         }
         
-        true
+        // If respect_no_color is false, user wants colors regardless of environment
+        if !self.respect_no_color {
+            return true;
+        }
+        
+        // Check if we're in a TTY (default behavior)
+        use std::io::IsTerminal;
+        std::io::stdout().is_terminal()
     }
     
     /// Get the colour palette for the current theme

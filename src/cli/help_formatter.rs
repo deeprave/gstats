@@ -28,6 +28,12 @@ impl HelpFormatter {
         Self { colour_manager }
     }
     
+    /// Create a help formatter that respects both --color and --no-color flags
+    pub fn from_color_flags(no_color: bool, color: bool) -> Self {
+        let colour_manager = ColourManager::from_color_args(no_color, color, None);
+        Self { colour_manager }
+    }
+    
     /// Format the main help text with colors and improved layout
     pub fn format_main_help(&self) -> String {
         let mut output = String::new();
@@ -108,6 +114,120 @@ impl HelpFormatter {
     }
 
     /// Write the plugin/function table
+    /// Write dynamic plugin table using the same format as --plugins command
+    fn write_dynamic_plugin_table(&self, output: &mut String, mappings: &[crate::cli::plugin_handler::FunctionMapping]) {
+        use std::collections::HashMap;
+        
+        // Group functions by plugin
+        let mut plugins_map: HashMap<String, Vec<_>> = HashMap::new();
+        for mapping in mappings {
+            plugins_map.entry(mapping.plugin_name.clone())
+                .or_insert_with(Vec::new)
+                .push(mapping);
+        }
+        
+        // Sort plugins by name
+        let mut plugin_names: Vec<_> = plugins_map.keys().collect();
+        plugin_names.sort();
+        
+        // First pass: collect all data and calculate max widths
+        let mut all_plugin_data = Vec::new();
+        let mut max_function_width = "Function".len();
+        let mut max_aliases_width = "Aliases".len();
+        
+        for plugin_name in &plugin_names {
+            let plugin_functions = &plugins_map[*plugin_name];
+            
+            // Sort functions within plugin (default first, then alphabetically)
+            let mut sorted_functions = plugin_functions.clone();
+            sorted_functions.sort_by(|a, b| {
+                match (a.is_default, b.is_default) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.function_name.cmp(&b.function_name),
+                }
+            });
+            
+            let mut plugin_rows = Vec::new();
+            for function in sorted_functions {
+                let aliases_str = if function.aliases.is_empty() {
+                    "—".to_string() // Em dash for no aliases
+                } else {
+                    function.aliases.join(", ")
+                };
+                
+                // Format function name with default highlighting
+                let function_display = if function.is_default {
+                    format!("{} (default)", function.function_name)
+                } else {
+                    function.function_name.clone()
+                };
+                
+                // Track maximum widths (without color codes)
+                max_function_width = max_function_width.max(function_display.len());
+                max_aliases_width = max_aliases_width.max(aliases_str.len());
+                
+                plugin_rows.push((function_display, aliases_str, function.description.clone()));
+            }
+            
+            all_plugin_data.push((plugin_name, plugin_rows));
+        }
+        
+        // Generate output
+        for (i, (plugin_name, plugin_rows)) in all_plugin_data.iter().enumerate() {
+            if i > 0 {
+                writeln!(output).unwrap(); // Single line between plugins
+            }
+            
+            writeln!(output, "{}: {}",
+                self.colour_manager.info("Plugin"),
+                self.colour_manager.success(plugin_name)).unwrap();
+            
+            // Create table data without colors for proper alignment
+            let mut table_lines = Vec::new();
+            
+            // Header
+            table_lines.push(format!("  {:<width_fn$} {:<width_al$} {}",
+                "Function", "Aliases", "Description",
+                width_fn = max_function_width,
+                width_al = max_aliases_width));
+            
+            // Separator line
+            table_lines.push(format!("  {:-<width_fn$} {:-<width_al$} {}",
+                "", "", "---",
+                width_fn = max_function_width,
+                width_al = max_aliases_width));
+            
+            // Data rows
+            for (function_display, aliases_str, description) in plugin_rows {
+                table_lines.push(format!("  {:<width_fn$} {:<width_al$} {}",
+                    function_display, aliases_str, description,
+                    width_fn = max_function_width,
+                    width_al = max_aliases_width));
+            }
+            
+            for line in table_lines {
+                writeln!(output, "{}", line).unwrap();
+            }
+        }
+        
+        writeln!(output).unwrap();
+        writeln!(output, "{}:",
+            self.colour_manager.info("Usage Examples")).unwrap();
+        writeln!(output, "  {} {}                {}",
+            self.colour_manager.command("gstats"),
+            self.colour_manager.success("<plugin>"),
+            "Use plugin's default function").unwrap();
+        writeln!(output, "  {} {}     {}",
+            self.colour_manager.command("gstats"),
+            self.colour_manager.success("<plugin>:<function>"),
+            "Use specific plugin function").unwrap();
+        writeln!(output).unwrap();
+        write!(output, "{} = default function for plugin",
+            self.colour_manager.orange("(default)")).unwrap();
+    }
+    
+    /// Write static plugin table (fallback)
     fn write_plugin_table(&self, output: &mut String) {
         // Table header with colors
         writeln!(output, "    ┌─────────┬────────────────────────────────────────────────────────┐").unwrap();
@@ -139,6 +259,7 @@ impl HelpFormatter {
             ("-v, --verbose", "Verbose output (debug level logging)"),
             ("-q, --quiet", "Quiet output (errors only)"),
             ("--debug", "Debug output (trace level logging)"),
+            ("--color", "Force colored output even when redirected"),
             ("--no-color", "Disable colored output"),
             ("--log-format <FORMAT>", "Log format: text or json [default: text]"),
             ("--log-file <FILE>", "Log file path for file output"),
@@ -235,7 +356,7 @@ impl HelpFormatter {
     }
     
     /// Generate the invalid command error message with colored output
-    pub fn format_invalid_command(&self, command: &str, suggestions: &[String]) -> String {
+    pub async fn format_invalid_command(&self, command: &str, suggestions: &[String]) -> String {
         let mut output = String::new();
         
         writeln!(output, "{} '{}'.", 
@@ -260,13 +381,30 @@ impl HelpFormatter {
             }
         }
         
-        // Plugin table
+        // Plugin table using the same format as --plugins command
         writeln!(output).unwrap();
         writeln!(output, "{}", self.colour_manager.info("Available plugins and functions:")).unwrap();
-        self.write_plugin_table(&mut output);
+        
+        // Generate dynamic plugin table using the same logic as --plugins command
+        if let Ok(mut handler) = crate::cli::plugin_handler::PluginHandler::new() {
+            if let Err(_) = handler.build_command_mappings().await {
+                // Fallback to hardcoded table if mapping fails
+                self.write_plugin_table(&mut output);
+            } else {
+                let mappings = handler.get_function_mappings();
+                if mappings.is_empty() {
+                    writeln!(output, "No plugins available.").unwrap();
+                } else {
+                    // Use the same tabular format as --plugins command
+                    self.write_dynamic_plugin_table(&mut output, &mappings);
+                }
+            }
+        } else {
+            // Fallback to hardcoded table if plugin handler creation fails
+            self.write_plugin_table(&mut output);
+        }
         
         // Usage
-        writeln!(output).unwrap();
         writeln!(output, "{}:", self.colour_manager.info("Usage")).unwrap();
         writeln!(output, "  {} {}                      {}", 
                 self.colour_manager.command("gstats"),
@@ -296,7 +434,11 @@ mod tests {
     
     #[test]
     fn test_help_formatter_creation() {
-        let formatter = HelpFormatter::new(None);
+        // Use explicit config to ensure predictable behavior in tests
+        let mut enabled_config = ColourConfig::new();
+        enabled_config.set_enabled(true);
+        enabled_config.set_color_forced(true); // Force enable to avoid environment detection
+        let formatter = HelpFormatter::new(Some(enabled_config));
         assert!(formatter.colour_manager.colours_enabled());
         
         let disabled_config = ColourConfig::disabled();
@@ -309,8 +451,10 @@ mod tests {
         let formatter = HelpFormatter::from_no_color_flag(true);
         assert!(!formatter.colour_manager.colours_enabled());
         
-        let formatter = HelpFormatter::from_no_color_flag(false);
-        assert!(formatter.colour_manager.colours_enabled());
+        // For the false case, we can't reliably assert colors are enabled
+        // since it depends on terminal detection, so just verify creation works
+        let _formatter = HelpFormatter::from_no_color_flag(false);
+        // Don't assert enabled state - depends on test environment
     }
     
     #[test]
@@ -328,11 +472,11 @@ mod tests {
         assert!(help.contains("USAGE EXAMPLES:"));
     }
     
-    #[test]
-    fn test_format_invalid_command() {
+    #[tokio::test]
+    async fn test_format_invalid_command() {
         let formatter = HelpFormatter::from_no_color_flag(true); // Disable colors for predictable testing
         let suggestions = vec!["commits".to_string(), "metrics".to_string()];
-        let error = formatter.format_invalid_command("comits", &suggestions);
+        let error = formatter.format_invalid_command("comits", &suggestions).await;
         
         assert!(error.contains("Unknown command 'comits'"));
         assert!(error.contains("Did you mean one of these?"));

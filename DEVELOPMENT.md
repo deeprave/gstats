@@ -116,6 +116,68 @@ A code metrics plugin was implemented to calculate complexity measures, file sta
 
 A comprehensive export plugin was created supporting multiple output formats (JSON, CSV, XML, YAML, HTML). This demonstrates output plugin architecture and data transformation capabilities.
 
+## CLI Colors and Visual Enhancements (GS-40)
+
+The sixth major development phase focused on enhancing the user experience through comprehensive visual feedback and color coding.
+
+### Color System Architecture
+
+A complete color management system was built using the `colored` crate with full NO_COLOR compliance. The implementation includes:
+
+**Core Infrastructure**:
+- `src/display/colours.rs` - Central color management with 6-color palette (red, yellow, blue, green, cyan, bright_black)
+- `src/display/config.rs` - Color configuration with theme support (auto, light, dark, custom)
+- `src/display/progress.rs` - Progress indicators with spinner animations
+- `src/display/themes.rs` - Predefined color themes and palette definitions
+
+**Key Features**:
+- **Console-only colors** - Colors only appear in console output, not when redirected to files
+- **Automatic detection** - Terminal capability detection with graceful fallback to plain text
+- **NO_COLOR compliance** - Both NO_COLOR environment variable and --no-color CLI flag support
+- **Custom themes** - Configurable color palettes via TOML configuration files
+- **Performance optimized** - Color rendering adds less than 5ms overhead
+
+### Enhanced Logging
+
+Log output was enhanced with color-coded severity levels:
+- **INFO** messages in blue with ℹ️ icons  
+- **ERROR** messages in red with ❌ icons
+- **WARN** messages in yellow with ⚠️ icons
+- **SUCCESS** status in green with ✅ icons
+
+### Plugin Output Enhancement
+
+All plugin output received comprehensive color coding:
+- **Report headers** in cyan for clear section separation
+- **Data labels** in blue with **values** in green for easy scanning
+- **Tables** with proper alignment accounting for ANSI color codes
+- **Status indicators** with appropriate colors (success=green, error=red)
+
+### Progress Indicators
+
+Visual progress feedback was implemented with:
+- **Spinner animations** using Unicode characters (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) with ASCII fallback
+- **Completion status** messages that replace spinners when operations finish
+- **Collection feedback** showing item counts for data collection phases
+
+### Configuration Integration
+
+The configuration system was extended with:
+- **Root-level configuration** - Simplified TOML structure without nested [base] sections
+- **Inline color tables** - Colors configured as `colors = { error = "red", warning = "yellow" }`
+- **Configuration export** - `--export-config` command generates complete TOML files
+- **Theme validation** - Automatic validation of custom color values
+
+### Help System Enhancement
+
+The help system received comprehensive visual improvements:
+- **Color-coded help text** with different colors for options, arguments, and descriptions
+- **Dynamic plugin tables** in error messages showing available functions
+- **Proper alignment** accounting for ANSI color codes in table formatting
+- **Contextual suggestions** with color-highlighted alternatives
+
+This phase was implemented following Test-Driven Development with 34 configuration tests and comprehensive validation across different terminal types.
+
 ## System Integration
 
 The final phase integrated all components into a cohesive system.
@@ -161,7 +223,8 @@ The development followed a clear progression from foundation to specialisation:
 3. **Memory Management** - Queue system with monitoring and backpressure
 4. **Plugin Architecture** - Extensible functionality framework
 5. **Reference Implementations** - Built-in plugins demonstrating capabilities
-6. **System Integration** - Connecting all components into unified application
+6. **CLI Colors and Visual Enhancements** - Enhanced user experience with visual feedback
+7. **System Integration** - Connecting all components into unified application
 
 Each phase built upon previous work while maintaining architectural consistency. The async-first design established early enabled high performance throughout. The plugin system provides extensibility while maintaining system stability through proper error isolation.
 

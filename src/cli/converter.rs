@@ -289,6 +289,7 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            color: false,
             no_color: false,
             config_file: None,
             config_name: None,
@@ -313,6 +314,7 @@ mod tests {
             plugin_dir: None,
             show_plugins: false,
             plugins_help: false,
+            export_config: None,
         }
     }
 
@@ -450,6 +452,7 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            color: false,
             no_color: false,
             config_file: None,
             config_name: None,
@@ -474,6 +477,7 @@ mod tests {
             plugin_dir: None,
             show_plugins: false,
             plugins_help: false,
+            export_config: None,
         };
         
         let result = args_to_query_params(&args).unwrap();
@@ -573,6 +577,7 @@ mod tests {
                 log_format: "text".to_string(),
                 log_file: None,
                 log_file_level: None,
+                color: false,
                 no_color: false,
                 config_file: None,
                 config_name: None,
@@ -597,6 +602,7 @@ mod tests {
                 plugin_dir: None,
                 show_plugins: false,
                 plugins_help: false,
+                export_config: None,
             };
             
             let result = args_to_scanner_config(&args, None).unwrap();
@@ -614,6 +620,7 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            color: false,
             no_color: false,
             config_file: None,
             config_name: None,
@@ -638,6 +645,7 @@ mod tests {
             plugin_dir: None,
             show_plugins: false,
             plugins_help: false,
+            export_config: None,
         };
         
         let result = args_to_scanner_config(&args, None);
@@ -659,6 +667,7 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            color: false,
             no_color: false,
             config_file: None,
             config_name: None,
@@ -683,6 +692,7 @@ mod tests {
             plugin_dir: None,
             show_plugins: false,
             plugins_help: false,
+            export_config: None,
         };
         
         let result = args_to_scanner_config(&args, None);

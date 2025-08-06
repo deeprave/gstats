@@ -296,8 +296,15 @@ impl PluginHandler {
     }
     
     /// Resolve a command to a plugin and function
-    pub fn resolve_command(&self, command: &str) -> Result<CommandResolution, String> {
+    pub async fn resolve_command(&self, command: &str) -> Result<CommandResolution, String> {
         self.command_mapper.resolve_command(command)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn resolve_command_with_colors(&self, command: &str, no_color: bool, color: bool) -> Result<CommandResolution, String> {
+        self.command_mapper.resolve_command_with_colors(command, no_color, color)
+            .await
             .map_err(|e| e.to_string())
     }
     

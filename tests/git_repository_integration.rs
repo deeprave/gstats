@@ -54,7 +54,7 @@ fn test_validate_git_repository_handle_invalid_path() {
     let result = gstats::git::validate_git_repository_handle("/definitely/not/a/repo");
     assert!(result.is_err());
     let err_msg = format!("{:?}", result.err().unwrap());
-    assert!(err_msg.contains("Path does not exist"));
+    assert!(err_msg.contains("Directory does not exist"));
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn test_validate_git_repository_handle_not_a_repo() {
     let result = gstats::git::validate_git_repository_handle(temp_dir.path());
     assert!(result.is_err());
     let err_msg = format!("{:?}", result.err().unwrap());
-    assert!(err_msg.contains("Failed to open repository"));
+    assert!(err_msg.contains("Not a valid git repository"));
 }
 
 #[test]

@@ -17,6 +17,11 @@ A fast, local-first git analytics tool for analysing Git repositories with compr
 - **Real-time Processing** - Streaming plugin processing with backpressure handling
 - **Multiple Log Destinations** - Console and file logging with independent log levels
 - **Section-based Configuration** - Module-specific settings with inheritance and override capabilities
+- **Color-coded Output** - Enhanced visual feedback with color-coded logging, plugin results, and progress indicators (console output only)
+- **Progress Indicators** - Visual feedback with spinner animations for long-running operations
+- **Terminal Compatibility** - Automatic color detection with graceful fallback to plain text for non-color terminals
+- **Accessibility Support** - NO_COLOR environment variable and --no-color flag compliance
+- **Configurable Themes** - Auto-detection, light, dark, and custom color themes via configuration files
 
 ## Planned Features
 - External plugin loading and dynamic discovery
@@ -55,6 +60,21 @@ gstats --log-file output.log --log-file-level debug .
 gstats --verbose --log-format json --log-file debug.log .
 ```
 
+### Color and Visual Options
+```bash
+# Force colors (default for console output)
+gstats --color commits
+
+# Disable colors (automatic for non-tty output)
+gstats --no-color commits
+
+# Disable colors via environment variable
+NO_COLOR=1 gstats commits
+
+# Export complete configuration file
+gstats --export-config gstats-config.toml commits
+```
+
 ### Plugin Management
 ```bash
 # List available plugins
@@ -83,17 +103,23 @@ gstats --config-file config.toml --verbose .
 ```
 
 #### Configuration File Format
-Create a TOML configuration file with section-based organisation:
+Create a TOML configuration file with root-level settings and module-specific sections:
 
 ```toml
-# Global settings
-[base]
-quiet = true
-log-format = "json"
+# Root-level global settings (console output only)
+quiet = false
+log-format = "text"
 log-file = "/tmp/gstats.log"
-log-file-level = "info"
+color = true                    # Enable colors (default: auto-detect)
+theme = "auto"                  # Options: auto, light, dark, custom
+colors = { error = "red", warning = "yellow", info = "blue", debug = "bright_black", success = "green", highlight = "cyan" }
 
-# Module-specific settings (for future features)
+# Scanner configuration
+[scanner]
+max-memory = "64MB"
+queue-size = 1000
+
+# Module-specific settings
 [module.commits]
 since = "30d"
 per-day = true

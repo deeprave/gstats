@@ -47,7 +47,7 @@ pub use config::ScannerConfig;
 pub use traits::{MessageProducer, CallbackMessageProducer};
 pub use modes::ScanMode;
 pub use version::{get_api_version, is_api_compatible};
-pub use query::QueryParams;
+pub use query::{QueryParams, QueryBuilder};
 pub use async_engine::AsyncScannerEngineBuilder;
 pub use plugin_scanner::PluginScannerBuilder;
 

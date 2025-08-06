@@ -1,0 +1,31 @@
+# Complete gstats configuration file
+# Generated with all available configuration options and their current values
+# This file can be used as-is without any changes
+
+# quiet = false
+# log-format = "text"
+# log-file = "/path/to/log/file"
+# log-level = "info"
+# color = true
+# theme = "auto"  # Options: auto, light, dark, custom
+# colors = { error = "red", warning = "yellow", info = "blue", debug = "bright_black", success = "green", highlight = "cyan" }
+
+[scanner]
+# max-memory = "64MB"
+# queue-size = 1000
+# max-threads = 4
+# performance-mode = false
+
+# Module-specific configurations
+# [module.commits]
+# since = "30d"
+# per-day = true
+# format = "json"
+
+# [module.metrics]
+# complexity-threshold = 10
+# include-tests = false
+
+# [module.export]
+# default-format = "json"
+# output-file = "gstats-report"

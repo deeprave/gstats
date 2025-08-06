@@ -144,7 +144,12 @@ impl CommandMapper {
     }
     
     /// Resolve a command string to plugin and function
-    pub fn resolve_command(&self, input: &str) -> Result<CommandResolution> {
+    pub async fn resolve_command(&self, input: &str) -> Result<CommandResolution> {
+        self.resolve_command_with_colors(input, false, false).await
+    }
+
+    /// Resolve a command string to plugin and function with color control
+    pub async fn resolve_command_with_colors(&self, input: &str, no_color: bool, color: bool) -> Result<CommandResolution> {
         debug!("Resolving command: '{}'", input);
         
         // Check for explicit plugin:function syntax
@@ -235,13 +240,13 @@ impl CommandMapper {
         sorted_plugins.sort();
         
         // Use colored formatter for the error message
-        let formatter = HelpFormatter::from_no_color_flag(false); // TODO: Get no_color from args
+        let formatter = HelpFormatter::from_color_flags(no_color, color);
         let suggestion_texts: Vec<String> = self.suggestion_engine.suggest(input)
             .iter()
             .map(|s| s.text.clone())
             .collect();
         
-        let error_msg = formatter.format_invalid_command(input, &suggestion_texts);
+        let error_msg = formatter.format_invalid_command(input, &suggestion_texts).await;
         
         // Add contextual help for common commands if no suggestions
         let final_error = if suggestion_texts.is_empty() && sorted_plugins.len() <= 3 {
@@ -325,13 +330,13 @@ mod tests {
         ]
     }
     
-    #[test]
-    fn test_single_function_resolution() {
+    #[tokio::test]
+    async fn test_single_function_resolution() {
         let mut mapper = CommandMapper::new();
         mapper.register_plugin("metrics", create_test_functions());
         
         // Direct function name
-        let result = mapper.resolve_command("complexity").unwrap();
+        let result = mapper.resolve_command("complexity").await.unwrap();
         match result {
             CommandResolution::Function { plugin_name, function_name, .. } => {
                 assert_eq!(plugin_name, "metrics");
@@ -341,7 +346,7 @@ mod tests {
         }
         
         // Via alias
-        let result = mapper.resolve_command("complex").unwrap();
+        let result = mapper.resolve_command("complex").await.unwrap();
         match result {
             CommandResolution::Function { plugin_name, function_name, .. } => {
                 assert_eq!(plugin_name, "metrics");
@@ -351,12 +356,12 @@ mod tests {
         }
     }
     
-    #[test]
-    fn test_explicit_syntax() {
+    #[tokio::test]
+    async fn test_explicit_syntax() {
         let mut mapper = CommandMapper::new();
         mapper.register_plugin("metrics", create_test_functions());
         
-        let result = mapper.resolve_command("metrics:complexity").unwrap();
+        let result = mapper.resolve_command("metrics:complexity").await.unwrap();
         match result {
             CommandResolution::Explicit { plugin_name, function_name } => {
                 assert_eq!(plugin_name, "metrics");
@@ -366,12 +371,12 @@ mod tests {
         }
     }
     
-    #[test]
-    fn test_direct_plugin_invocation() {
+    #[tokio::test]
+    async fn test_direct_plugin_invocation() {
         let mut mapper = CommandMapper::new();
         mapper.register_plugin("metrics", create_test_functions());
         
-        let result = mapper.resolve_command("metrics").unwrap();
+        let result = mapper.resolve_command("metrics").await.unwrap();
         match result {
             CommandResolution::DirectPlugin { plugin_name, default_function } => {
                 assert_eq!(plugin_name, "metrics");
@@ -381,8 +386,8 @@ mod tests {
         }
     }
     
-    #[test]
-    fn test_ambiguous_function_error() {
+    #[tokio::test]
+    async fn test_ambiguous_function_error() {
         let mut mapper = CommandMapper::new();
         mapper.register_plugin("metrics", create_test_functions());
         mapper.register_plugin("analyze", vec![
@@ -394,7 +399,7 @@ mod tests {
             }
         ]);
         
-        let result = mapper.resolve_command("complexity");
+        let result = mapper.resolve_command("complexity").await;
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
         assert!(error.contains("Ambiguous function"));
@@ -402,10 +407,10 @@ mod tests {
         assert!(error.contains("analyze"));
     }
     
-    #[test]
-    fn test_unknown_command_error() {
+    #[tokio::test]
+    async fn test_unknown_command_error() {
         let mapper = CommandMapper::new();
-        let result = mapper.resolve_command("unknown");
+        let result = mapper.resolve_command("unknown").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unknown command"));
     }

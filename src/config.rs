@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use toml::Value;
 use log::{debug, info};
 use crate::scanner::config::ScannerConfig;
+use crate::display::{ColourConfig, ColourTheme, ColourPalette};
 
 /// Configuration storage - section_name -> key -> value
 pub type Configuration = HashMap<String, HashMap<String, String>>;
@@ -76,11 +77,42 @@ impl ConfigManager {
             }
         }
         
+        // First try direct key access within the section
         if let Some(value) = self.config.get(section).and_then(|s| s.get(key)) {
             return Some(value);
         }
         
+        // Then try flattened key access (section.key with value key)
+        let flattened_key = format!("{}.{}", section, key);
+        if let Some(value) = self.config.get(&flattened_key).and_then(|s| s.get("value")) {
+            return Some(value);
+        }
+        
         self.config.get("base").and_then(|s| s.get(key))
+    }
+    
+    /// Get value from root-level configuration (for sectionless keys)
+    pub fn get_value_root(&self, key: &str) -> Option<&String> {
+        // First try as root-level key (stored as single-value section)
+        if let Some(value) = self.config.get(key).and_then(|s| s.get("value")) {
+            return Some(value);
+        }
+        
+        // Fallback to base section for compatibility
+        self.config.get("base").and_then(|s| s.get(key))
+    }
+    
+    /// Get boolean value from root-level configuration
+    pub fn get_bool_root(&self, key: &str) -> Result<Option<bool>> {
+        if let Some(value) = self.get_value_root(key) {
+            match value.to_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Ok(Some(true)),
+                "false" | "0" | "no" | "off" => Ok(Some(false)),
+                _ => Err(anyhow::anyhow!("Invalid boolean value '{}' for key '{}'", value, key)),
+            }
+        } else {
+            Ok(None)
+        }
     }
     
     /// Select configuration section for --config-name
@@ -155,6 +187,214 @@ impl ConfigManager {
             
         Ok(config)
     }
+    
+    /// Get colour configuration from config file
+    pub fn get_colour_config(&self) -> Result<ColourConfig> {
+        let mut config = ColourConfig::default();
+        
+        // Check if colours are enabled - now as root-level "color" key
+        if let Some(enabled) = self.get_bool_root("color")? {
+            config.set_enabled(enabled);
+            // If color = false, it means we force disable colors (don't respect NO_COLOR)
+            if !enabled {
+                config.set_respect_no_color(false);
+            }
+        }
+        
+        // Check theme setting - now as root-level "theme" key
+        if let Some(theme_str) = self.get_value_root("theme") {
+            let theme = match theme_str.to_lowercase().as_str() {
+                "auto" => ColourTheme::Auto,
+                "light" => ColourTheme::Light,
+                "dark" => ColourTheme::Dark,
+                "custom" => {
+                    // Try to load custom palette from base.colors
+                    let palette = self.get_custom_colour_palette()?;
+                    ColourTheme::Custom(palette)
+                }
+                _ => {
+                    debug!("Unknown theme '{}', falling back to Auto", theme_str);
+                    ColourTheme::Auto
+                }
+            };
+            config.set_theme(theme);
+        }
+        
+        Ok(config)
+    }
+    
+    /// Get custom colour palette from config file
+    fn get_custom_colour_palette(&self) -> Result<ColourPalette> {
+        let mut palette = ColourPalette::default();
+        
+        // Read colors from inline table format: colors = { error = "red", warning = "yellow" }
+        // This gets parsed as a "colors" section
+        if let Some(error_color) = self.get_value("colors", "error") {
+            palette.error = error_color.clone();
+        }
+        
+        if let Some(warning_color) = self.get_value("colors", "warning") {
+            palette.warning = warning_color.clone();
+        }
+        
+        if let Some(info_color) = self.get_value("colors", "info") {
+            palette.info = info_color.clone();
+        }
+        
+        if let Some(debug_color) = self.get_value("colors", "debug") {
+            palette.debug = debug_color.clone();
+        }
+        
+        if let Some(success_color) = self.get_value("colors", "success") {
+            palette.success = success_color.clone();
+        }
+        
+        if let Some(highlight_color) = self.get_value("colors", "highlight") {
+            palette.highlight = highlight_color.clone();
+        }
+        
+        // Validate that all colors are parseable
+        for (name, color) in [
+            ("error", &palette.error),
+            ("warning", &palette.warning),
+            ("info", &palette.info),
+            ("debug", &palette.debug),
+            ("success", &palette.success),
+            ("highlight", &palette.highlight),
+        ] {
+            if ColourPalette::parse_color(color).is_none() {
+                return Err(anyhow::anyhow!(
+                    "Invalid color '{}' for base.colors.{}", 
+                    color, name
+                ));
+            }
+        }
+        
+        Ok(palette)
+    }
+    
+    /// Export complete configuration with all available options and their current values
+    /// This includes default values for options not explicitly set
+    pub fn export_complete_config(&self) -> Result<String> {
+        let mut output = String::new();
+        
+        // Add header comment
+        output.push_str("# Complete gstats configuration file\n");
+        output.push_str("# Generated with all available configuration options and their current values\n");
+        output.push_str("# This file can be used as-is without any changes\n\n");
+        
+        // Root-level configuration keys (no [base] section)
+        if let Some(quiet) = self.get_value_root("quiet") {
+            output.push_str(&format!("quiet = {}\n", quiet));
+        } else {
+            output.push_str("# quiet = false\n");
+        }
+        
+        if let Some(log_format) = self.get_value_root("log-format") {
+            output.push_str(&format!("log-format = \"{}\"\n", log_format));
+        } else {
+            output.push_str("# log-format = \"text\"\n");
+        }
+        
+        if let Some(log_file) = self.get_value_root("log-file") {
+            output.push_str(&format!("log-file = \"{}\"\n", log_file));
+        } else {
+            output.push_str("# log-file = \"/path/to/log/file\"\n");
+        }
+        
+        if let Some(log_level) = self.get_value_root("log-level") {
+            output.push_str(&format!("log-level = \"{}\"\n", log_level));
+        } else {
+            output.push_str("# log-level = \"info\"\n");
+        }
+        
+        // Color configuration as root-level keys
+        if let Some(color) = self.get_value_root("color") {
+            output.push_str(&format!("color = {}\n", color));
+        } else {
+            output.push_str("# color = true\n");
+        }
+        
+        if let Some(theme) = self.get_value_root("theme") {
+            output.push_str(&format!("theme = \"{}\"\n", theme));
+        } else {
+            output.push_str("# theme = \"auto\"  # Options: auto, light, dark, custom\n");
+        }
+        
+        // Colors as inline table format at root level
+        let color_keys = [
+            ("error", "red"),
+            ("warning", "yellow"),
+            ("info", "blue"),
+            ("debug", "bright_black"),
+            ("success", "green"),
+            ("highlight", "cyan"),
+        ];
+        
+        let mut colors = Vec::new();
+        let mut has_custom_colors = false;
+        
+        for (key, default) in &color_keys {
+            if let Some(custom_color) = self.get_value("colors", key) {
+                colors.push(format!("{} = \"{}\"", key, custom_color));
+                has_custom_colors = true;
+            } else {
+                colors.push(format!("{} = \"{}\"", key, default));
+            }
+        }
+        
+        if has_custom_colors {
+            output.push_str(&format!("colors = {{ {} }}\n", colors.join(", ")));
+        } else {
+            output.push_str(&format!("# colors = {{ {} }}\n", colors.join(", ")));
+        }
+        
+        output.push('\n');
+        
+        // Scanner configuration section
+        output.push_str("[scanner]\n");
+        if let Some(max_memory) = self.get_value("scanner", "max-memory") {
+            output.push_str(&format!("max-memory = \"{}\"\n", max_memory));
+        } else {
+            output.push_str("# max-memory = \"64MB\"\n");
+        }
+        
+        if let Some(queue_size) = self.get_value("scanner", "queue-size") {
+            output.push_str(&format!("queue-size = {}\n", queue_size));
+        } else {
+            output.push_str("# queue-size = 1000\n");
+        }
+        
+        if let Some(max_threads) = self.get_value("scanner", "max-threads") {
+            output.push_str(&format!("max-threads = {}\n", max_threads));
+        } else {
+            output.push_str("# max-threads = 4\n");
+        }
+        
+        if let Some(performance_mode) = self.get_value("scanner", "performance-mode") {
+            output.push_str(&format!("performance-mode = {}\n", performance_mode));
+        } else {
+            output.push_str("# performance-mode = false\n");
+        }
+        output.push('\n');
+        
+        // Module-specific configurations (example modules)
+        output.push_str("# Module-specific configurations\n");
+        output.push_str("# [module.commits]\n");
+        output.push_str("# since = \"30d\"\n");
+        output.push_str("# per-day = true\n");
+        output.push_str("# format = \"json\"\n\n");
+        
+        output.push_str("# [module.metrics]\n");
+        output.push_str("# complexity-threshold = 10\n");
+        output.push_str("# include-tests = false\n\n");
+        
+        output.push_str("# [module.export]\n");
+        output.push_str("# default-format = \"json\"\n");
+        output.push_str("# output-file = \"gstats-report\"\n");
+        
+        Ok(output)
+    }
 }
 
 /// Discover configuration files in order of precedence
@@ -223,7 +463,7 @@ fn flatten_toml_table(table: &toml::Table, prefix: String, config: &mut Configur
                 }
             }
             _ => {
-                // This is a direct key-value pair (e.g., in [base] section)
+                // This is a direct key-value pair - store as single-value section
                 let mut section_map = HashMap::new();
                 section_map.insert("value".to_string(), toml_value_to_string(value));
                 config.insert(section_name, section_map);
@@ -366,7 +606,6 @@ format = "json"
     #[test] 
     fn test_config_file_loading() {
         let toml_content = r#"
-[base]
 quiet = true
 log-format = "json"
 
@@ -379,8 +618,8 @@ since = "30d"
         
         let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
         
-        assert_eq!(manager.get_value("base", "quiet").unwrap(), "true");
-        assert_eq!(manager.get_value("base", "log-format").unwrap(), "json");
+        assert_eq!(manager.get_value_root("quiet").unwrap(), "true");
+        assert_eq!(manager.get_value_root("log-format").unwrap(), "json");
         assert_eq!(manager.get_value("module.commits", "since").unwrap(), "30d");
         assert_eq!(manager._config_file_path.as_ref().unwrap(), temp_file.path());
     }
@@ -470,5 +709,227 @@ queue-size = 3000
         
         assert_eq!(scanner_config.max_memory_bytes, 1024 * 1024 * 1024); // 1GB
         assert_eq!(scanner_config.queue_size, 3000);
+    }
+
+    #[test]
+    fn test_colour_config_default() {
+        let manager = ConfigManager {
+            config: Configuration::new(),
+            _config_file_path: None,
+            selected_section: None,
+        };
+        
+        let colour_config = manager.get_colour_config().unwrap();
+        assert!(colour_config.enabled); // Default is enabled
+        assert_eq!(colour_config.theme, ColourTheme::Auto);
+        assert!(colour_config.respect_no_color); // Default respects NO_COLOR
+    }
+
+    #[test]
+    fn test_colour_config_from_toml() {
+        let toml_content = r#"
+color = true
+theme = "dark"
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let colour_config = manager.get_colour_config().unwrap();
+        
+        assert!(colour_config.enabled);
+        assert_eq!(colour_config.theme, ColourTheme::Dark);
+    }
+
+    #[test]
+    fn test_colour_config_disabled() {
+        let toml_content = r#"
+color = false
+theme = "light"
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let colour_config = manager.get_colour_config().unwrap();
+        
+        assert!(!colour_config.enabled);
+        assert_eq!(colour_config.theme, ColourTheme::Light);
+    }
+
+    #[test]
+    fn test_colour_config_custom_theme() {
+        let toml_content = r#"
+theme = "custom"
+colors = { error = "bright_red", warning = "bright_yellow", info = "bright_blue", debug = "white", success = "bright_green", highlight = "bright_cyan" }
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let colour_config = manager.get_colour_config().unwrap();
+        
+        if let ColourTheme::Custom(palette) = colour_config.theme {
+            assert_eq!(palette.error, "bright_red");
+            assert_eq!(palette.warning, "bright_yellow");
+            assert_eq!(palette.info, "bright_blue");
+            assert_eq!(palette.debug, "white");
+            assert_eq!(palette.success, "bright_green");
+            assert_eq!(palette.highlight, "bright_cyan");
+        } else {
+            panic!("Expected Custom theme, got {:?}", colour_config.theme);
+        }
+    }
+
+    #[test]
+    fn test_colour_config_invalid_theme() {
+        let toml_content = r#"
+[base]
+theme = "unknown"
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let colour_config = manager.get_colour_config().unwrap();
+        
+        // Unknown theme should fall back to Auto
+        assert_eq!(colour_config.theme, ColourTheme::Auto);
+    }
+
+    #[test]
+    fn test_colour_config_invalid_custom_color() {
+        let toml_content = r#"
+theme = "custom"
+colors = { error = "invalid_color", warning = "yellow" }
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let result = manager.get_colour_config();
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid color 'invalid_color'"));
+    }
+
+    #[test]
+    fn test_colour_config_partial_custom_palette() {
+        let toml_content = r#"
+theme = "custom"
+colors = { error = "bright_red", success = "bright_green" }
+# Other colors should use defaults
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let colour_config = manager.get_colour_config().unwrap();
+        
+        if let ColourTheme::Custom(palette) = colour_config.theme {
+            // Custom colors
+            assert_eq!(palette.error, "bright_red");
+            assert_eq!(palette.success, "bright_green");
+            // Default colors should remain
+            assert_eq!(palette.warning, "yellow");
+            assert_eq!(palette.info, "blue");
+            assert_eq!(palette.debug, "bright_black");
+            assert_eq!(palette.highlight, "cyan");
+        } else {
+            panic!("Expected Custom theme");
+        }
+    }
+
+    #[test]
+    fn test_colour_config_no_color_inversion() {
+        let toml_content = r#"
+[base]
+color = false
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let colour_config = manager.get_colour_config().unwrap();
+        
+        // color = false should set respect_no_color = false
+        assert!(!colour_config.respect_no_color);
+    }
+    
+    #[test]
+    fn test_export_complete_config_default() {
+        let manager = ConfigManager {
+            config: Configuration::new(),
+            _config_file_path: None,
+            selected_section: None,
+        };
+        
+        let exported = manager.export_complete_config().unwrap();
+        
+        // Check that it contains expected sections (no [base] section, just [scanner])
+        assert!(exported.contains("[scanner]"));
+        
+        // Check that it contains default values as comments
+        assert!(exported.contains("# quiet = false"));
+        assert!(exported.contains("# max-memory = \"64MB\""));
+        assert!(exported.contains("# color = true"));
+        assert!(exported.contains("# theme = \"auto\""));
+    }
+    
+    #[test]
+    fn test_export_complete_config_with_values() {
+        let toml_content = r#"
+quiet = true
+log-format = "json"
+color = false
+theme = "dark"
+
+[scanner]
+max-memory = "128MB"
+queue-size = 2000
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let exported = manager.export_complete_config().unwrap();
+        
+        // Check that actual values are present (not commented)
+        assert!(exported.contains("quiet = true"));
+        assert!(exported.contains("log-format = \"json\""));
+        assert!(exported.contains("max-memory = \"128MB\""));
+        assert!(exported.contains("queue-size = 2000"));
+        assert!(exported.contains("color = false"));
+        assert!(exported.contains("theme = \"dark\""));
+    }
+    
+    #[test]
+    fn test_export_complete_config_with_custom_colors() {
+        let toml_content = r#"
+theme = "custom"
+colors = { error = "bright_red", warning = "bright_yellow" }
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let exported = manager.export_complete_config().unwrap();
+        
+        // Check that custom colors are present in inline table format
+        assert!(exported.contains("theme = \"custom\""));
+        assert!(exported.contains("colors = {"));
+        assert!(exported.contains("error = \"bright_red\""));
+        assert!(exported.contains("warning = \"bright_yellow\""));
+        // Default colors should be included in the inline format
+        assert!(exported.contains("info = \"blue\""));
     }
 }

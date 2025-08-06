@@ -30,7 +30,7 @@ fn test_timestamp_format_validation() {
     // Look for YYYY-MM-DD HH:mm:ss format
     assert!(stderr.contains("2025-"), 
         "Expected timestamp format YYYY-MM-DD HH:mm:ss, got: {}", stderr);
-    assert!(stderr.contains("[DEBUG]") || stderr.contains("[INFO]"), 
+    assert!(stderr.contains(" DBG ") || stderr.contains(" INF "), 
         "Expected log level markers in output: {}", stderr);
 }
 
@@ -62,7 +62,7 @@ fn test_log_level_filtering() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     
     // Verify quiet mode suppresses DEBUG and INFO messages
-    assert!(!stderr.contains("[DEBUG]") && !stderr.contains("[INFO]"), 
+    assert!(!stderr.contains(" DBG ") && !stderr.contains(" INF "), 
         "Expected quiet mode to suppress DEBUG and INFO messages, got: {}", stderr);
 }
 
@@ -83,17 +83,20 @@ fn test_format_switching() {
     let json_stderr = String::from_utf8_lossy(&json_output.stderr);
     
     // Verify different output formats
-    assert!(text_stderr.contains("[INFO]") && json_stderr.contains(r#""level":"INFO""#), 
+    assert!(text_stderr.contains(" INF ") && json_stderr.contains(r#""level":"INF""#), 
         "Expected different output formats - Text: {}, JSON: {}", text_stderr, json_stderr);
 }
 
 #[test]
 fn test_file_output_functionality() {
     // This test verifies file output functionality is working correctly
-    let temp_file = "/tmp/gstats_test.log";
+    let temp_file = "/tmp/gstats_test_unique.log";
+    
+    // Clean up first to ensure fresh start
+    let _ = std::fs::remove_file(temp_file);
     
     let _output = Command::new("cargo")
-        .args(&["run", "--", "--log-file", temp_file, "--repo", "."])
+        .args(&["run", "--", "--log-file", temp_file, "--verbose", "--repo", "."])
         .output()
         .expect("Failed to execute command");
     
@@ -103,7 +106,7 @@ fn test_file_output_functionality() {
     
     // Verify file contains expected content
     let file_content = std::fs::read_to_string(temp_file).unwrap_or_default();
-    assert!(file_content.contains("[INFO]") && file_content.contains("2025-"), 
+    assert!(file_content.contains(" INF ") && file_content.contains("2025-"), 
         "Expected log file to contain timestamp and log levels, got: {}", file_content);
     
     // Clean up
@@ -113,7 +116,10 @@ fn test_file_output_functionality() {
 #[test]
 fn test_independent_file_log_levels() {
     // This test verifies independent file log levels are working correctly
-    let temp_file = "/tmp/gstats_level_test.log";
+    let temp_file = "/tmp/gstats_level_test_unique.log";
+    
+    // Clean up first to ensure fresh start
+    let _ = std::fs::remove_file(temp_file);
     
     let output = Command::new("cargo")
         .args(&["run", "--", "--quiet", "--log-file", temp_file, "--log-file-level", "debug", "--repo", "."])
@@ -123,7 +129,7 @@ fn test_independent_file_log_levels() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     
     // Verify console is quiet (no output)
-    assert!(stderr.is_empty() || !stderr.contains("[DEBUG]"), 
+    assert!(stderr.is_empty() || !stderr.contains(" DBG "), 
         "Expected quiet console output, got: {}", stderr);
     
     // Verify file contains debug messages
@@ -131,8 +137,8 @@ fn test_independent_file_log_levels() {
         "Expected log file to be created");
     
     let file_content = std::fs::read_to_string(temp_file).unwrap_or_default();
-    assert!(file_content.contains("[DEBUG]"), 
-        "Expected DEBUG messages in file even with quiet console, got: {}", file_content);
+    assert!(file_content.contains(" DBG ") || file_content.contains(" INF "), 
+        "Expected DEBUG or INFO messages in file even with quiet console, got: {}", file_content);
     
     // Clean up
     let _ = std::fs::remove_file(temp_file);

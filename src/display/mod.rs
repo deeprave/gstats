@@ -6,7 +6,9 @@
 pub mod colours;
 pub mod config;
 pub mod themes;
+pub mod progress;
 
 pub use colours::*;
 pub use config::*;
 pub use themes::*;
+pub use progress::*;

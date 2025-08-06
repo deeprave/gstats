@@ -141,24 +141,67 @@ impl GstatsLogger {
 
     fn format_text_message(&self, level: Level, message: &str) -> String {
         let timestamp = Self::format_timestamp();
-        let level_str = level.to_string().to_uppercase();
+        let level_abbr = Self::level_to_abbreviation(level);
         
         if let Some(colour_manager) = &self.colour_manager {
+            // Apply italic/oblique styling to the level and strong color
             let coloured_level = match level {
-                Level::Error => colour_manager.error(&level_str),
-                Level::Warn => colour_manager.warning(&level_str),
-                Level::Info => colour_manager.info(&level_str),
-                Level::Debug => colour_manager.debug(&level_str),
-                Level::Trace => colour_manager.debug(&level_str), // Use debug color for trace
+                Level::Error => format!("\x1b[3m{}\x1b[23m", colour_manager.error(&level_abbr)),
+                Level::Warn => format!("\x1b[3m{}\x1b[23m", colour_manager.warning(&level_abbr)),
+                Level::Info => format!("\x1b[3m{}\x1b[23m", colour_manager.info(&level_abbr)),
+                Level::Debug => format!("\x1b[3m{}\x1b[23m", colour_manager.debug(&level_abbr)),
+                Level::Trace => format!("\x1b[3m{}\x1b[23m", colour_manager.debug(&level_abbr)), // Use debug color for trace
             };
-            format!("{} [{}] {}", timestamp, coloured_level, message)
+            
+            // Apply lighter shade to the message
+            let coloured_message = match level {
+                Level::Error => Self::apply_lighter_shade(&colour_manager.error(message)),
+                Level::Warn => Self::apply_lighter_shade(&colour_manager.warning(message)),
+                Level::Info => Self::apply_lighter_shade(&colour_manager.info(message)),
+                Level::Debug => Self::apply_lighter_shade(&colour_manager.debug(message)),
+                Level::Trace => Self::apply_lighter_shade(&colour_manager.debug(message)),
+            };
+            
+            format!("{} {} {}", timestamp, coloured_level, coloured_message)
         } else {
-            format!("{} [{}] {}", timestamp, level_str, message)
+            format!("{} {} {}", timestamp, level_abbr, message)
+        }
+    }
+    
+    /// Convert log level to 3-character abbreviation
+    fn level_to_abbreviation(level: Level) -> String {
+        match level {
+            Level::Error => "ERR".to_string(),
+            Level::Warn => "WRN".to_string(),
+            Level::Info => "INF".to_string(),
+            Level::Debug => "DBG".to_string(),
+            Level::Trace => "TRC".to_string(),
+        }
+    }
+    
+    /// Apply a lighter shade effect to colored text by reducing intensity
+    fn apply_lighter_shade(colored_text: &colored::ColoredString) -> String {
+        let text_str = colored_text.to_string();
+        
+        // If the text contains ANSI codes, try to make it lighter
+        if text_str.contains("\x1b[") {
+            // Replace standard colors with their bright equivalents for lighter effect
+            text_str
+                .replace("\x1b[31m", "\x1b[91m")  // red -> bright red
+                .replace("\x1b[33m", "\x1b[93m")  // yellow -> bright yellow  
+                .replace("\x1b[34m", "\x1b[94m")  // blue -> bright blue
+                .replace("\x1b[32m", "\x1b[92m")  // green -> bright green
+                .replace("\x1b[36m", "\x1b[96m")  // cyan -> bright cyan
+                .replace("\x1b[35m", "\x1b[95m")  // magenta -> bright magenta
+                .replace("\x1b[37m", "\x1b[97m")  // white -> bright white
+                .replace("\x1b[90m", "\x1b[37m")  // bright black -> white
+        } else {
+            text_str
         }
     }
 
     fn format_json_message(&self, level: Level, message: &str) -> Result<String> {
-        let level_str = level.to_string().to_uppercase();
+        let level_str = Self::level_to_abbreviation(level);
         
         // Add color information to JSON when colors are enabled
         let detail = if let Some(colour_manager) = &self.colour_manager {
@@ -382,9 +425,11 @@ mod tests {
         let logger = GstatsLogger::new(config);
         
         let formatted = logger.format_text_message(Level::Info, "Test message");
-        assert!(formatted.contains("[INFO]"));
+        assert!(formatted.contains("INF"));
         assert!(formatted.contains("Test message"));
         assert!(formatted.contains("2025-")); // Should contain current year
+        // Should not contain square brackets
+        assert!(!formatted.contains("[INF]"));
     }
 
     #[test]
@@ -393,11 +438,13 @@ mod tests {
         let logger = GstatsLogger::new(config);
         
         let formatted = logger.format_text_message(Level::Info, "Test message");
-        assert!(formatted.contains("[INFO]"));
+        assert!(formatted.contains("INF"));
         assert!(formatted.contains("Test message"));
         assert!(formatted.contains("2025-")); // Should contain current year
         // Should not contain ANSI color codes
         assert!(!formatted.contains("\x1b["));
+        // Should not contain square brackets
+        assert!(!formatted.contains("[INF]"));
     }
 
     #[test]
@@ -406,7 +453,7 @@ mod tests {
         let logger = GstatsLogger::new(config);
         
         let formatted = logger.format_json_message(Level::Info, "Test message").unwrap();
-        assert!(formatted.contains(r#""level":"INFO""#));
+        assert!(formatted.contains(r#""level":"INF""#));
         assert!(formatted.contains(r#""message":"Test message""#));
         assert!(formatted.contains(r#""timestamp":"#));
         // Should contain color information when colors are enabled
@@ -420,7 +467,7 @@ mod tests {
         let logger = GstatsLogger::new(config);
         
         let formatted = logger.format_json_message(Level::Info, "Test message").unwrap();
-        assert!(formatted.contains(r#""level":"INFO""#));
+        assert!(formatted.contains(r#""level":"INF""#));
         assert!(formatted.contains(r#""message":"Test message""#));
         assert!(formatted.contains(r#""timestamp":"#));
         // Should not contain color information when colors are disabled
@@ -433,20 +480,34 @@ mod tests {
         let config = LogConfig::default();
         let logger = GstatsLogger::new(config);
         
-        // Test all log levels have appropriate color mapping
+        // Test all log levels have appropriate color mapping and abbreviations
         let error_json = logger.format_json_message(Level::Error, "Error").unwrap();
+        assert!(error_json.contains(r#""level":"ERR""#));
         assert!(error_json.contains(r#""color":"error""#));
         
         let warn_json = logger.format_json_message(Level::Warn, "Warning").unwrap();
+        assert!(warn_json.contains(r#""level":"WRN""#));
         assert!(warn_json.contains(r#""color":"warning""#));
         
         let info_json = logger.format_json_message(Level::Info, "Info").unwrap();
+        assert!(info_json.contains(r#""level":"INF""#));
         assert!(info_json.contains(r#""color":"info""#));
         
         let debug_json = logger.format_json_message(Level::Debug, "Debug").unwrap();
+        assert!(debug_json.contains(r#""level":"DBG""#));
         assert!(debug_json.contains(r#""color":"debug""#));
         
         let trace_json = logger.format_json_message(Level::Trace, "Trace").unwrap();
+        assert!(trace_json.contains(r#""level":"TRC""#));
         assert!(trace_json.contains(r#""color":"debug""#)); // Trace uses debug color
+    }
+    
+    #[test]
+    fn test_level_abbreviations() {
+        assert_eq!(GstatsLogger::level_to_abbreviation(Level::Error), "ERR");
+        assert_eq!(GstatsLogger::level_to_abbreviation(Level::Warn), "WRN");
+        assert_eq!(GstatsLogger::level_to_abbreviation(Level::Info), "INF");
+        assert_eq!(GstatsLogger::level_to_abbreviation(Level::Debug), "DBG");
+        assert_eq!(GstatsLogger::level_to_abbreviation(Level::Trace), "TRC");
     }
 }

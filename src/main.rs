@@ -11,7 +11,7 @@ use anyhow::Result;
 use std::process;
 use std::sync::Arc;
 use std::collections::HashMap;
-use log::{info, error, debug, warn};
+use log::{info, error, debug};
 use crate::stats::RepositoryFileStats;
 use crate::scanner::async_engine::repository::AsyncRepositoryHandle;
 
@@ -75,6 +75,13 @@ fn run() -> Result<()> {
     let log_config = configure_logging(&args, &config_manager)?;
     logging::init_logger(log_config)?;
     
+    // Enhanced logging system is now ready
+    
+    // Handle configuration export command first (before creating runtime)
+    if let Some(export_path) = &args.export_config {
+        return handle_export_config(&config_manager, export_path);
+    }
+    
     // Create runtime for async operations - single runtime for the entire application
     // Using current_thread runtime to avoid nested runtime issues
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -84,7 +91,8 @@ fn run() -> Result<()> {
     // Handle plugin management commands
     if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.check_plugin.is_some() || args.list_by_type.is_some() {
         return runtime.block_on(async {
-            handle_plugin_commands(&args).await
+            let config_manager = load_configuration(&args)?;
+            handle_plugin_commands(&args, &config_manager).await
         });
     }
     
@@ -119,6 +127,24 @@ fn load_configuration(args: &cli::Args) -> Result<config::ConfigManager> {
     Ok(manager)
 }
 
+/// Handle configuration export command
+fn handle_export_config(config_manager: &config::ConfigManager, export_path: &std::path::Path) -> Result<()> {
+    use std::fs;
+    
+    info!("Exporting configuration to: {}", export_path.display());
+    
+    // Generate complete configuration
+    let config_content = config_manager.export_complete_config()?;
+    
+    // Write to file
+    fs::write(export_path, config_content)
+        .map_err(|e| anyhow::anyhow!("Failed to write configuration to {}: {}", export_path.display(), e))?;
+    
+    println!("Configuration exported to: {}", export_path.display());
+    
+    Ok(())
+}
+
 fn configure_logging(args: &cli::Args, config: &config::ConfigManager) -> Result<logging::LogConfig> {
     use log::LevelFilter;
     use std::str::FromStr;
@@ -149,7 +175,7 @@ fn configure_logging(args: &cli::Args, config: &config::ConfigManager) -> Result
         logging::LogFormat::from_str(&args.log_format)
             .map_err(|e| anyhow::anyhow!(e))?
     } else {
-        match config.get_value("base", "log-format") {
+        match config.get_value_root("log-format") {
             Some(format_str) => {
                 debug!("Using log format from config: {}", format_str);
                 logging::LogFormat::from_str(format_str)
@@ -201,11 +227,22 @@ fn configure_logging(args: &cli::Args, config: &config::ConfigManager) -> Result
         }
     };
     
-    // Create color configuration based on args
-    let colour_config = if args.no_color {
-        None
+    // Create color configuration based on args and config file
+    // Precedence: --no-color > --color > config file > default behavior
+    let (colour_config, enable_colours) = if args.no_color {
+        (None, false)
     } else {
-        Some(display::ColourConfig::default())
+        // Start with config file settings
+        let mut colour_config = config.get_colour_config()
+            .unwrap_or_else(|_| display::ColourConfig::default());
+            
+        if args.color {
+            // Force colors even when redirected (override config file)
+            colour_config.set_color_forced(true);
+        }
+        
+        let enabled = colour_config.should_use_colours();
+        (Some(colour_config), enabled)
     };
     
     Ok(logging::LogConfig {
@@ -214,11 +251,198 @@ fn configure_logging(args: &cli::Args, config: &config::ConfigManager) -> Result
         format,
         destination,
         colour_config,
-        enable_colours: !args.no_color,
+        enable_colours,
     })
 }
 
-async fn handle_plugin_commands(args: &cli::Args) -> Result<()> {
+/// Create a ColourManager from CLI arguments and configuration file
+fn create_colour_manager(args: &cli::Args, config: &config::ConfigManager) -> display::ColourManager {
+    let colour_config = config.get_colour_config().ok();
+    display::ColourManager::from_color_args(args.no_color, args.color, colour_config)
+}
+
+/// Format a compact table with headers and rows
+fn format_compact_table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    
+    // Calculate column widths
+    let mut column_widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < column_widths.len() {
+                column_widths[i] = column_widths[i].max(cell.len());
+            }
+        }
+    }
+    
+    let mut result = String::new();
+    
+    // Header row
+    result.push_str("  ");
+    for (i, header) in headers.iter().enumerate() {
+        if i > 0 {
+            result.push(' ');
+        }
+        result.push_str(&format!("{:<width$}", header, width = column_widths[i]));
+    }
+    result.push('\n');
+    
+    // Separator row
+    result.push_str("  ");
+    for (i, width) in column_widths.iter().enumerate() {
+        if i > 0 {
+            result.push(' ');
+        }
+        result.push_str(&"-".repeat(*width));
+    }
+    result.push('\n');
+    
+    // Data rows
+    for row in rows {
+        result.push_str("  ");
+        for (i, cell) in row.iter().enumerate() {
+            if i > 0 {
+                result.push(' ');
+            }
+            if i < column_widths.len() {
+                result.push_str(&format!("{:<width$}", cell, width = column_widths[i]));
+            } else {
+                result.push_str(cell);
+            }
+        }
+        result.push('\n');
+    }
+    
+    result
+}
+
+/// Generate formatted plugin table for display purposes
+pub async fn generate_plugin_table(handler: &mut cli::plugin_handler::PluginHandler, colour_manager: &display::ColourManager) -> Result<String> {
+    handler.build_command_mappings().await?;
+    
+    let mappings = handler.get_function_mappings();
+    if mappings.is_empty() {
+        return Ok("No plugins available.".to_string());
+    }
+
+    use std::fmt::Write;
+    
+    // Group functions by plugin
+    let mut plugins_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+    for mapping in &mappings {
+        plugins_map.entry(mapping.plugin_name.clone())
+            .or_insert_with(Vec::new)
+            .push(mapping);
+    }
+    
+    // Sort plugins by name
+    let mut plugin_names: Vec<_> = plugins_map.keys().collect();
+    plugin_names.sort();
+    
+    // First pass: collect all data and calculate max widths
+    let mut all_plugin_data = Vec::new();
+    let mut max_function_width = "Function".len();
+    let mut max_aliases_width = "Aliases".len();
+    
+    for plugin_name in &plugin_names {
+        let plugin_functions = &plugins_map[*plugin_name];
+        
+        // Sort functions within plugin (default first, then alphabetically)
+        let mut sorted_functions = plugin_functions.clone();
+        sorted_functions.sort_by(|a, b| {
+            match (a.is_default, b.is_default) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.function_name.cmp(&b.function_name),
+            }
+        });
+        
+        let mut plugin_rows = Vec::new();
+        for function in sorted_functions {
+            let aliases_str = if function.aliases.is_empty() {
+                "—".to_string() // Em dash for no aliases
+            } else {
+                function.aliases.join(", ")
+            };
+            
+            // Format function name with default highlighting
+            let function_display = if function.is_default {
+                format!("{} (default)", function.function_name)
+            } else {
+                function.function_name.clone()
+            };
+            
+            // Track maximum widths (without color codes)
+            max_function_width = max_function_width.max(function_display.len());
+            max_aliases_width = max_aliases_width.max(aliases_str.len());
+            
+            plugin_rows.push((function_display, aliases_str, function.description.clone()));
+        }
+        
+        all_plugin_data.push((plugin_name, plugin_rows));
+    }
+    
+    // Generate output string
+    let mut output = String::new();
+    
+    for (i, (plugin_name, plugin_rows)) in all_plugin_data.iter().enumerate() {
+        if i > 0 {
+            writeln!(output)?; // Single line between plugins
+        }
+        
+        writeln!(output, "{}: {}",
+            colour_manager.info("Plugin"),
+            colour_manager.success(plugin_name))?;
+        
+        // Create table data without colors for proper alignment
+        let mut table_lines = Vec::new();
+        
+        // Header
+        table_lines.push(format!("  {:<width_fn$} {:<width_al$} {}",
+            "Function", "Aliases", "Description",
+            width_fn = max_function_width,
+            width_al = max_aliases_width));
+        
+        // Separator line
+        table_lines.push(format!("  {:-<width_fn$} {:-<width_al$} {}",
+            "", "", "---",
+            width_fn = max_function_width,
+            width_al = max_aliases_width));
+        
+        // Data rows
+        for (function_display, aliases_str, description) in plugin_rows {
+            table_lines.push(format!("  {:<width_fn$} {:<width_al$} {}",
+                function_display, aliases_str, description,
+                width_fn = max_function_width,
+                width_al = max_aliases_width));
+        }
+        
+        for line in table_lines {
+            writeln!(output, "{}", line)?;
+        }
+    }
+    
+    writeln!(output)?;
+    writeln!(output, "{}:",
+        colour_manager.info("Usage Examples"))?;
+    writeln!(output, "  {} {}                {}",
+        colour_manager.command("gstats"),
+        colour_manager.success("<plugin>"),
+        "Use plugin's default function")?;
+    writeln!(output, "  {} {}     {}",
+        colour_manager.command("gstats"),
+        colour_manager.success("<plugin>:<function>"),
+        "Use specific plugin function")?;
+    writeln!(output)?;
+    write!(output, "{} = default function for plugin",
+        colour_manager.orange("(default)"))?;
+    
+    Ok(output)
+}
+
+async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigManager) -> Result<()> {
     use cli::plugin_handler::PluginHandler;
     use crate::plugin::traits::PluginType;
     
@@ -226,78 +450,14 @@ async fn handle_plugin_commands(args: &cli::Args) -> Result<()> {
     
     // Handle --plugins command (display plugins with their functions)
     if args.show_plugins {
-        handler.build_command_mappings().await?;
+        // Create color manager for enhanced output
+        let colour_manager = create_colour_manager(args, config);
         
-        println!("Available Plugins:");
-        println!("==================");
+        println!("{}", colour_manager.highlight("Available Plugins:"));
+        println!("{}", colour_manager.highlight("=================="));
         
-        let mappings = handler.get_function_mappings();
-        if mappings.is_empty() {
-            println!("No plugins available.");
-        } else {
-            // Group functions by plugin
-            let mut plugins_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
-            for mapping in &mappings {
-                plugins_map.entry(mapping.plugin_name.clone())
-                    .or_insert_with(Vec::new)
-                    .push(mapping);
-            }
-            
-            // Sort plugins by name
-            let mut plugin_names: Vec<_> = plugins_map.keys().collect();
-            plugin_names.sort();
-            
-            for (i, plugin_name) in plugin_names.iter().enumerate() {
-                if i > 0 {
-                    println!(); // Add spacing between plugins
-                }
-                
-                let plugin_functions = &plugins_map[*plugin_name];
-                
-                // Find default function for plugin header
-                let has_default = plugin_functions.iter().any(|f| f.is_default);
-                
-                println!("Plugin: {}{}", plugin_name, if has_default { " (has default)" } else { "" });
-                
-                // Sort functions within plugin (default first, then alphabetically)
-                let mut sorted_functions = plugin_functions.clone();
-                sorted_functions.sort_by(|a, b| {
-                    match (a.is_default, b.is_default) {
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        _ => a.function_name.cmp(&b.function_name),
-                    }
-                });
-                
-                for function in sorted_functions {
-                    let aliases_str = if function.aliases.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" (aliases: {})", function.aliases.join(", "))
-                    };
-                    
-                    let default_marker = if function.is_default { " *" } else { "" };
-                    
-                    println!("  {}{}{}{}", 
-                        function.function_name,
-                        default_marker,
-                        aliases_str,
-                        if !function.description.is_empty() { 
-                            format!(" - {}", function.description) 
-                        } else { 
-                            String::new() 
-                        }
-                    );
-                }
-            }
-            
-            println!();
-            println!("Usage Examples:");
-            println!("  gstats <plugin>                # Use plugin's default function");
-            println!("  gstats <plugin>:<function>     # Use specific plugin function");
-            println!();
-            println!("* = default function for plugin");
-        }
+        let table_output = generate_plugin_table(&mut handler, &colour_manager).await?;
+        print!("{}", table_output);
         
         return Ok(());
     }
@@ -435,7 +595,7 @@ async fn run_scanner(
     let plugin_names = if args.plugins.is_empty() {
         vec!["commits".to_string()] // Default plugin
     } else {
-        resolve_plugin_commands(&plugin_handler, &args.plugins).await?
+        resolve_plugin_commands(&plugin_handler, &args.plugins, &args).await?
     };
     
     debug!("Active plugins: {:?}", plugin_names);
@@ -492,6 +652,16 @@ async fn run_scanner(
     
     debug!("Starting scan with modes: {:?}", scan_modes);
     
+    // Create progress indicators
+    let colour_manager = create_colour_manager(&args, &config_manager);
+    let progress = display::ProgressIndicator::new(colour_manager.clone());
+    
+    // Show repository information  
+    progress.status(display::StatusType::Info, &format!("Using current directory as git repository: {}", repo.to_path_string()));
+    
+    // Start scanning with progress feedback and spinner
+    let scan_spinner = progress.start_spinner("Scanning repository...");
+    
     // Note: Consumer disabled to prevent runtime drop issues
     // For GS-30 we'll implement proper async consumer integration
     
@@ -500,35 +670,42 @@ async fn run_scanner(
         Ok(()) => {
             debug!("Scan completed successfully");
             
+            // Stop spinner and show success
+            scan_spinner.complete(display::StatusType::Success, "Repository scan complete").await;
+            
             // Get comprehensive statistics
             let stats = engine.get_comprehensive_stats().await?;
             
             // Active plugins (show before analysis)
             let registry_plugins = plugin_registry.inner().read().await.list_plugins();
             if !registry_plugins.is_empty() {
-                info!("Active plugins: {}", registry_plugins.join(", "));
+                progress.status(display::StatusType::Info, &format!("Active plugins: {}", registry_plugins.join(", ")));
             }
             
-            // Repository information will be shown after plugin execution with processed vs total comparison
-            
-            // Basic scan results
-            info!("Scan results: {} tasks completed successfully",
-                stats.completed_tasks
-            );
+            // Basic scan results with progress status
+            let results_message = format!("Scan results: {} tasks completed successfully", stats.completed_tasks);
+            progress.status(display::StatusType::Success, &results_message);
             
             if stats.errors > 0 {
-                warn!("Encountered {} errors during scan", stats.errors);
+                let error_message = format!("Encountered {} errors during scan", stats.errors);
+                progress.status(display::StatusType::Warning, &error_message);
             }
             
             debug!("Detailed statistics: {:?}", stats);
             
             // Execute plugins to generate reports and get processed statistics
-            let _processed_stats = execute_plugins_and_display_reports(&plugin_registry, &args.plugins, repo.clone(), &stats).await?;
+            let plugin_spinner = progress.start_spinner("Processing plugin analysis...");
+            let _processed_stats = execute_plugins_analysis(&plugin_registry, &args.plugins, repo.clone(), &stats, &args, &config_manager).await?;
+            plugin_spinner.complete(display::StatusType::Success, "Plugin analysis complete").await;
+            
+            // Display the plugin reports
+            display_plugin_reports(&plugin_registry, &args.plugins, repo.clone(), &stats, &args, &config_manager).await?;
             
             // Note: Analysis Summary is now displayed before the plugin reports in execute_plugins_and_display_reports
         }
         Err(e) => {
             error!("Scan failed: {}", e);
+            scan_spinner.complete(display::StatusType::Error, &format!("Repository scan failed: {}", e)).await;
             return Err(e.into());
         }
     }
@@ -623,6 +800,7 @@ fn determine_scan_modes(plugin_names: &[String]) -> scanner::ScanMode {
 async fn resolve_plugin_commands(
     plugin_handler: &cli::plugin_handler::PluginHandler,
     commands: &[String],
+    args: &cli::Args,
 ) -> Result<Vec<String>> {
     use cli::command_mapper::CommandResolution;
     
@@ -631,7 +809,7 @@ async fn resolve_plugin_commands(
     for command in commands {
         debug!("Resolving command: '{}'", command);
         
-        match plugin_handler.resolve_command(command) {
+        match plugin_handler.resolve_command_with_colors(command, args.no_color, args.color).await {
             Ok(resolution) => {
                 match resolution {
                     CommandResolution::Function { plugin_name, function_name, .. } => {
@@ -680,6 +858,19 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
     }
     
     debug!("Collecting scan data for {} plugin", plugin_name);
+    
+    // Create progress indicator for data collection
+    let colour_manager = display::ColourManager::new(); // Use defaults for internal operations
+    let progress = display::ProgressIndicator::new(colour_manager);
+    
+    let collection_message = match plugin_name {
+        "commits" => "Scanning commit history...",
+        "metrics" => "Analyzing file metrics...", 
+        _ => "Collecting repository data...",
+    };
+    
+    // Start spinner for data collection
+    let collection_spinner = progress.start_spinner(collection_message);
     
     // Create async repository handle for data collection
     let async_repo = Arc::new(scanner::async_engine::repository::AsyncRepositoryHandle::new(repo));
@@ -737,6 +928,14 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
         }
     }
     
+    // Stop spinner and show completion status
+    if !scan_messages.is_empty() {
+        let completion_message = format!("Collected {} items for analysis", scan_messages.len());
+        collection_spinner.complete(display::StatusType::Success, &completion_message).await;
+    } else {
+        collection_spinner.complete(display::StatusType::Info, "No data collection required for this plugin").await;
+    }
+    
     Ok(scan_messages)
 }
 
@@ -787,13 +986,65 @@ fn create_file_statistics_summary(file_stats: &RepositoryFileStats) -> serde_jso
     })
 }
 
-/// Execute plugins and display their reports
-async fn execute_plugins_and_display_reports(
+/// Execute plugins analysis (without displaying output)
+async fn execute_plugins_analysis(
     plugin_registry: &plugin::SharedPluginRegistry,
     requested_commands: &[String],
     repo: git::RepositoryHandle,
     stats: &scanner::async_engine::EngineStats,
+    args: &cli::Args,
+    config: &config::ConfigManager,
 ) -> Result<Option<ProcessedStatistics>> {
+    
+    let commands = if requested_commands.is_empty() {
+        vec!["authors".to_string()] // Default to authors report
+    } else {
+        requested_commands.to_vec()
+    };
+    
+    // For simplicity, just execute the first command
+    let command = &commands[0];
+    debug!("Executing plugin command: '{}'", command);
+    
+    // For now, we'll estimate processed stats based on the command being run
+    if let Some(repo_stats) = &stats.repository_stats {
+        let processed_stats = match command.as_str() {
+            "authors" | "contributors" | "committers" | "commits" | "commit" | "history" => {
+                ProcessedStatistics {
+                    files_processed: 0, // No file analysis for commit-based commands
+                    commits_processed: repo_stats.total_commits as usize,
+                    authors_processed: repo_stats.total_authors as usize,
+                }
+            }
+            "metrics" => {
+                ProcessedStatistics {
+                    files_processed: repo_stats.total_files as usize,
+                    commits_processed: 0, // No commit analysis for metrics
+                    authors_processed: 0,
+                }
+            }
+            _ => ProcessedStatistics {
+                files_processed: repo_stats.total_files as usize,
+                commits_processed: repo_stats.total_commits as usize,
+                authors_processed: repo_stats.total_authors as usize,
+            }
+        };
+        
+        Ok(Some(processed_stats))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Display plugin reports
+async fn display_plugin_reports(
+    plugin_registry: &plugin::SharedPluginRegistry,
+    requested_commands: &[String],
+    repo: git::RepositoryHandle,
+    stats: &scanner::async_engine::EngineStats,
+    args: &cli::Args,
+    config: &config::ConfigManager,
+) -> Result<()> {
     
     let commands = if requested_commands.is_empty() {
         vec!["authors".to_string()] // Default to authors report
@@ -807,21 +1058,19 @@ async fn execute_plugins_and_display_reports(
     
     // Display Analysis Summary before plugin reports
     if let Some(repo_stats) = &stats.repository_stats {
-        // For now, we'll estimate processed stats based on the command being run
-        // This could be improved to get actual processed statistics from plugins
         let processed_stats = match command.as_str() {
             "authors" | "contributors" | "committers" | "commits" | "commit" | "history" => {
                 ProcessedStatistics {
-                    files_processed: 0, // No file analysis for commit-based commands
+                    files_processed: 0,
                     commits_processed: repo_stats.total_commits as usize,
                     authors_processed: repo_stats.total_authors as usize,
                 }
             }
             "metrics" => {
                 ProcessedStatistics {
-                    files_processed: repo_stats.total_files as usize, // File analysis for metrics
-                    commits_processed: 0, // No commit analysis for metrics
-                    authors_processed: 0, // No author analysis for metrics
+                    files_processed: repo_stats.total_files as usize,
+                    commits_processed: 0,
+                    authors_processed: 0,
                 }
             }
             _ => ProcessedStatistics {
@@ -831,7 +1080,6 @@ async fn execute_plugins_and_display_reports(
             }
         };
         
-        // Only show metrics for work that was actually performed
         let mut summary_parts = Vec::new();
         
         // Only include file metrics if file analysis was performed
@@ -866,38 +1114,9 @@ async fn execute_plugins_and_display_reports(
     // Collect scan data for the plugin
     let scan_data = collect_scan_data_for_plugin(plugin_name, repo.clone()).await?;
     
-    execute_plugin_function_with_data(plugin_registry, plugin_name, function_name, scan_data.clone(), repo.clone()).await?;
+    execute_plugin_function_with_data(plugin_registry, plugin_name, function_name, scan_data.clone(), repo.clone(), &args, config).await?;
     
-    // Create processed statistics from the scan data we collected
-    let processed_stats = if !scan_data.is_empty() {
-        // Count unique authors, commits, and files from the scan data
-        let mut unique_authors = std::collections::HashSet::new();
-        let mut commits_count = 0;
-        let mut files_count = 0;
-        
-        for message in &scan_data {
-            match &message.data {
-                scanner::messages::MessageData::CommitInfo { author, .. } => {
-                    unique_authors.insert(author.clone());
-                    commits_count += 1;
-                }
-                scanner::messages::MessageData::FileInfo { .. } => {
-                    files_count += 1;
-                }
-                _ => {}
-            }
-        }
-        
-        Some(ProcessedStatistics {
-            files_processed: files_count,
-            commits_processed: commits_count,
-            authors_processed: unique_authors.len(),
-        })
-    } else {
-        None
-    };
-    
-    Ok(processed_stats)
+    Ok(())
 }
 
 /// Execute a specific plugin function with provided scan data and display its results
@@ -907,6 +1126,8 @@ async fn execute_plugin_function_with_data(
     function_name: &str,
     scan_data: Vec<scanner::messages::ScanMessage>,
     repo: git::RepositoryHandle,
+    args: &cli::Args,
+    config: &config::ConfigManager,
 ) -> Result<()> {
     use plugin::{PluginRequest, InvocationType};
     use plugin::context::RequestPriority;
@@ -920,9 +1141,16 @@ async fn execute_plugin_function_with_data(
         Some(plugin) => plugin,
         None => {
             error!("Plugin '{}' not found in registry", plugin_name);
+            
+            // Generate dynamic plugin table for error message
+            let mut handler = cli::plugin_handler::PluginHandler::new()?;
+            let colour_manager = display::ColourManager::from_color_args(false, false, None); // No colors for error messages
+            let plugin_table = generate_plugin_table(&mut handler, &colour_manager).await?;
+            
             return Err(anyhow::anyhow!(
-                "Plugin '{}' is not available.\n\nAvailable plugins:\n\ncommits - Analyze commit history and contributors\n  Functions: authors, contributors, committers, commits, history\n\nmetrics - Analyze code quality and complexity\n  Functions: metrics, complexity, quality\n\nexport - Export analysis results\n  Functions: export, json, csv, xml\n\nUsage:\n  gstats <plugin>           # Use plugin's default function\n  gstats <function>         # Use function if unambiguous\n  gstats <plugin>:<function> # Explicit plugin:function syntax\n\nRun 'gstats --help' to see all available commands.",
-                plugin_name
+                "Plugin '{}' is not available.\n\nAvailable plugins:\n\n{}\n\nRun 'gstats --help' to see all available commands.",
+                plugin_name,
+                plugin_table
             ));
         }
     };
@@ -1034,7 +1262,7 @@ async fn execute_plugin_function_with_data(
         };
         
         // Display the report directly
-        display_plugin_data(plugin_name, function_name, &report_data).await?;
+        display_plugin_data(plugin_name, function_name, &report_data, args, config).await?;
         return Ok(()); // Success, return early
     }
     
@@ -1074,7 +1302,7 @@ async fn execute_plugin_function_with_data(
         });
         
         // Display the report directly
-        display_plugin_data(plugin_name, function_name, &report_data).await?;
+        display_plugin_data(plugin_name, function_name, &report_data, args, config).await?;
         return Ok(()); // Success, return early
     }
     
@@ -1098,7 +1326,7 @@ async fn execute_plugin_function_with_data(
     // Execute plugin from registry
     match plugin.execute(request).await {
         Ok(response) => {
-            display_plugin_response(plugin_name, function_name, response).await?;
+            display_plugin_response(plugin_name, function_name, response, args, config).await?;
         }
         Err(e) => {
             error!("Plugin '{}' execution failed: {}", plugin_name, e);
@@ -1118,6 +1346,8 @@ async fn display_plugin_response(
     plugin_name: &str,
     function_name: &str,
     response: plugin::PluginResponse,
+    args: &cli::Args,
+    config: &config::ConfigManager,
 ) -> Result<()> {
     match response {
         plugin::PluginResponse::Execute { data, errors, .. } => {
@@ -1129,12 +1359,12 @@ async fn display_plugin_response(
             }
             
             // Display the main report
-            display_plugin_data(plugin_name, function_name, &data).await?;
+            display_plugin_data(plugin_name, function_name, &data, args, config).await?;
         }
         plugin::PluginResponse::Data(data_str) => {
             // Parse and display JSON data
             match serde_json::from_str::<serde_json::Value>(&data_str) {
-                Ok(data) => display_plugin_data(plugin_name, function_name, &data).await?,
+                Ok(data) => display_plugin_data(plugin_name, function_name, &data, args, config).await?,
                 Err(_) => {
                     // Display as plain text if not valid JSON
                     println!("{}", data_str);
@@ -1156,25 +1386,30 @@ async fn display_plugin_response(
     Ok(())
 }
 
-/// Display plugin data in a user-friendly format
+/// Display plugin data in a user-friendly format with colors
 async fn display_plugin_data(
     plugin_name: &str,
     function_name: &str,
     data: &serde_json::Value,
+    args: &cli::Args,
+    config: &config::ConfigManager,
 ) -> Result<()> {
+    // Create color manager based on CLI args and config
+    let colour_manager = create_colour_manager(args, config);
+    
     // Handle specific plugin output formats
     match (plugin_name, function_name) {
         ("commits", "authors" | "contributors" | "committers") => {
-            display_author_report(data).await?;
+            display_author_report(data, &colour_manager).await?;
         }
         ("commits", "commits" | "commit" | "history") => {
-            display_commit_report(data).await?;
+            display_commit_report(data, &colour_manager).await?;
         }
         ("metrics", _) => {
-            display_metrics_report(data).await?;
+            display_metrics_report(data, &colour_manager).await?;
         }
         ("export", _) => {
-            display_export_report(data).await?;
+            display_export_report(data, &colour_manager).await?;
         }
         _ => {
             // Generic JSON display for unknown plugins
@@ -1185,30 +1420,24 @@ async fn display_plugin_data(
     Ok(())
 }
 
-/// Display author analysis report
-async fn display_author_report(data: &serde_json::Value) -> Result<()> {
-    use prettytable::{Table, Row, Cell, format};
+/// Display author analysis report with colors
+async fn display_author_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
     
-    println!("\n=== Author Analysis Report ===");
+    println!("\n{}", colour_manager.highlight("=== Author Analysis Report ==="));
     
     if let Some(total_authors) = data.get("total_authors").and_then(|v| v.as_u64()) {
-        println!("Total Authors: {}", total_authors);
+        println!("{}: {}", colour_manager.info("Total Authors"), colour_manager.success(&total_authors.to_string()));
     }
     
     if let Some(unique_files) = data.get("unique_files").and_then(|v| v.as_u64()) {
-        println!("Files Modified: {}", unique_files);
+        println!("{}: {}", colour_manager.info("Files Modified"), colour_manager.success(&unique_files.to_string()));
     }
     
     if let Some(top_authors) = data.get("top_authors").and_then(|v| v.as_array()) {
-        println!("\nTop Contributors:");
-        let mut table = Table::new();
-        table.set_format(*format::consts::FORMAT_BOX_CHARS);
-        table.add_row(Row::new(vec![
-            Cell::new("Rank"),
-            Cell::new("Author"),
-            Cell::new("Commits"),
-            Cell::new("Percentage")
-        ]));
+        println!("\n{}", colour_manager.info("Top Contributors:"));
+        
+        let headers = &["Rank", "Author", "Commits", "Percentage"];
+        let mut rows = Vec::new();
         
         let total_commits: u64 = top_authors.iter()
             .filter_map(|author| author.get("commits").and_then(|v| v.as_u64()))
@@ -1225,26 +1454,26 @@ async fn display_author_report(data: &serde_json::Value) -> Result<()> {
                     0.0
                 };
                 
-                table.add_row(Row::new(vec![
-                    Cell::new(&format!("{}", i + 1)),
-                    Cell::new(name),
-                    Cell::new(&format!("{}", commits)),
-                    Cell::new(&format!("{:.1}%", percentage))
-                ]));
+                rows.push(vec![
+                    format!("{}", i + 1),
+                    name.to_string(),
+                    commits.to_string(),
+                    format!("{:.1}%", percentage)
+                ]);
             }
         }
-        table.printstd();
+        
+        print!("{}", format_compact_table(headers, &rows));
     }
     
     // Display author-specific insights instead of file analysis for author reports
-    display_author_insights(data.as_object().unwrap_or(&serde_json::Map::new())).await?;
+    display_author_insights(data.as_object().unwrap_or(&serde_json::Map::new()), colour_manager).await?;
     
     Ok(())
 }
 
 /// Display author-specific insights showing top files by author
-async fn display_author_insights(data: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
-    use prettytable::{Table, Row, Cell, format};
+async fn display_author_insights(data: &serde_json::Map<String, serde_json::Value>, colour_manager: &display::ColourManager) -> Result<()> {
     
     // Get author stats and file statistics
     let author_stats = data.get("author_stats").and_then(|v| v.as_object());
@@ -1266,15 +1495,10 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
         if let Some(top_files_by_commits) = file_stats.get("top_files_by_commits").and_then(|v| v.as_array()) {
             
             for (author_name, _author_commits) in &top_authors {
-                println!("\nTop Contributions by {}:", author_name);
+                println!("\n{} {}:", colour_manager.info("Top Contributions by"), colour_manager.success(author_name));
                 
-                let mut author_table = Table::new();
-                author_table.set_format(*format::consts::FORMAT_BOX_CHARS);
-                author_table.add_row(Row::new(vec![
-                    Cell::new("File"),
-                    Cell::new("Author Commits"),
-                    Cell::new("Author Impact")
-                ]));
+                let headers = &["File", "Author Commits", "Author Impact"];
+                let mut rows = Vec::new();
                 
                 // Find files this author has worked on (simplified - showing top files from overall data)
                 // Note: This is showing overall file stats, not per-author stats yet
@@ -1310,11 +1534,11 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
                             format!("{}", estimated_author_impact)
                         };
                         
-                        author_table.add_row(Row::new(vec![
-                            Cell::new(&display_path),
-                            Cell::new(&format!("{}", estimated_author_commits.max(1))), // At least 1 if they worked on it
-                            Cell::new(&impact_str)
-                        ]));
+                        rows.push(vec![
+                            display_path,
+                            format!("{}", estimated_author_commits.max(1)), // At least 1 if they worked on it
+                            impact_str
+                        ]);
                         
                         file_count += 1;
                         if file_count >= 5 { // Show top 5 files per author
@@ -1324,7 +1548,7 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
                 }
                 
                 if file_count > 0 {
-                    author_table.printstd();
+                    print!("{}", format_compact_table(headers, &rows));
                 } else {
                     println!("  No file data available");
                 }
@@ -1335,78 +1559,85 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
     Ok(())
 }
 
-/// Display commit analysis report  
-async fn display_commit_report(data: &serde_json::Value) -> Result<()> {
-    println!("\n=== Commit Analysis Report ===");
+/// Display commit analysis report with colors
+async fn display_commit_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+    println!("\n{}", colour_manager.highlight("=== Commit Analysis Report ==="));
     
     if let Some(total_commits) = data.get("total_commits").and_then(|v| v.as_u64()) {
-        println!("Total Commits: {}", total_commits);
+        println!("{}: {}", colour_manager.info("Total Commits"), colour_manager.success(&total_commits.to_string()));
     }
     
     if let Some(unique_authors) = data.get("unique_authors").and_then(|v| v.as_u64()) {
-        println!("Unique Authors: {}", unique_authors);
+        println!("{}: {}", colour_manager.info("Unique Authors"), colour_manager.success(&unique_authors.to_string()));
     }
     
     if let Some(unique_files) = data.get("unique_files").and_then(|v| v.as_u64()) {
-        println!("Files Modified: {}", unique_files);
+        println!("{}: {}", colour_manager.info("Files Modified"), colour_manager.success(&unique_files.to_string()));
     }
     
     if let Some(avg_commits) = data.get("avg_commits_per_author").and_then(|v| v.as_f64()) {
-        println!("Average Commits per Author: {:.1}", avg_commits);
+        println!("{}: {}", colour_manager.info("Average Commits per Author"), colour_manager.success(&format!("{:.1}", avg_commits)));
     }
     
     // Display Path Analysis Report if file statistics are available
     if let Some(file_stats) = data.get("file_statistics") {
-        display_path_analysis_report(file_stats).await?;
+        display_path_analysis_report(file_stats, colour_manager).await?;
     }
     
     Ok(())
 }
 
-/// Display metrics report
-async fn display_metrics_report(data: &serde_json::Value) -> Result<()> {
-    println!("\n=== Metrics Report ===");
-    println!("{}", serde_json::to_string_pretty(data)?);
-    Ok(())
-}
-
-/// Display export report
-async fn display_export_report(data: &serde_json::Value) -> Result<()> {
-    println!("\n=== Export Report ===");
-    println!("{}", serde_json::to_string_pretty(data)?);
-    Ok(())
-}
-
-/// Display path analysis report showing file commit statistics
-async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<()> {
-    use prettytable::{Table, Row, Cell, format};
+/// Display metrics report with colors
+async fn display_metrics_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+    println!("\n{}", colour_manager.highlight("=== Metrics Report ==="));
     
-    println!("\n=== Path Analysis Report ===");
+    // Display basic metrics with colors if available
+    if let Some(total_files) = data.get("total_files").and_then(|v| v.as_u64()) {
+        println!("{}: {}", colour_manager.info("Total Files"), colour_manager.success(&total_files.to_string()));
+    }
+    
+    if let Some(total_lines) = data.get("total_lines").and_then(|v| v.as_u64()) {
+        println!("{}: {}", colour_manager.info("Total Lines"), colour_manager.success(&total_lines.to_string()));
+    }
+    
+    if let Some(avg_lines) = data.get("average_lines_per_file").and_then(|v| v.as_f64()) {
+        println!("{}: {}", colour_manager.info("Average Lines per File"), colour_manager.success(&format!("{:.1}", avg_lines)));
+    }
+    
+    if let Some(complexity) = data.get("total_complexity").and_then(|v| v.as_f64()) {
+        println!("{}: {}", colour_manager.info("Total Complexity"), colour_manager.success(&format!("{:.1}", complexity)));
+    }
+    
+    Ok(())
+}
+
+/// Display export report with colors
+async fn display_export_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+    println!("\n{}", colour_manager.highlight("=== Export Report ==="));
+    println!("{}", serde_json::to_string_pretty(data)?);
+    Ok(())
+}
+
+/// Display path analysis report showing file commit statistics with colors
+async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+    
+    println!("\n{}", colour_manager.highlight("=== Path Analysis Report ==="));
     
     if let Some(total_files) = file_stats.get("total_files").and_then(|v| v.as_u64()) {
-        println!("Total Files: {}", total_files);
+        println!("{}: {}", colour_manager.info("Total Files"), colour_manager.success(&total_files.to_string()));
     }
     
     if let Some(total_commits) = file_stats.get("total_commits_across_files").and_then(|v| v.as_u64()) {
-        println!("Total File Modifications: {}", total_commits);
+        println!("{}: {}", colour_manager.info("Total File Modifications"), colour_manager.success(&total_commits.to_string()));
     }
     
     // Display top files by commit count
     if let Some(top_files) = file_stats.get("top_files_by_commits").and_then(|v| v.as_array()) {
         if !top_files.is_empty() {
-            println!("\nMost Frequently Modified Files (by commit count):");
-            let mut table = Table::new();
-            table.set_format(*format::consts::FORMAT_BOX_CHARS);
-            table.add_row(Row::new(vec![
-                Cell::new("Rank"),
-                Cell::new("File Path"),
-                Cell::new("Commits"),
-                Cell::new("Lines +"),
-                Cell::new("Lines -"),
-                Cell::new("Net Change"),
-                Cell::new("Current Lines"),
-                Cell::new("Authors")
-            ]));
+            println!("\n{}", colour_manager.info("Most Frequently Modified Files (by commit count):"));
+            
+            let headers = &["Rank", "File Path", "Commits", "Lines +", "Lines -", "Net Change", "Current Lines", "Authors"];
+            let mut rows = Vec::new();
             
             for (i, file) in top_files.iter().take(10).enumerate() {
                 if let (
@@ -1439,37 +1670,30 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<
                         format!("{}", net_change)
                     };
                     
-                    table.add_row(Row::new(vec![
-                        Cell::new(&format!("{}", i + 1)),
-                        Cell::new(&display_path),
-                        Cell::new(&format!("{}", commits)),
-                        Cell::new(&format!("{}", lines_added)),
-                        Cell::new(&format!("{}", lines_removed)),
-                        Cell::new(&net_change_str),
-                        Cell::new(current_lines_display),
-                        Cell::new(&format!("{}", authors))
-                    ]));
+                    rows.push(vec![
+                        format!("{}", i + 1),
+                        display_path,
+                        format!("{}", commits),
+                        format!("{}", lines_added),
+                        format!("{}", lines_removed),
+                        net_change_str,
+                        current_lines_display.to_string(),
+                        format!("{}", authors)
+                    ]);
                 }
             }
-            table.printstd();
+            
+            print!("{}", format_compact_table(headers, &rows));
         }
     }
     
     // Display top files by net change
     if let Some(top_changes) = file_stats.get("top_files_by_changes").and_then(|v| v.as_array()) {
         if !top_changes.is_empty() {
-            println!("\nLargest Net Changes (by lines changed):");
-            let mut table = Table::new();
-            table.set_format(*format::consts::FORMAT_BOX_CHARS);
-            table.add_row(Row::new(vec![
-                Cell::new("Rank"),
-                Cell::new("File Path"),
-                Cell::new("Net Change"),
-                Cell::new("Lines +"),
-                Cell::new("Lines -"),
-                Cell::new("Current Lines"),
-                Cell::new("Commits")
-            ]));
+            println!("\n{}", colour_manager.info("Largest Net Changes (by lines changed):"));
+            
+            let headers = &["Rank", "File Path", "Net Change", "Lines +", "Lines -", "Current Lines", "Commits"];
+            let mut rows = Vec::new();
             
             for (i, file) in top_changes.iter().take(10).enumerate() {
                 if let (
@@ -1500,18 +1724,19 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value) -> Result<
                         format!("{}", net_change)
                     };
                     
-                    table.add_row(Row::new(vec![
-                        Cell::new(&format!("{}", i + 1)),
-                        Cell::new(&display_path),
-                        Cell::new(&net_change_str),
-                        Cell::new(&format!("{}", lines_added)),
-                        Cell::new(&format!("{}", lines_removed)),
-                        Cell::new(current_lines_display),
-                        Cell::new(&format!("{}", commits))
-                    ]));
+                    rows.push(vec![
+                        format!("{}", i + 1),
+                        display_path,
+                        net_change_str,
+                        format!("{}", lines_added),
+                        format!("{}", lines_removed),
+                        current_lines_display.to_string(),
+                        format!("{}", commits)
+                    ]);
                 }
             }
-            table.printstd();
+            
+            print!("{}", format_compact_table(headers, &rows));
         }
     }
     

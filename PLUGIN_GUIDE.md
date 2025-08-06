@@ -743,6 +743,114 @@ The system automatically discovers plugins in:
 - `./plugins/`
 - Environment variable `GSTATS_PLUGIN_PATH`
 
+## Visual Output and Colors
+
+gstats includes a comprehensive color system for enhanced console output. Plugins should follow these guidelines for consistent visual presentation.
+
+### Color System Integration
+
+The color system is available through the `display` module and provides:
+
+```rust
+use crate::display::{ColourConfig, colours};
+
+// Basic color usage in plugin output
+println!("{}", colours::info("Processing files..."));
+println!("{}", colours::success("Analysis complete!"));
+println!("{}", colours::error("Failed to process file"));
+```
+
+### Available Colors
+
+The system provides a 6-color palette optimized for accessibility:
+
+- **Red** (`colours::error()`) - Error messages and failures
+- **Yellow** (`colours::warning()`) - Warnings and cautions  
+- **Blue** (`colours::info()`) - Informational messages and labels
+- **Green** (`colours::success()`) - Success messages and positive values
+- **Cyan** (`colours::highlight()`) - Headers and important highlights
+- **Bright Black** (`colours::debug()`) - Debug and secondary information
+
+### Plugin Output Best Practices
+
+When generating colored output in plugins:
+
+**1. Use Semantic Colors**
+```rust
+// Good - semantic meaning
+println!("{}: {}", colours::info("Total Commits"), colours::success("247"));
+println!("{}", colours::error("No commits found in date range"));
+
+// Avoid - arbitrary colors
+println!("{}", "247".bright_blue()); // Don't use arbitrary colors
+```
+
+**2. Console Output Only**
+Colors are automatically disabled for non-console output (files, pipes). Your plugin output will work correctly in all contexts:
+
+```rust
+// Colors appear in console, plain text when redirected to files
+println!("{}", colours::info("Status: Complete"));
+```
+
+**3. Structure with Colors**
+```rust
+// Use colors to create visual hierarchy
+println!("{}", colours::highlight("=== Report Section ==="));
+println!("{}: {}", colours::info("Files Analyzed"), colours::success("157"));
+println!("{}: {}", colours::info("Total Size"), colours::success("2.4MB"));
+```
+
+**4. Accessibility Compliance**
+- Colors supplement text, never replace it
+- The system respects NO_COLOR environment variable
+- All output remains readable in monochrome
+
+### Table Formatting
+
+When outputting tabular data, use proper alignment that accounts for ANSI color codes:
+
+```rust
+use crate::display::table_formatter;
+
+// The system handles ANSI-aware alignment automatically
+println!("  {:20} {:>10} {:>15}", 
+    colours::info("File Path"), 
+    colours::info("Lines"), 
+    colours::info("Changes")
+);
+```
+
+### Configuration Integration
+
+Plugins can access the current color configuration:
+
+```rust
+// Check if colors are enabled for conditional output
+if color_config.enabled {
+    // Provide rich colored output
+    generate_colored_report(&data);
+} else {
+    // Provide plain text output  
+    generate_plain_report(&data);
+}
+```
+
+### Progress Indicators
+
+For long-running operations, use the progress system:
+
+```rust
+use crate::display::progress::ProgressIndicator;
+
+let progress = ProgressIndicator::new();
+let spinner = progress.spinner("Processing files...");
+
+// Your processing work here
+
+spinner.complete("Processing complete");
+```
+
 ## Advanced Features
 
 ### Notification Plugins

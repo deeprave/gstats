@@ -102,6 +102,6 @@ fn test_repo_flag_integration() {
     
     // Test 5: Verify error message quality
     let stderr = String::from_utf8(output.stderr).unwrap_or_default();
-    assert!(stderr.contains("Failed to open repository") || stderr.contains("not a git repository"), 
+    assert!(stderr.contains("Not a valid git repository") || stderr.contains("Failed to open repository") || stderr.contains("not a git repository"), 
             "Error message should be descriptive");
 }

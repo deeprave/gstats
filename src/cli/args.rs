@@ -62,6 +62,10 @@ pub struct Args {
     #[arg(long, value_name = "LEVEL")]
     pub log_file_level: Option<String>,
     
+    /// Force colored output (overrides TTY detection and NO_COLOR)
+    #[arg(long = "color", help = "Force colored output even when redirected")]
+    pub color: bool,
+    
     /// Disable colored output (overrides configuration and NO_COLOR)
     #[arg(long = "no-color", help = "Disable colored output")]
     pub no_color: bool,
@@ -177,6 +181,11 @@ pub struct Args {
     /// Example: --plugin-dir ./custom_plugins
     #[arg(long = "plugin-dir", value_name = "DIR", help = "Custom plugin directory path")]
     pub plugin_dir: Option<String>,
+    
+    /// Export complete configuration to TOML file
+    /// Example: --export-config gstats-config.toml
+    #[arg(long = "export-config", value_name = "FILE", help = "Export complete configuration to specified TOML file")]
+    pub export_config: Option<PathBuf>,
 }
 
 impl Args {
@@ -200,7 +209,8 @@ pub fn parse_args() -> Args {
     let args: Vec<String> = std::env::args().collect();
     if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
         let no_color = args.contains(&"--no-color".to_string());
-        display_enhanced_help(no_color);
+        let color = args.contains(&"--color".to_string());
+        display_enhanced_help(no_color, color);
         std::process::exit(0);
     }
     
@@ -251,8 +261,8 @@ pub fn validate_args(args: &Args) -> Result<()> {
 }
 
 /// Display enhanced help with colors and better formatting
-pub fn display_enhanced_help(no_color: bool) {
-    let formatter = HelpFormatter::from_no_color_flag(no_color);
+pub fn display_enhanced_help(no_color: bool, color: bool) {
+    let formatter = HelpFormatter::from_color_flags(no_color, color);
     println!("{}", formatter.format_main_help());
 }
 
@@ -271,6 +281,7 @@ mod tests {
             log_format: "text".to_string(),
             log_file: None,
             log_file_level: None,
+            color: false,
             no_color: false,
             config_file: None,
             config_name: None,
@@ -295,6 +306,7 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            export_config: None,
         }
     }
 
