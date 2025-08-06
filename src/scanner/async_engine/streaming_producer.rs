@@ -38,7 +38,6 @@ impl Default for StreamingConfig {
 
 /// Simplified streaming producer that works via callbacks
 pub struct StreamingQueueProducer {
-    config: StreamingConfig,
     producer_name: String,
 }
 
@@ -70,7 +69,6 @@ impl StreamingQueueProducer {
     /// Create a new streaming producer (simplified)
     pub fn new(producer_name: String) -> ScanResult<Self> {
         Ok(Self {
-            config: StreamingConfig::default(),
             producer_name,
         })
     }
@@ -80,10 +78,9 @@ impl StreamingQueueProducer {
         Self::new(producer_name)
     }
 
-    /// Create with configuration
-    pub fn with_config(config: StreamingConfig, producer_name: String) -> ScanResult<Self> {
+    /// Create with configuration (config parameter ignored)
+    pub fn with_config(_config: StreamingConfig, producer_name: String) -> ScanResult<Self> {
         Ok(Self {
-            config,
             producer_name,
         })
     }

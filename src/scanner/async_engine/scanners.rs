@@ -180,7 +180,6 @@ impl AsyncScanner for AsyncHistoryScanner {
 
 /// Combined scanner that handles multiple modes
 pub struct AsyncCombinedScanner {
-    repository: Arc<AsyncRepositoryHandle>,
     name: String,
     file_scanner: AsyncFileScanner,
     history_scanner: AsyncHistoryScanner,
@@ -193,7 +192,6 @@ impl AsyncCombinedScanner {
         let history_scanner = AsyncHistoryScanner::new(Arc::clone(&repository));
         
         Self {
-            repository,
             name: "AsyncCombinedScanner".to_string(),
             file_scanner,
             history_scanner,
@@ -214,7 +212,6 @@ impl AsyncCombinedScanner {
         );
         
         Self {
-            repository,
             name,
             file_scanner,
             history_scanner,

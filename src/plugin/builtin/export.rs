@@ -24,7 +24,6 @@ struct ExportConfig {
     output_format: ExportFormat,
     output_path: String,
     include_metadata: bool,
-    compress_output: bool,
     max_entries: Option<usize>,
 }
 
@@ -538,7 +537,6 @@ impl Default for ExportConfig {
             output_format: ExportFormat::Json,
             output_path: "gstats_export.json".to_string(),
             include_metadata: true,
-            compress_output: false,
             max_entries: None,
         }
     }

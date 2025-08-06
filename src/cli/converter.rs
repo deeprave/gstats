@@ -21,8 +21,6 @@ pub enum CliError {
     #[error("Invalid path: {path}")]
     InvalidPath { path: String },
     
-    #[error("Invalid glob pattern: {pattern}")]
-    InvalidGlobPattern { pattern: String },
     
     #[error("Empty author name provided")]
     EmptyAuthor,
@@ -89,13 +87,6 @@ pub fn args_to_scanner_config(args: &crate::cli::Args, config_manager: Option<&c
     Ok(config)
 }
 
-/// Convert CLI arguments to ScannerConfig (backward compatibility)
-/// 
-/// This function maintains backward compatibility for existing code.
-/// New code should use args_to_scanner_config_with_config.
-pub fn args_to_scanner_config_legacy(args: &crate::cli::Args) -> Result<ScannerConfig, CliError> {
-    args_to_scanner_config(args, None)
-}
 
 /// Convert CLI arguments to QueryParams
 /// 
@@ -219,60 +210,6 @@ fn validate_limit(limit: Option<usize>) -> Result<Option<usize>, CliError> {
     Ok(limit)
 }
 
-/// Validate and map plugin names to scanning modes
-/// 
-/// This function validates plugin names using the plugin discovery system.
-/// For CLI usage, this provides basic validation - full plugin system validation
-/// happens during execution with proper plugin registry integration.
-pub fn validate_plugins(plugins: &[String]) -> Result<Vec<String>, CliError> {
-    if plugins.is_empty() {
-        // Default to commits plugin when no plugins specified
-        return Ok(vec!["commits".to_string()]);
-    }
-    
-    let validated_plugins: Result<Vec<String>, CliError> = plugins.iter()
-        .map(|plugin| validate_plugin_name(plugin))
-        .collect();
-    
-    validated_plugins
-}
-
-/// Validate and map plugin names using plugin discovery system
-/// 
-/// This async function provides full plugin validation using the discovery system.
-/// Use this for comprehensive validation that checks actual plugin availability.
-pub async fn validate_plugins_with_discovery(plugins: &[String]) -> Result<Vec<String>, CliError> {
-    use super::plugin_handler::PluginHandler;
-    
-    let handler = PluginHandler::new()
-        .map_err(|e| CliError::PluginValidation { 
-            message: format!("Failed to initialize plugin handler: {}", e) 
-        })?;
-    
-    handler.validate_plugin_names(plugins).await
-        .map_err(|e| CliError::PluginValidation { 
-            message: e.to_string() 
-        })
-}
-
-/// Validate a single plugin name
-fn validate_plugin_name(plugin: &str) -> Result<String, CliError> {
-    let trimmed = plugin.trim();
-    if trimmed.is_empty() {
-        return Err(CliError::PluginValidation { 
-            message: "Plugin name cannot be empty".to_string() 
-        });
-    }
-    
-    // Basic validation - plugin names should be alphanumeric with underscores/hyphens
-    if !trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-        return Err(CliError::PluginValidation { 
-            message: format!("Invalid plugin name '{}': must contain only letters, numbers, underscores, and hyphens", trimmed)
-        });
-    }
-    
-    Ok(trimmed.to_string())
-}
 
 #[cfg(test)]
 mod tests {
@@ -422,25 +359,6 @@ mod tests {
         assert!(validate_limit(Some(0)).is_err());
     }
     
-    #[test]
-    fn test_validate_plugins_default() {
-        let result = validate_plugins(&[]).unwrap();
-        assert_eq!(result, vec!["commits"]);
-    }
-    
-    #[test]
-    fn test_validate_plugins_custom() {
-        let plugins = vec!["commits".to_string(), "metrics".to_string()];
-        let result = validate_plugins(&plugins).unwrap();
-        assert_eq!(result, plugins);
-    }
-    
-    #[test]
-    fn test_validate_plugins_invalid_name() {
-        let plugins = vec!["invalid plugin!".to_string()];
-        let result = validate_plugins(&plugins);
-        assert!(result.is_err());
-    }
     
     #[test]
     fn test_args_to_query_params_full() {

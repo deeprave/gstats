@@ -97,75 +97,8 @@ impl MetricsPlugin {
         Ok(())
     }
 
-    /// Calculate metrics for a single file
-    fn calculate_file_metrics(&self, file_path: &str, content: &str) -> FileMetrics {
-        let lines: Vec<&str> = content.lines().collect();
-        let mut loc = 0;
-        let mut comment_lines = 0;
-        let mut blank_lines = 0;
 
-        // Get file extension
-        let extension = std::path::Path::new(file_path)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_string();
 
-        // Analyze each line
-        for line in &lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                blank_lines += 1;
-            } else if self.is_comment_line(trimmed, &extension) {
-                comment_lines += 1;
-            } else {
-                loc += 1;
-            }
-        }
-
-        // Calculate basic cyclomatic complexity (simplified)
-        let complexity = self.calculate_complexity(content, &extension);
-
-        FileMetrics {
-            lines_of_code: loc,
-            comment_lines,
-            blank_lines,
-            cyclomatic_complexity: complexity,
-            file_size_bytes: content.len(),
-            file_extension: extension,
-        }
-    }
-
-    /// Determine if a line is a comment based on file extension
-    fn is_comment_line(&self, line: &str, extension: &str) -> bool {
-        match extension {
-            "rs" | "java" | "c" | "cpp" | "js" | "ts" => {
-                line.starts_with("//") || line.starts_with("/*") || line.starts_with("*")
-            }
-            "py" => line.starts_with("#"),
-            "sh" | "bash" => line.starts_with("#"),
-            "html" | "xml" => line.contains("<!--") || line.contains("-->"),
-            _ => line.starts_with("#") || line.starts_with("//"),
-        }
-    }
-
-    /// Calculate basic cyclomatic complexity
-    fn calculate_complexity(&self, content: &str, extension: &str) -> usize {
-        let complexity_keywords = match extension {
-            "rs" => vec!["if", "while", "for", "match", "loop"],
-            "java" | "c" | "cpp" => vec!["if", "while", "for", "switch", "case"],
-            "py" => vec!["if", "while", "for", "elif", "except"],
-            "js" | "ts" => vec!["if", "while", "for", "switch", "case"],
-            _ => vec!["if", "while", "for"],
-        };
-
-        let mut complexity = 1; // Base complexity
-        for keyword in complexity_keywords {
-            complexity += content.matches(keyword).count();
-        }
-
-        complexity
-    }
 
     /// Generate comprehensive metrics summary
     fn generate_metrics_summary(&self) -> PluginResult<ScanMessage> {
@@ -974,32 +907,6 @@ mod tests {
         assert!(!modes.contains(ScanMode::HISTORY));
     }
 
-    #[tokio::test]
-    async fn test_metrics_plugin_file_metrics_calculation() {
-        let plugin = MetricsPlugin::new();
-        let content = r#"
-// This is a comment
-fn main() {
-    if true {
-        println!("Hello");
-    }
-    
-    // Another comment
-    for i in 0..10 {
-        if i % 2 == 0 {
-            println!("{}", i);
-        }
-    }
-}
-"#;
-        let metrics = plugin.calculate_file_metrics("test.rs", content);
-        
-        assert_eq!(metrics.file_extension, "rs");
-        assert!(metrics.lines_of_code > 0);
-        assert!(metrics.comment_lines > 0);
-        assert!(metrics.blank_lines > 0);
-        assert!(metrics.cyclomatic_complexity > 1); // Should detect if and for loops
-    }
 
     #[tokio::test]
     async fn test_metrics_plugin_process_scan_data() {
@@ -1040,50 +947,4 @@ fn main() {
         }
     }
 
-    #[tokio::test]
-    async fn test_metrics_plugin_comment_detection() {
-        let plugin = MetricsPlugin::new();
-        
-        // Test Rust comments
-        assert!(plugin.is_comment_line("// This is a comment", "rs"));
-        assert!(plugin.is_comment_line("/* Block comment */", "rs"));
-        assert!(!plugin.is_comment_line("fn main() {}", "rs"));
-        
-        // Test Python comments
-        assert!(plugin.is_comment_line("# This is a comment", "py"));
-        assert!(!plugin.is_comment_line("def main():", "py"));
-        
-        // Test JavaScript comments
-        assert!(plugin.is_comment_line("// This is a comment", "js"));
-        assert!(!plugin.is_comment_line("function main() {}", "js"));
-    }
-
-    #[tokio::test]
-    async fn test_metrics_plugin_complexity_calculation() {
-        let plugin = MetricsPlugin::new();
-        
-        let simple_code = "fn main() { println!(\"Hello\"); }";
-        let complex_code = r#"
-fn complex_function() {
-    if condition1 {
-        for i in 0..10 {
-            if i % 2 == 0 {
-                while some_condition {
-                    match value {
-                        Some(x) => {},
-                        None => {},
-                    }
-                }
-            }
-        }
-    }
-}
-"#;
-        
-        let simple_complexity = plugin.calculate_complexity(simple_code, "rs");
-        let complex_complexity = plugin.calculate_complexity(complex_code, "rs");
-        
-        assert!(simple_complexity < complex_complexity);
-        assert!(complex_complexity > 1);
-    }
 }

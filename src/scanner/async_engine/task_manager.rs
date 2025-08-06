@@ -191,8 +191,6 @@ pub struct TaskManager {
     /// Per-mode task counters
     mode_counters: Arc<DashMap<ScanMode, usize>>,
     
-    /// Memory monitoring for pressure detection (replaced queue dependency)
-    memory_monitor: Arc<RwLock<u64>>, // Track basic memory usage
     
     /// Task scheduler handle
     #[allow(dead_code)]
@@ -214,7 +212,6 @@ impl TaskManager {
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
             mode_counters: Arc::new(DashMap::new()),
-            memory_monitor: Arc::new(RwLock::new(0)),
             scheduler_handle: None,
         }
     }
@@ -230,14 +227,13 @@ impl TaskManager {
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
             mode_counters: Arc::new(DashMap::new()),
-            memory_monitor: Arc::new(RwLock::new(0)),
             scheduler_handle: None,
         }
     }
     
-    /// Create a task manager with memory monitoring (replaced queue integration)
+    /// Create a task manager (memory monitoring was removed as unused)
     pub fn with_memory_monitoring(max_concurrent_tasks: usize) -> Self {
-        // Simply return a standard task manager since memory monitoring is built-in
+        // Simply return a standard task manager
         Self::new(max_concurrent_tasks)
     }
     
