@@ -75,17 +75,10 @@ impl SuggestionEngine {
             let edit_distance = levenshtein_distance(input, candidate);
             
             if similarity >= self.config.min_similarity && edit_distance <= self.config.max_edit_distance {
-                let suggestion_type = if self.plugins.contains(candidate) {
-                    SuggestionType::Plugin
-                } else {
-                    SuggestionType::Function
-                };
-                
                 suggestions.push(Suggestion {
                     text: candidate.clone(),
                     similarity,
                     edit_distance,
-                    suggestion_type,
                 });
             }
         }
@@ -113,12 +106,6 @@ impl SuggestionEngine {
     }
 }
 
-/// Type of suggestion
-#[derive(Debug, Clone, PartialEq)]
-pub enum SuggestionType {
-    Plugin,
-    Function,
-}
 
 /// A single suggestion with metadata
 #[derive(Debug, Clone)]
@@ -126,17 +113,9 @@ pub struct Suggestion {
     pub text: String,
     pub similarity: f64,
     pub edit_distance: usize,
-    pub suggestion_type: SuggestionType,
 }
 
 impl Suggestion {
-    /// Get a formatted suggestion message
-    pub fn format_message(&self) -> String {
-        match self.suggestion_type {
-            SuggestionType::Plugin => format!("Did you mean the plugin '{}'?", self.text),
-            SuggestionType::Function => format!("Did you mean the function '{}'?", self.text),
-        }
-    }
 }
 
 /// Calculate Levenshtein distance between two strings
@@ -374,7 +353,6 @@ mod tests {
         let suggestions = engine.suggest("comits");
         assert!(!suggestions.is_empty());
         assert_eq!(suggestions[0].text, "commits");
-        assert_eq!(suggestions[0].suggestion_type, SuggestionType::Plugin);
         
         let suggestions = engine.suggest("metriks");
         assert!(!suggestions.is_empty());
@@ -386,28 +364,6 @@ mod tests {
         assert!(suggestions.iter().any(|s| s.text == "analyze"));
     }
 
-    #[test]
-    fn test_suggestion_formatting() {
-        let plugin_suggestion = Suggestion {
-            text: "commits".to_string(),
-            similarity: 0.9,
-            edit_distance: 1,
-            suggestion_type: SuggestionType::Plugin,
-        };
-        
-        assert!(plugin_suggestion.format_message().contains("plugin"));
-        assert!(plugin_suggestion.format_message().contains("commits"));
-        
-        let function_suggestion = Suggestion {
-            text: "analyze".to_string(),
-            similarity: 0.9,
-            edit_distance: 1,
-            suggestion_type: SuggestionType::Function,
-        };
-        
-        assert!(function_suggestion.format_message().contains("function"));
-        assert!(function_suggestion.format_message().contains("analyze"));
-    }
 
     #[test]
     fn test_edge_cases() {

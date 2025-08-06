@@ -62,25 +62,17 @@ pub struct HelpExample {
 pub struct WorkflowGuide {
     pub name: String,
     pub description: String,
-    pub steps: Vec<WorkflowStep>,
-    pub related_guides: Vec<String>,
 }
 
 /// Individual step in a workflow
 #[derive(Debug, Clone)]
 pub struct WorkflowStep {
-    pub step_number: usize,
-    pub description: String,
-    pub command: String,
-    pub expected_output: Option<String>,
-    pub troubleshooting: Option<String>,
 }
 
 /// Contextual help system
 pub struct ContextualHelp {
     help_sections: HashMap<String, HelpSection>,
     workflow_guides: HashMap<String, WorkflowGuide>,
-    command_patterns: HashMap<String, Vec<String>>,
 }
 
 impl ContextualHelp {
@@ -89,7 +81,6 @@ impl ContextualHelp {
         let mut help = Self {
             help_sections: HashMap::new(),
             workflow_guides: HashMap::new(),
-            command_patterns: HashMap::new(),
         };
         
         help.initialize_builtin_help();
@@ -135,11 +126,6 @@ impl ContextualHelp {
         help_text
     }
     
-    /// Get progressive help for a specific command
-    pub fn get_command_help(&self, command: &str, level: HelpLevel) -> Option<String> {
-        self.help_sections.get(command)
-            .map(|section| self.format_help_section(section, level))
-    }
     
     /// Suggest workflows based on context
     pub fn suggest_workflows(&self, context: &HelpContext) -> Vec<&WorkflowGuide> {
@@ -404,88 +390,16 @@ impl ContextualHelp {
         let quick_start = WorkflowGuide {
             name: "Quick Start".to_string(),
             description: "Get started with basic repository analysis".to_string(),
-            steps: vec![
-                WorkflowStep {
-                    step_number: 1,
-                    description: "Navigate to your git repository".to_string(),
-                    command: "cd /path/to/your/repository".to_string(),
-                    expected_output: None,
-                    troubleshooting: Some("Make sure the directory contains a .git folder".to_string()),
-                },
-                WorkflowStep {
-                    step_number: 2,
-                    description: "Run basic commit analysis".to_string(),
-                    command: "gstats commits".to_string(),
-                    expected_output: Some("Shows contributor statistics and commit summaries".to_string()),
-                    troubleshooting: Some("If no output, check if repository has commits".to_string()),
-                },
-                WorkflowStep {
-                    step_number: 3,
-                    description: "Explore available plugins".to_string(),
-                    command: "gstats --plugins".to_string(),
-                    expected_output: Some("Lists all available analysis plugins".to_string()),
-                    troubleshooting: None,
-                },
-            ],
-            related_guides: vec!["team_analysis".to_string(), "code_quality".to_string()],
         };
         
         let team_analysis = WorkflowGuide {
             name: "Team Analysis".to_string(),
             description: "Analyze team contributions and collaboration patterns".to_string(),
-            steps: vec![
-                WorkflowStep {
-                    step_number: 1,
-                    description: "Get overall team statistics".to_string(),
-                    command: "gstats commits --since \"1 month ago\"".to_string(),
-                    expected_output: Some("Shows recent team activity".to_string()),
-                    troubleshooting: None,
-                },
-                WorkflowStep {
-                    step_number: 2,
-                    description: "Analyze individual contributions".to_string(),
-                    command: "gstats commits --author \"team.member@company.com\"".to_string(),
-                    expected_output: Some("Shows specific author's contributions".to_string()),
-                    troubleshooting: Some("Use actual email addresses from git log".to_string()),
-                },
-                WorkflowStep {
-                    step_number: 3,
-                    description: "Export for reporting".to_string(),
-                    command: "gstats commits --since \"1 month\" | gstats export --format csv".to_string(),
-                    expected_output: Some("CSV data suitable for spreadsheets".to_string()),
-                    troubleshooting: None,
-                },
-            ],
-            related_guides: vec!["reporting".to_string()],
         };
         
         let code_quality = WorkflowGuide {
             name: "Code Quality Assessment".to_string(),
             description: "Assess code quality and identify improvement areas".to_string(),
-            steps: vec![
-                WorkflowStep {
-                    step_number: 1,
-                    description: "Run comprehensive metrics".to_string(),
-                    command: "gstats metrics".to_string(),
-                    expected_output: Some("Shows complexity, duplication, and quality metrics".to_string()),
-                    troubleshooting: None,
-                },
-                WorkflowStep {
-                    step_number: 2,
-                    description: "Focus on production code".to_string(),
-                    command: "gstats metrics --include-path src/ --exclude-path tests/".to_string(),
-                    expected_output: Some("Metrics for production code only".to_string()),
-                    troubleshooting: Some("Adjust paths to match your project structure".to_string()),
-                },
-                WorkflowStep {
-                    step_number: 3,
-                    description: "Export quality report".to_string(),
-                    command: "gstats metrics | gstats export --format json > quality-report.json".to_string(),
-                    expected_output: Some("Structured quality data for tracking".to_string()),
-                    troubleshooting: None,
-                },
-            ],
-            related_guides: vec!["reporting".to_string()],
         };
         
         self.workflow_guides.insert("quick_start".to_string(), quick_start);
@@ -500,17 +414,6 @@ impl Default for ContextualHelp {
     }
 }
 
-/// Helper function to determine user experience level from context
-pub fn infer_user_level(context: &HelpContext) -> HelpLevel {
-    // Basic heuristics for determining user experience
-    if context.recent_commands.len() > 10 {
-        HelpLevel::Advanced
-    } else if context.recent_commands.len() > 3 {
-        HelpLevel::Intermediate
-    } else {
-        HelpLevel::Basic
-    }
-}
 
 /// Helper function to create help context from command and error
 pub fn create_help_context(command: Option<String>, error: Option<String>) -> HelpContext {
@@ -533,18 +436,6 @@ mod tests {
         assert!(help.help_sections.contains_key("export"));
     }
 
-    #[test]
-    fn test_help_levels() {
-        let help = ContextualHelp::new();
-        let basic_help = help.get_command_help("commits", HelpLevel::Basic);
-        let advanced_help = help.get_command_help("commits", HelpLevel::Advanced);
-        
-        assert!(basic_help.is_some());
-        assert!(advanced_help.is_some());
-        
-        // Advanced help should be longer
-        assert!(advanced_help.unwrap().len() > basic_help.unwrap().len());
-    }
 
     #[test]
     fn test_workflow_suggestions() {
@@ -573,18 +464,4 @@ mod tests {
         assert!(help_text.contains("repository"));
     }
 
-    #[test]
-    fn test_user_level_inference() {
-        let context_basic = HelpContext {
-            recent_commands: vec![],
-            ..HelpContext::default()
-        };
-        assert_eq!(infer_user_level(&context_basic), HelpLevel::Basic);
-        
-        let context_advanced = HelpContext {
-            recent_commands: vec!["cmd1".to_string(); 15],
-            ..HelpContext::default()
-        };
-        assert_eq!(infer_user_level(&context_advanced), HelpLevel::Advanced);
-    }
 }
