@@ -118,27 +118,6 @@ fn parse_unit(unit: &str) -> Result<u64, MemoryParseError> {
     }
 }
 
-/// Format bytes as human-readable string
-pub fn format_memory_size(bytes: usize) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    const THRESHOLD: f64 = 1024.0;
-    
-    let mut size = bytes as f64;
-    let mut unit_index = 0;
-    
-    while size >= THRESHOLD && unit_index < UNITS.len() - 1 {
-        size /= THRESHOLD;
-        unit_index += 1;
-    }
-    
-    if unit_index == 0 {
-        format!("{} {}", bytes, UNITS[unit_index])
-    } else if size.fract() == 0.0 {
-        format!("{:.0} {}", size, UNITS[unit_index])
-    } else {
-        format!("{:.1} {}", size, UNITS[unit_index])
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -212,16 +191,6 @@ mod tests {
         
         // Invalid value
         assert!(parse_memory_size("-1GB").is_err());
-    }
-    
-    #[test]
-    fn test_format_memory_size() {
-        assert_eq!(format_memory_size(1024), "1 KB");
-        assert_eq!(format_memory_size(1024 * 1024), "1 MB");
-        assert_eq!(format_memory_size(1024 * 1024 * 1024), "1 GB");
-        assert_eq!(format_memory_size(512 * 1024 * 1024), "512 MB");
-        assert_eq!(format_memory_size(1536 * 1024 * 1024), "1.5 GB");
-        assert_eq!(format_memory_size(1023), "1023 B");
     }
     
     #[test]

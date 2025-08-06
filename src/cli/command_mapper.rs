@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use log::debug;
 use crate::plugin::traits::PluginFunction;
 use super::suggestion::{SuggestionEngine, SuggestionConfig};
-use super::contextual_help::{ContextualHelp, HelpLevel, create_help_context};
+use super::contextual_help::{ContextualHelp, create_help_context};
 use super::help_formatter::HelpFormatter;
 
 /// Resolution result for a command
@@ -279,27 +279,6 @@ impl CommandMapper {
         
         reports.sort_by(|a, b| a.function_name.cmp(&b.function_name));
         reports
-    }
-    
-    /// Get all registered plugins
-    pub fn registered_plugins(&self) -> Vec<&str> {
-        self.plugin_map.keys().map(|s| s.as_str()).collect()
-    }
-    
-    /// Get all available functions
-    pub fn available_functions(&self) -> Vec<&str> {
-        self.function_map.keys().map(|s| s.as_str()).collect()
-    }
-    
-    /// Get contextual help for a command or error
-    pub fn get_contextual_help(&self, command: Option<String>, error: Option<String>) -> String {
-        let context = create_help_context(command, error);
-        self.contextual_help.get_contextual_help(&context)
-    }
-    
-    /// Get command-specific help with progressive detail
-    pub fn get_command_help(&self, command: &str, level: HelpLevel) -> Option<String> {
-        self.contextual_help.get_command_help(command, level)
     }
 }
 

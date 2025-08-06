@@ -428,43 +428,6 @@ fn simple_edit_distance(s1: &str, s2: &str) -> usize {
     matrix[len1][len2]
 }
 
-/// Display plugin information in a formatted way
-pub fn format_plugin_info(plugin: &PluginInfo) -> String {
-    let capabilities_str = if plugin.capabilities.is_empty() { 
-        "no capabilities".to_string() 
-    } else { 
-        plugin.capabilities.join(", ") 
-    };
-    
-    format!(
-        "{} v{} ({})\n  Author: {}\n  Type: {:?}\n  Description: {}\n  Capabilities: [{}]{}",
-        plugin.name,
-        plugin.version,
-        capabilities_str,
-        plugin.author,
-        plugin.plugin_type,
-        plugin.description,
-        plugin.capabilities.join(", "),
-        if let Some(ref path) = plugin.file_path {
-            format!("\n  File: {}", path.display())
-        } else {
-            String::new()
-        }
-    )
-}
-
-/// Display compatibility report in a formatted way
-pub fn format_compatibility_report(report: &CompatibilityReport) -> String {
-    format!(
-        "Plugin: {} v{}\nAPI Version: {} (current: {})\nStatus: {}\n{}",
-        report.plugin_name,
-        report.plugin_version,
-        report.plugin_api_version,
-        report.current_api_version,
-        if report.is_compatible { "✓ Compatible" } else { "✗ Incompatible" },
-        report.compatibility_message
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -640,23 +603,4 @@ mod tests {
         assert!(suggestions.is_empty());
     }
 
-    #[test]
-    fn test_format_plugin_info() {
-        let plugin = PluginInfo {
-            name: "test-plugin".to_string(),
-            version: "1.0.0".to_string(),
-            plugin_type: PluginType::Scanner,
-            description: "A test plugin".to_string(),
-            author: "Test Author".to_string(),
-            file_path: Some(PathBuf::from("/path/to/plugin.yaml")),
-            capabilities: vec!["scan".to_string(), "filter".to_string()],
-        };
-        
-        let formatted = format_plugin_info(&plugin);
-        assert!(formatted.contains("test-plugin v1.0.0"));
-        assert!(formatted.contains("Test Author"));
-        assert!(formatted.contains("A test plugin"));
-        assert!(formatted.contains("scan, filter"));
-        assert!(formatted.contains("/path/to/plugin.yaml"));
-    }
 }
