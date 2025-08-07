@@ -4,10 +4,11 @@
 
 use crate::plugin::{
     registry::SharedPluginRegistry, 
-    discovery::{PluginDiscovery, FileBasedDiscovery},
+    discovery::{PluginDiscovery, FileBasedDiscovery, MultiDirectoryDiscovery},
     traits::{PluginDescriptor, PluginType, PluginFunction},
     error::{PluginError, PluginResult}
 };
+use crate::cli::converter::PluginConfig;
 use crate::cli::command_mapper::{CommandMapper, CommandResolution};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
@@ -17,8 +18,9 @@ use log::debug;
 /// CLI Plugin Handler for managing plugin operations
 pub struct PluginHandler {
     _registry: SharedPluginRegistry,
-    discovery: FileBasedDiscovery,
+    discovery: Box<dyn PluginDiscovery>,
     command_mapper: CommandMapper,
+    plugin_config: Option<PluginConfig>,
 }
 
 impl PluginHandler {
@@ -41,7 +43,7 @@ impl PluginHandler {
                 )))?;
         }
         
-        let discovery = FileBasedDiscovery::with_caching(plugin_path, true)?;
+        let discovery = Box::new(FileBasedDiscovery::with_caching(plugin_path, true)?);
         let registry = SharedPluginRegistry::new();
         let command_mapper = CommandMapper::new();
         
@@ -49,6 +51,44 @@ impl PluginHandler {
             _registry: registry,
             discovery,
             command_mapper,
+            plugin_config: None,
+        })
+    }
+    
+    /// Create a new plugin handler with enhanced configuration
+    pub fn with_plugin_config(config: PluginConfig) -> PluginResult<Self> {
+        // Convert directories to PathBuf
+        let directories: Vec<PathBuf> = config.directories
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        
+        // Create directories if they don't exist
+        for directory in &directories {
+            if !directory.exists() {
+                debug!("Creating plugin directory: {}", directory.display());
+                std::fs::create_dir_all(directory)
+                    .map_err(|e| PluginError::discovery_error(format!(
+                        "Failed to create plugin directory {}: {}", 
+                        directory.display(), e
+                    )))?;
+            }
+        }
+        
+        let discovery = Box::new(MultiDirectoryDiscovery::new(
+            directories,
+            config.plugin_load.clone(),
+            config.plugin_exclude.clone(),
+        ));
+        
+        let registry = SharedPluginRegistry::new();
+        let command_mapper = CommandMapper::new();
+        
+        Ok(Self {
+            _registry: registry,
+            discovery,
+            command_mapper,
+            plugin_config: Some(config),
         })
     }
     
@@ -264,22 +304,47 @@ impl PluginHandler {
         use crate::plugin::builtin::{CommitsPlugin, MetricsPlugin, ExportPlugin};
         use crate::plugin::Plugin;
         
+        let mut registered = Vec::new();
+        
+        // Get exclusion list from configuration
+        let excluded = if let Some(ref config) = self.plugin_config {
+            &config.plugin_exclude
+        } else {
+            // If no config, don't exclude any built-in plugins
+            &Vec::new()
+        };
+        
         // Register CommitsPlugin functions
-        let commits_plugin = CommitsPlugin::new();
-        let commits_functions = commits_plugin.advertised_functions();
-        self.command_mapper.register_plugin("commits", commits_functions);
+        if !excluded.contains(&"commits".to_string()) {
+            let commits_plugin = CommitsPlugin::new();
+            let commits_functions = commits_plugin.advertised_functions();
+            self.command_mapper.register_plugin("commits", commits_functions);
+            registered.push("commits");
+        } else {
+            debug!("Excluded built-in plugin: commits");
+        }
         
         // Register MetricsPlugin functions  
-        let metrics_plugin = MetricsPlugin::new();
-        let metrics_functions = metrics_plugin.advertised_functions();
-        self.command_mapper.register_plugin("metrics", metrics_functions);
+        if !excluded.contains(&"metrics".to_string()) {
+            let metrics_plugin = MetricsPlugin::new();
+            let metrics_functions = metrics_plugin.advertised_functions();
+            self.command_mapper.register_plugin("metrics", metrics_functions);
+            registered.push("metrics");
+        } else {
+            debug!("Excluded built-in plugin: metrics");
+        }
         
         // Register ExportPlugin functions
-        let export_plugin = ExportPlugin::new();
-        let export_functions = export_plugin.advertised_functions();
-        self.command_mapper.register_plugin("export", export_functions);
+        if !excluded.contains(&"export".to_string()) {
+            let export_plugin = ExportPlugin::new();
+            let export_functions = export_plugin.advertised_functions();
+            self.command_mapper.register_plugin("export", export_functions);
+            registered.push("export");
+        } else {
+            debug!("Excluded built-in plugin: export");
+        }
         
-        debug!("Registered built-in plugins: commits, metrics, export");
+        debug!("Registered built-in plugins: {}", registered.join(", "));
         Ok(())
     }
     
@@ -601,6 +666,125 @@ mod tests {
         
         let suggestions = find_similar_plugin_names("xyz", available.iter());
         assert!(suggestions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_build_command_mappings_includes_external_plugins() {
+        let temp_dir = tempdir().unwrap();
+        
+        // Create an external plugin descriptor
+        create_test_plugin_descriptor(temp_dir.path(), "external-test", "1.0.0", PluginType::Scanner).await.unwrap();
+        
+        let mut handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
+        handler.build_command_mappings().await.unwrap();
+        
+        // Get the command mappings
+        let mappings = handler.get_function_mappings();
+        
+        // Check that external plugin is included as a function mapping
+        let external_function_found = mappings.iter().any(|mapping| mapping.plugin_name == "external-test");
+        assert!(external_function_found, "External plugin 'external-test' should be included in command mappings");
+        
+        // Verify the external plugin function details
+        let external_mapping = mappings.iter().find(|m| m.plugin_name == "external-test").unwrap();
+        assert_eq!(external_mapping.function_name, "external-test", "External plugin function name should match plugin name");
+        assert!(external_mapping.is_default, "External plugin function should be marked as default");
+    }
+
+    #[tokio::test]
+    async fn test_plugin_handler_with_enhanced_config() {
+        let temp_dir1 = tempdir().unwrap();
+        let temp_dir2 = tempdir().unwrap();
+        
+        // Create test plugins in different directories
+        create_test_plugin_descriptor(temp_dir1.path(), "plugin1", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir2.path(), "plugin2", "2.0.0", PluginType::Output).await.unwrap();
+        
+        let config = PluginConfig {
+            directories: vec![
+                temp_dir1.path().to_string_lossy().to_string(),
+                temp_dir2.path().to_string_lossy().to_string(),
+            ],
+            plugin_load: Vec::new(),
+            plugin_exclude: Vec::new(),
+        };
+        
+        let handler = PluginHandler::with_plugin_config(config).unwrap();
+        let plugins = handler.discover_plugins().await.unwrap();
+        
+        assert_eq!(plugins.len(), 2);
+        let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+        assert!(plugin_names.contains(&"plugin1"));
+        assert!(plugin_names.contains(&"plugin2"));
+    }
+
+    #[tokio::test]
+    async fn test_plugin_handler_with_explicit_loading() {
+        let temp_dir = tempdir().unwrap();
+        
+        // Create two plugins
+        create_test_plugin_descriptor(temp_dir.path(), "wanted", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "unwanted", "2.0.0", PluginType::Output).await.unwrap();
+        
+        let config = PluginConfig {
+            directories: vec![temp_dir.path().to_string_lossy().to_string()],
+            plugin_load: vec!["wanted".to_string()], // Only load 'wanted'
+            plugin_exclude: Vec::new(),
+        };
+        
+        let handler = PluginHandler::with_plugin_config(config).unwrap();
+        let plugins = handler.discover_plugins().await.unwrap();
+        
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].info.name, "wanted");
+    }
+
+    #[tokio::test]
+    async fn test_plugin_handler_with_exclusion() {
+        let temp_dir = tempdir().unwrap();
+        
+        // Create two plugins
+        create_test_plugin_descriptor(temp_dir.path(), "wanted", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "unwanted", "2.0.0", PluginType::Output).await.unwrap();
+        
+        let config = PluginConfig {
+            directories: vec![temp_dir.path().to_string_lossy().to_string()],
+            plugin_load: Vec::new(),
+            plugin_exclude: vec!["unwanted".to_string()], // Exclude 'unwanted'
+        };
+        
+        let handler = PluginHandler::with_plugin_config(config).unwrap();
+        let plugins = handler.discover_plugins().await.unwrap();
+        
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].info.name, "wanted");
+    }
+
+    #[tokio::test]
+    async fn test_plugin_handler_with_builtin_exclusion() {
+        let temp_dir = tempdir().unwrap();
+        
+        let config = PluginConfig {
+            directories: vec![temp_dir.path().to_string_lossy().to_string()],
+            plugin_load: Vec::new(),
+            plugin_exclude: vec!["commits".to_string(), "export".to_string()], // Exclude built-in plugins
+        };
+        
+        let mut handler = PluginHandler::with_plugin_config(config).unwrap();
+        handler.build_command_mappings().await.unwrap();
+        
+        let mappings = handler.get_function_mappings();
+        
+        // Should only have metrics plugin functions, not commits or export
+        let plugin_names: Vec<String> = mappings.iter()
+            .map(|m| m.plugin_name.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        
+        assert!(plugin_names.contains(&"metrics".to_string()));
+        assert!(!plugin_names.contains(&"commits".to_string()));
+        assert!(!plugin_names.contains(&"export".to_string()));
     }
 
 }

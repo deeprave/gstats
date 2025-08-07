@@ -182,6 +182,21 @@ pub struct Args {
     #[arg(long = "plugin-dir", value_name = "DIR", help = "Custom plugin directory path")]
     pub plugin_dir: Option<String>,
     
+    /// Additional plugin directories to search (adds to discovery process)
+    /// Example: --plugins-dir ./my_plugins
+    #[arg(long = "plugins-dir", value_name = "DIR", action = ArgAction::Append, help = "Additional plugin directories to search")]
+    pub plugins_dir: Vec<String>,
+    
+    /// Explicitly load specific plugins by name or path (bypasses discovery)
+    /// Example: --plugin-load plugin1,plugin2 or --plugin-load ./path/to/plugin.yaml
+    #[arg(long = "plugin-load", value_name = "LIST", help = "Comma-separated list of plugins to load explicitly")]
+    pub plugin_load: Option<String>,
+    
+    /// Exclude specific plugins by name or path
+    /// Example: --plugin-exclude plugin1,plugin2
+    #[arg(long = "plugin-exclude", value_name = "LIST", help = "Comma-separated list of plugins to exclude")]
+    pub plugin_exclude: Option<String>,
+    
     /// Export complete configuration to TOML file
     /// Example: --export-config gstats-config.toml
     #[arg(long = "export-config", value_name = "FILE", help = "Export complete configuration to specified TOML file")]
@@ -197,6 +212,15 @@ impl Args {
         self.exclude_file = EnhancedParser::parse_file_patterns(self.exclude_file);
         self.author = EnhancedParser::parse_authors(self.author);
         self.exclude_author = EnhancedParser::parse_authors(self.exclude_author);
+        
+        // Parse plugin load/exclude lists (comma-separated)
+        if let Some(load_list) = self.plugin_load.take() {
+            self.plugin_load = Some(load_list); // Keep as string for now, will parse in converter
+        }
+        if let Some(exclude_list) = self.plugin_exclude.take() {
+            self.plugin_exclude = Some(exclude_list); // Keep as string for now, will parse in converter
+        }
+        
         self
     }
 }
@@ -306,6 +330,9 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            plugins_dir: Vec::new(),
+            plugin_load: None,
+            plugin_exclude: None,
             export_config: None,
         }
     }
@@ -501,5 +528,28 @@ mod tests {
         
         assert_eq!(args.include_path, vec!["src/", "tests/"]);
         assert_eq!(args.author, vec!["john@example.com", "jane@example.com"]);
+    }
+
+    #[test]
+    fn test_plugin_arguments_default_values() {
+        let args = create_test_args();
+        
+        assert!(args.plugins_dir.is_empty());
+        assert!(args.plugin_load.is_none());
+        assert!(args.plugin_exclude.is_none());
+    }
+
+    #[test]
+    fn test_plugin_arguments_with_values() {
+        let args = Args {
+            plugins_dir: vec!["./my_plugins".to_string(), "./shared_plugins".to_string()],
+            plugin_load: Some("plugin1,plugin2,./custom/plugin.yaml".to_string()),
+            plugin_exclude: Some("unwanted_plugin,./path/to/exclude.yaml".to_string()),
+            ..create_test_args()
+        };
+        
+        assert_eq!(args.plugins_dir, vec!["./my_plugins", "./shared_plugins"]);
+        assert_eq!(args.plugin_load, Some("plugin1,plugin2,./custom/plugin.yaml".to_string()));
+        assert_eq!(args.plugin_exclude, Some("unwanted_plugin,./path/to/exclude.yaml".to_string()));
     }
 }

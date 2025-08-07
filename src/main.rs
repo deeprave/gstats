@@ -446,7 +446,8 @@ async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigManager
     use cli::plugin_handler::PluginHandler;
     use crate::plugin::traits::PluginType;
     
-    let mut handler = PluginHandler::new()?;
+    let plugin_config = cli::converter::merge_plugin_config(&args, Some(config));
+    let mut handler = PluginHandler::with_plugin_config(plugin_config)?;
     
     // Handle --plugins command (display plugins with their functions)
     if args.show_plugins {
@@ -581,14 +582,17 @@ async fn run_scanner(
     debug!("Scanner configuration: {:?}", scanner_config);
     debug!("Query parameters: {:?}", query_params);
     
+    // Create plugin configuration
+    let plugin_config = cli::converter::merge_plugin_config(&args, Some(&config_manager));
+    
     // Create plugin registry and initialize plugins
     let plugin_registry = plugin::SharedPluginRegistry::new();
     
-    // Initialize built-in plugins
-    initialize_builtin_plugins(&plugin_registry, repo.clone()).await?;
+    // Initialize built-in plugins (respecting exclusion configuration)
+    initialize_builtin_plugins(&plugin_registry, repo.clone(), &plugin_config).await?;
     
-    // Create plugin handler for discovery and command mapping
-    let mut plugin_handler = cli::plugin_handler::PluginHandler::new()?;
+    // Create plugin handler with enhanced configuration
+    let mut plugin_handler = cli::plugin_handler::PluginHandler::with_plugin_config(plugin_config)?;
     plugin_handler.build_command_mappings().await?;
     
     // Resolve plugin commands using CommandMapper
@@ -713,15 +717,44 @@ async fn run_scanner(
     Ok(())
 }
 
-async fn initialize_builtin_plugins(registry: &plugin::SharedPluginRegistry, repo: git::RepositoryHandle) -> Result<()> {
+async fn initialize_builtin_plugins(
+    registry: &plugin::SharedPluginRegistry, 
+    repo: git::RepositoryHandle,
+    plugin_config: &cli::converter::PluginConfig,
+) -> Result<()> {
     use plugin::builtin::{CommitsPlugin, MetricsPlugin, ExportPlugin};
     
     let mut reg = registry.inner().write().await;
     
-    // Register built-in plugins
-    reg.register_plugin(Box::new(CommitsPlugin::new())).await?;
-    reg.register_plugin(Box::new(MetricsPlugin::new())).await?;
-    reg.register_plugin(Box::new(ExportPlugin::new())).await?;
+    // Register built-in plugins (respecting exclusion configuration)
+    let mut registered_count = 0;
+    
+    // Check and register CommitsPlugin
+    if !plugin_config.plugin_exclude.contains(&"commits".to_string()) {
+        reg.register_plugin(Box::new(CommitsPlugin::new())).await?;
+        registered_count += 1;
+        debug!("Registered built-in plugin: commits");
+    } else {
+        debug!("Excluded built-in plugin: commits");
+    }
+    
+    // Check and register MetricsPlugin
+    if !plugin_config.plugin_exclude.contains(&"metrics".to_string()) {
+        reg.register_plugin(Box::new(MetricsPlugin::new())).await?;
+        registered_count += 1;
+        debug!("Registered built-in plugin: metrics");
+    } else {
+        debug!("Excluded built-in plugin: metrics");
+    }
+    
+    // Check and register ExportPlugin
+    if !plugin_config.plugin_exclude.contains(&"export".to_string()) {
+        reg.register_plugin(Box::new(ExportPlugin::new())).await?;
+        registered_count += 1;
+        debug!("Registered built-in plugin: export");
+    } else {
+        debug!("Excluded built-in plugin: export");
+    }
     
     // Create plugin context for initialization
     let context = create_plugin_context(repo)?;
@@ -740,7 +773,7 @@ async fn initialize_builtin_plugins(registry: &plugin::SharedPluginRegistry, rep
         }
     }
     
-    debug!("Initialized {} built-in plugins", 3);
+    debug!("Initialized {} built-in plugins", registered_count);
     
     Ok(())
 }
@@ -1143,7 +1176,8 @@ async fn execute_plugin_function_with_data(
             error!("Plugin '{}' not found in registry", plugin_name);
             
             // Generate dynamic plugin table for error message
-            let mut handler = cli::plugin_handler::PluginHandler::new()?;
+            let plugin_config = cli::converter::merge_plugin_config(args, Some(config));
+            let mut handler = cli::plugin_handler::PluginHandler::with_plugin_config(plugin_config)?;
             let colour_manager = display::ColourManager::from_color_args(false, false, None); // No colors for error messages
             let plugin_table = generate_plugin_table(&mut handler, &colour_manager).await?;
             

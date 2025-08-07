@@ -2,7 +2,7 @@
 //! 
 //! Tests plugin discovery, descriptor parsing, and dynamic loading capabilities.
 
-use crate::plugin::discovery::{PluginDiscovery, FileBasedDiscovery, PluginDescriptorParser};
+use crate::plugin::discovery::{PluginDiscovery, FileBasedDiscovery, MultiDirectoryDiscovery, PluginDescriptorParser};
 use crate::plugin::traits::{PluginDescriptor, PluginInfo, PluginType};
 use crate::plugin::error::PluginError;
 use std::collections::HashMap;
@@ -331,5 +331,202 @@ fn create_test_descriptor_with_api(name: &str, version: &str, api_version: u32) 
         entry_point: "main".to_string(),
         config: HashMap::new(),
     }
+}
+
+#[tokio::test]
+async fn test_multi_directory_discovery_creation() {
+    use std::path::PathBuf;
+    
+    let directories = vec![
+        PathBuf::from("plugins1"),
+        PathBuf::from("plugins2"),
+    ];
+    let explicit_plugins = vec!["plugin1".to_string()];
+    let excluded_plugins = vec!["unwanted".to_string()];
+    
+    let discovery = MultiDirectoryDiscovery::new(
+        directories,
+        explicit_plugins,
+        excluded_plugins,
+    );
+    
+    assert_eq!(discovery.plugin_directory().to_string_lossy(), "plugins1");
+    assert!(discovery.supports_dynamic_loading());
+}
+
+#[tokio::test]
+async fn test_multi_directory_discovery_multiple_dirs() {
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+    
+    let temp_dir1 = tempdir().unwrap();
+    let temp_dir2 = tempdir().unwrap();
+    
+    // Create plugin1 in first directory
+    let plugin1_content = create_test_plugin_yaml("test-plugin1", "1.0.0", PluginType::Scanner);
+    let plugin1_path = temp_dir1.path().join("test-plugin1.yaml");
+    fs::write(&plugin1_path, plugin1_content).await.unwrap();
+    
+    // Create plugin2 in second directory
+    let plugin2_content = create_test_plugin_yaml("test-plugin2", "2.0.0", PluginType::Output);
+    let plugin2_path = temp_dir2.path().join("test-plugin2.yaml");
+    fs::write(&plugin2_path, plugin2_content).await.unwrap();
+    
+    let directories = vec![
+        temp_dir1.path().to_path_buf(),
+        temp_dir2.path().to_path_buf(),
+    ];
+    
+    let discovery = MultiDirectoryDiscovery::new(
+        directories,
+        Vec::new(),
+        Vec::new(),
+    );
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    assert_eq!(plugins.len(), 2);
+    
+    let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"test-plugin1"));
+    assert!(plugin_names.contains(&"test-plugin2"));
+}
+
+#[tokio::test]
+async fn test_multi_directory_discovery_explicit_loading() {
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create two plugins in directory
+    let plugin1_content = create_test_plugin_yaml("plugin1", "1.0.0", PluginType::Scanner);
+    let plugin1_path = temp_dir.path().join("plugin1.yaml");
+    fs::write(&plugin1_path, plugin1_content).await.unwrap();
+    
+    let plugin2_content = create_test_plugin_yaml("plugin2", "2.0.0", PluginType::Output);
+    let plugin2_path = temp_dir.path().join("plugin2.yaml");
+    fs::write(&plugin2_path, plugin2_content).await.unwrap();
+    
+    let directories = vec![temp_dir.path().to_path_buf()];
+    let explicit_plugins = vec!["plugin1".to_string()]; // Only load plugin1
+    
+    let discovery = MultiDirectoryDiscovery::new(
+        directories,
+        explicit_plugins,
+        Vec::new(),
+    );
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].info.name, "plugin1");
+}
+
+#[tokio::test]
+async fn test_multi_directory_discovery_exclusion() {
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create two plugins
+    let plugin1_content = create_test_plugin_yaml("wanted-plugin", "1.0.0", PluginType::Scanner);
+    let plugin1_path = temp_dir.path().join("wanted-plugin.yaml");
+    fs::write(&plugin1_path, plugin1_content).await.unwrap();
+    
+    let plugin2_content = create_test_plugin_yaml("unwanted-plugin", "2.0.0", PluginType::Output);
+    let plugin2_path = temp_dir.path().join("unwanted-plugin.yaml");
+    fs::write(&plugin2_path, plugin2_content).await.unwrap();
+    
+    let directories = vec![temp_dir.path().to_path_buf()];
+    let excluded_plugins = vec!["unwanted-plugin".to_string()];
+    
+    let discovery = MultiDirectoryDiscovery::new(
+        directories,
+        Vec::new(),
+        excluded_plugins,
+    );
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].info.name, "wanted-plugin");
+}
+
+#[tokio::test]
+async fn test_multi_directory_discovery_deduplication() {
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+    
+    let temp_dir1 = tempdir().unwrap();
+    let temp_dir2 = tempdir().unwrap();
+    
+    // Create same plugin in both directories (first found wins)
+    let plugin_content = create_test_plugin_yaml("duplicate-plugin", "1.0.0", PluginType::Scanner);
+    
+    let plugin1_path = temp_dir1.path().join("duplicate-plugin.yaml");
+    fs::write(&plugin1_path, plugin_content.clone()).await.unwrap();
+    
+    let plugin2_path = temp_dir2.path().join("duplicate-plugin.yaml");
+    fs::write(&plugin2_path, plugin_content).await.unwrap();
+    
+    let directories = vec![
+        temp_dir1.path().to_path_buf(),
+        temp_dir2.path().to_path_buf(),
+    ];
+    
+    let discovery = MultiDirectoryDiscovery::new(
+        directories,
+        Vec::new(),
+        Vec::new(),
+    );
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    assert_eq!(plugins.len(), 1); // Should be deduplicated
+    assert_eq!(plugins[0].info.name, "duplicate-plugin");
+}
+
+#[tokio::test]
+async fn test_multi_directory_discovery_explicit_by_path() {
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create plugin
+    let plugin_content = create_test_plugin_yaml("path-plugin", "1.0.0", PluginType::Scanner);
+    let plugin_path = temp_dir.path().join("path-plugin.yaml");
+    fs::write(&plugin_path, plugin_content).await.unwrap();
+    
+    let directories = Vec::new(); // No directories for discovery
+    let explicit_plugins = vec![plugin_path.to_string_lossy().to_string()]; // Load by full path
+    
+    let discovery = MultiDirectoryDiscovery::new(
+        directories,
+        explicit_plugins,
+        Vec::new(),
+    );
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].info.name, "path-plugin");
+}
+
+fn create_test_plugin_yaml(name: &str, version: &str, plugin_type: PluginType) -> String {
+    format!(
+        r#"info:
+  name: "{name}"
+  version: "{version}"
+  api_version: 20250727
+  description: "Test plugin: {name}"
+  author: "Test Author"
+  url: null
+  dependencies: []
+  capabilities: []
+  plugin_type: {plugin_type:?}
+  license: null
+file_path: null
+entry_point: main
+config: {{}}
+"#
+    )
 }
 

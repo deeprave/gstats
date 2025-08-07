@@ -42,7 +42,7 @@ impl ConfigManager {
             }
         }
         
-        info!("No configuration file found, using empty configuration");
+        debug!("No configuration file found, using empty configuration");
         Ok(Self {
             config: Configuration::new(),
             _config_file_path: None,
@@ -273,6 +273,60 @@ impl ConfigManager {
         Ok(palette)
     }
     
+    /// Get plugin directory from configuration
+    pub fn get_plugins_directory(&self) -> Option<&str> {
+        self.get_value("plugins", "directory").map(|s| s.as_str())
+    }
+    
+    /// Get list of plugins to explicitly load (bypasses discovery)
+    pub fn get_plugins_load(&self) -> Vec<String> {
+        self.get_value("plugins", "plugin-load")
+            .map(|s| self.parse_toml_array(s))
+            .unwrap_or_else(Vec::new)
+    }
+    
+    /// Get list of plugins to exclude by name or path
+    pub fn get_plugins_exclude(&self) -> Vec<String> {
+        self.get_value("plugins", "plugin-exclude")
+            .map(|s| self.parse_toml_array(s))
+            .unwrap_or_else(Vec::new)
+    }
+    
+    /// Parse TOML array string back to Vec<String>
+    fn parse_toml_array(&self, toml_string: &str) -> Vec<String> {
+        // Handle TOML array format stored as string: ["item1", "item2", "item3"]
+        // or direct array format: item1, item2, item3
+        
+        // Try parsing as TOML value first (for ["item1", "item2"] format)
+        if let Ok(Value::Array(arr)) = toml_string.parse::<Value>() {
+            return arr.into_iter()
+                .filter_map(|v| match v {
+                    Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect();
+        }
+        
+        // Try parsing the string as JSON array (fallback since TOML arrays look like JSON arrays)
+        if toml_string.starts_with('[') && toml_string.ends_with(']') {
+            if let Ok(arr) = serde_json::from_str::<Vec<String>>(toml_string) {
+                return arr;
+            }
+        }
+        
+        // Fallback to comma-separated parsing
+        if !toml_string.is_empty() {
+            return toml_string
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        
+        // Final fallback to empty vector
+        Vec::new()
+    }
+
     /// Export complete configuration with all available options and their current values
     /// This includes default values for options not explicitly set
     pub fn export_complete_config(&self) -> Result<String> {
@@ -375,6 +429,29 @@ impl ConfigManager {
             output.push_str(&format!("performance-mode = {}\n", performance_mode));
         } else {
             output.push_str("# performance-mode = false\n");
+        }
+        output.push('\n');
+        
+        // Plugins configuration section
+        output.push_str("[plugins]\n");
+        if let Some(directory) = self.get_plugins_directory() {
+            output.push_str(&format!("directory = \"{}\"\n", directory));
+        } else {
+            output.push_str("# directory = \"plugins\"\n");
+        }
+        
+        let plugin_load = self.get_plugins_load();
+        if !plugin_load.is_empty() {
+            output.push_str(&format!("plugin-load = {:?}\n", plugin_load));
+        } else {
+            output.push_str("# plugin-load = [\"plugin1\", \"plugin2\"]\n");
+        }
+        
+        let plugin_exclude = self.get_plugins_exclude();
+        if !plugin_exclude.is_empty() {
+            output.push_str(&format!("plugin-exclude = {:?}\n", plugin_exclude));
+        } else {
+            output.push_str("# plugin-exclude = [\"unwanted-plugin\"]\n");
         }
         output.push('\n');
         
@@ -527,6 +604,43 @@ format = "json"
         assert_eq!(config.get("module.commits").unwrap().get("since").unwrap(), "30d");
         assert_eq!(config.get("module.commits").unwrap().get("per-day").unwrap(), "true");
         assert_eq!(config.get("module.commits").unwrap().get("format").unwrap(), "json");
+    }
+
+    #[test]
+    fn test_plugins_config_parsing() {
+        let toml_content = r#"
+[plugins]
+directory = "/custom/plugins"
+plugin-load = ["plugin1", "plugin2"]
+plugin-exclude = ["plugin3", "plugin4"]
+"#;
+        
+        let config = parse_toml_config(toml_content).unwrap();
+        let manager = ConfigManager::from_config(config);
+        
+        // Test plugin directory
+        assert_eq!(manager.get_plugins_directory(), Some("/custom/plugins"));
+        
+        // Test plugin-load list
+        let plugin_load = manager.get_plugins_load();
+        assert_eq!(plugin_load.len(), 2);
+        assert!(plugin_load.contains(&"plugin1".to_string()));
+        assert!(plugin_load.contains(&"plugin2".to_string()));
+        
+        // Test plugin-exclude list
+        let plugin_exclude = manager.get_plugins_exclude();
+        assert_eq!(plugin_exclude.len(), 2);
+        assert!(plugin_exclude.contains(&"plugin3".to_string()));
+        assert!(plugin_exclude.contains(&"plugin4".to_string()));
+    }
+
+    #[test]
+    fn test_plugins_config_defaults() {
+        let manager = ConfigManager::from_config(Configuration::new());
+        
+        assert_eq!(manager.get_plugins_directory(), None);
+        assert!(manager.get_plugins_load().is_empty());
+        assert!(manager.get_plugins_exclude().is_empty());
     }
 
     #[test]
@@ -873,14 +987,18 @@ color = false
         
         let exported = manager.export_complete_config().unwrap();
         
-        // Check that it contains expected sections (no [base] section, just [scanner])
+        // Check that it contains expected sections (no [base] section, just [scanner] and [plugins])
         assert!(exported.contains("[scanner]"));
+        assert!(exported.contains("[plugins]"));
         
         // Check that it contains default values as comments
         assert!(exported.contains("# quiet = false"));
         assert!(exported.contains("# max-memory = \"64MB\""));
         assert!(exported.contains("# color = true"));
         assert!(exported.contains("# theme = \"auto\""));
+        assert!(exported.contains("# directory = \"plugins\""));
+        assert!(exported.contains("# plugin-load = [\"plugin1\", \"plugin2\"]"));
+        assert!(exported.contains("# plugin-exclude = [\"unwanted-plugin\"]"));
     }
     
     #[test]
@@ -931,5 +1049,32 @@ colors = { error = "bright_red", warning = "bright_yellow" }
         assert!(exported.contains("warning = \"bright_yellow\""));
         // Default colors should be included in the inline format
         assert!(exported.contains("info = \"blue\""));
+    }
+
+    #[test]
+    fn test_export_complete_config_with_plugins() {
+        let toml_content = r#"
+[plugins]
+directory = "/custom/plugins"
+plugin-load = ["custom-plugin1", "custom-plugin2"]
+plugin-exclude = ["bad-plugin"]
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let exported = manager.export_complete_config().unwrap();
+        
+        // Check that plugins section is present with actual values
+        assert!(exported.contains("[plugins]"));
+        assert!(exported.contains("directory = \"/custom/plugins\""));
+        assert!(exported.contains("plugin-load = [\"custom-plugin1\", \"custom-plugin2\"]"));
+        assert!(exported.contains("plugin-exclude = [\"bad-plugin\"]"));
+        
+        // Verify no commented defaults are present when values are set
+        assert!(!exported.contains("# directory = \"plugins\""));
+        assert!(!exported.contains("# plugin-load = [\"plugin1\", \"plugin2\"]"));
+        assert!(!exported.contains("# plugin-exclude = [\"unwanted-plugin\"]"));
     }
 }

@@ -210,6 +210,77 @@ fn validate_limit(limit: Option<usize>) -> Result<Option<usize>, CliError> {
     Ok(limit)
 }
 
+/// Plugin configuration merged from CLI arguments and config file
+#[derive(Debug, Clone)]
+pub struct PluginConfig {
+    /// Plugin directories to search (CLI --plugins-dir + config directory)
+    pub directories: Vec<String>,
+    /// Plugins to explicitly load (CLI --plugin-load or config plugin-load)
+    pub plugin_load: Vec<String>,
+    /// Plugins to exclude (CLI --plugin-exclude or config plugin-exclude)
+    pub plugin_exclude: Vec<String>,
+}
+
+/// Merge plugin configuration from CLI arguments and config file
+/// Precedence: CLI > Config > Defaults
+pub fn merge_plugin_config(args: &crate::cli::Args, config_manager: Option<&crate::config::ConfigManager>) -> PluginConfig {
+    let mut config = PluginConfig {
+        directories: Vec::new(),
+        plugin_load: Vec::new(),
+        plugin_exclude: Vec::new(),
+    };
+
+    // Start with configuration file values
+    if let Some(manager) = config_manager {
+        // Add config directory to search paths
+        if let Some(config_dir) = manager.get_plugins_directory() {
+            config.directories.push(config_dir.to_string());
+        }
+        
+        // Add config plugin-load list
+        config.plugin_load.extend(manager.get_plugins_load());
+        
+        // Add config plugin-exclude list  
+        config.plugin_exclude.extend(manager.get_plugins_exclude());
+    }
+
+    // Override with CLI arguments (higher precedence)
+    
+    // Add CLI plugin directories
+    config.directories.extend(args.plugins_dir.clone());
+
+    // CLI plugin-load overrides config completely (as per requirements)
+    if let Some(cli_load) = &args.plugin_load {
+        config.plugin_load.clear(); // Override, don't merge
+        config.plugin_load.extend(parse_comma_separated(cli_load));
+    }
+
+    // CLI plugin-exclude overrides config completely
+    if let Some(cli_exclude) = &args.plugin_exclude {
+        config.plugin_exclude.clear(); // Override, don't merge
+        config.plugin_exclude.extend(parse_comma_separated(cli_exclude));
+    }
+
+    // Add default plugin directory if no directories specified
+    if config.directories.is_empty() {
+        if let Some(default_dir) = &args.plugin_dir {
+            config.directories.push(default_dir.clone());
+        } else {
+            config.directories.push("plugins".to_string()); // Default directory
+        }
+    }
+
+    config
+}
+
+/// Parse comma-separated string into Vec<String> (helper for CLI arguments)
+fn parse_comma_separated(input: &str) -> Vec<String> {
+    input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -249,6 +320,9 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            plugins_dir: Vec::new(),
+            plugin_load: None,
+            plugin_exclude: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,
@@ -393,6 +467,9 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            plugins_dir: Vec::new(),
+            plugin_load: None,
+            plugin_exclude: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,
@@ -518,6 +595,9 @@ mod tests {
                 check_plugin: None,
                 list_by_type: None,
                 plugin_dir: None,
+                plugins_dir: Vec::new(),
+                plugin_load: None,
+                plugin_exclude: None,
                 show_plugins: false,
                 plugins_help: false,
                 export_config: None,
@@ -526,6 +606,92 @@ mod tests {
             let result = args_to_scanner_config(&args, None).unwrap();
             assert_eq!(result.max_memory_bytes, expected_bytes, "Failed for input: {}", memory_str);
         }
+    }
+
+    #[test]
+    fn test_merge_plugin_config_defaults() {
+        let args = create_test_args();
+        let config = merge_plugin_config(&args, None);
+        
+        assert_eq!(config.directories, vec!["plugins"]);
+        assert!(config.plugin_load.is_empty());
+        assert!(config.plugin_exclude.is_empty());
+    }
+
+    #[test]
+    fn test_merge_plugin_config_cli_only() {
+        let args = Args {
+            plugins_dir: vec!["./my_plugins".to_string(), "./shared_plugins".to_string()],
+            plugin_load: Some("plugin1,plugin2".to_string()),
+            plugin_exclude: Some("unwanted1,unwanted2".to_string()),
+            ..create_test_args()
+        };
+        
+        let config = merge_plugin_config(&args, None);
+        
+        assert_eq!(config.directories, vec!["./my_plugins", "./shared_plugins"]);
+        assert_eq!(config.plugin_load, vec!["plugin1", "plugin2"]);
+        assert_eq!(config.plugin_exclude, vec!["unwanted1", "unwanted2"]);
+    }
+
+    #[test]
+    fn test_merge_plugin_config_config_only() {
+        use crate::config::{ConfigManager, Configuration};
+        use std::collections::HashMap;
+        
+        let mut config_data = Configuration::new();
+        let mut plugins_section = HashMap::new();
+        plugins_section.insert("directory".to_string(), "/config/plugins".to_string());
+        plugins_section.insert("plugin-load".to_string(), "[\"config_plugin1\", \"config_plugin2\"]".to_string());
+        plugins_section.insert("plugin-exclude".to_string(), "[\"config_exclude1\"]".to_string());
+        config_data.insert("plugins".to_string(), plugins_section);
+        
+        let config_manager = ConfigManager::from_config(config_data);
+        let args = create_test_args();
+        
+        let config = merge_plugin_config(&args, Some(&config_manager));
+        
+        assert_eq!(config.directories, vec!["/config/plugins"]);
+        assert_eq!(config.plugin_load, vec!["config_plugin1", "config_plugin2"]);
+        assert_eq!(config.plugin_exclude, vec!["config_exclude1"]);
+    }
+
+    #[test]
+    fn test_merge_plugin_config_cli_overrides_config() {
+        use crate::config::{ConfigManager, Configuration};
+        use std::collections::HashMap;
+        
+        let mut config_data = Configuration::new();
+        let mut plugins_section = HashMap::new();
+        plugins_section.insert("directory".to_string(), "/config/plugins".to_string());
+        plugins_section.insert("plugin-load".to_string(), "[\"config_plugin1\", \"config_plugin2\"]".to_string());
+        plugins_section.insert("plugin-exclude".to_string(), "[\"config_exclude1\"]".to_string());
+        config_data.insert("plugins".to_string(), plugins_section);
+        
+        let config_manager = ConfigManager::from_config(config_data);
+        
+        let args = Args {
+            plugins_dir: vec!["./cli_plugins".to_string()],
+            plugin_load: Some("cli_plugin1,cli_plugin2".to_string()),
+            plugin_exclude: Some("cli_exclude1".to_string()),
+            ..create_test_args()
+        };
+        
+        let config = merge_plugin_config(&args, Some(&config_manager));
+        
+        // CLI should override config
+        assert_eq!(config.directories, vec!["/config/plugins", "./cli_plugins"]); // Combined
+        assert_eq!(config.plugin_load, vec!["cli_plugin1", "cli_plugin2"]); // CLI overrides
+        assert_eq!(config.plugin_exclude, vec!["cli_exclude1"]); // CLI overrides
+    }
+
+    #[test]
+    fn test_parse_comma_separated() {
+        assert_eq!(parse_comma_separated(""), Vec::<String>::new());
+        assert_eq!(parse_comma_separated("plugin1"), vec!["plugin1"]);
+        assert_eq!(parse_comma_separated("plugin1,plugin2"), vec!["plugin1", "plugin2"]);
+        assert_eq!(parse_comma_separated("plugin1, plugin2, plugin3"), vec!["plugin1", "plugin2", "plugin3"]);
+        assert_eq!(parse_comma_separated("plugin1,,plugin3"), vec!["plugin1", "plugin3"]); // Skip empty
     }
 
     #[test]
@@ -561,6 +727,9 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            plugins_dir: Vec::new(),
+            plugin_load: None,
+            plugin_exclude: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,
@@ -608,6 +777,9 @@ mod tests {
             check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
+            plugins_dir: Vec::new(),
+            plugin_load: None,
+            plugin_exclude: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,

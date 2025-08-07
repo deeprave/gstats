@@ -16,6 +16,11 @@
 # max-threads = 4
 # performance-mode = false
 
+[plugins]
+# directory = "plugins"
+# plugin-load = ["plugin1", "plugin2"]
+# plugin-exclude = ["unwanted-plugin"]
+
 # Module-specific configurations
 # [module.commits]
 # since = "30d"
