@@ -10,6 +10,7 @@ use super::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
 use super::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
 use super::duplication_detector::DuplicationDetector;
 use super::debt_assessor::DebtAssessor;
+use super::complexity_calculator::ComplexityCalculator;
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use crate::git::RepositoryHandle;
 use async_trait::async_trait;
@@ -24,6 +25,7 @@ pub struct MetricsPlugin {
     total_lines: usize,
     total_files: usize,
     repository: Option<RepositoryHandle>,
+    complexity_calculator: ComplexityCalculator,
 }
 
 #[derive(Debug, Clone)]
@@ -70,18 +72,23 @@ impl MetricsPlugin {
             total_lines: 0,
             total_files: 0,
             repository: None,
+            complexity_calculator: ComplexityCalculator::new(),
         }
     }
 
     /// Process a file and calculate metrics
     fn process_file(&mut self, message: &ScanMessage) -> PluginResult<()> {
         if let MessageData::FileInfo { path, size, lines } = &message.data {
-            // For now, we'll use the provided lines count and create simplified metrics
+            // Calculate cyclomatic complexity
+            let cyclomatic_complexity = self.complexity_calculator
+                .calculate_complexity(path)
+                .unwrap_or(1); // Fall back to default if calculation fails
+            
             let metrics = FileMetrics {
                 lines_of_code: *lines as usize,
                 comment_lines: 0, // We don't have access to content, so estimate
                 blank_lines: 0,
-                cyclomatic_complexity: 1, // Basic default complexity
+                cyclomatic_complexity,
                 file_size_bytes: *size as usize,
                 file_extension: std::path::Path::new(path)
                     .extension()
@@ -368,6 +375,7 @@ impl MetricsPlugin {
             total_lines: self.total_lines,
             total_files: self.total_files,
             repository: self.repository.clone(),
+            complexity_calculator: ComplexityCalculator::new(),
         }
     }
 

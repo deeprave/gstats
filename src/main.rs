@@ -886,7 +886,7 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
     use scanner::modes::ScanMode;
     
     // Only collect data for plugins that need it
-    if plugin_name != "commits" && plugin_name != "metrics" {
+    if plugin_name != "commits" && plugin_name != "metrics" && plugin_name != "export" {
         return Ok(Vec::new());
     }
     
@@ -898,7 +898,8 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
     
     let collection_message = match plugin_name {
         "commits" => "Scanning commit history...",
-        "metrics" => "Analyzing file metrics...", 
+        "metrics" => "Analyzing file metrics...",
+        "export" => "Collecting data for export...",
         _ => "Collecting repository data...",
     };
     
@@ -947,6 +948,52 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
             // Convert files to scan messages
             for (index, file_info) in files.into_iter().enumerate() {
                 let header = MessageHeader::new(ScanMode::FILES, index as u64);
+                let data = MessageData::FileInfo {
+                    path: file_info.path,
+                    size: file_info.size as u64,
+                    lines: estimate_line_count(file_info.size) as u32,
+                };
+                scan_messages.push(ScanMessage::new(header, data));
+            }
+        }
+        "export" => {
+            // Export plugin needs both commits and file data
+            
+            // First collect commit history
+            let commits = async_repo.get_commit_history(Some(1000)).await
+                .map_err(|e| anyhow::anyhow!("Failed to get commit history: {}", e))?;
+            
+            debug!("Collected {} commits for export", commits.len());
+            
+            // Convert commits to scan messages
+            for (index, commit_info) in commits.into_iter().enumerate() {
+                let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
+                let data = MessageData::CommitInfo {
+                    hash: commit_info.id,
+                    author: commit_info.author,
+                    message: commit_info.message,
+                    timestamp: commit_info.timestamp,
+                    changed_files: commit_info.changed_files.into_iter()
+                        .map(|f| scanner::messages::FileChangeData {
+                            path: f.path,
+                            lines_added: f.lines_added,
+                            lines_removed: f.lines_removed,
+                        })
+                        .collect(),
+                };
+                scan_messages.push(ScanMessage::new(header, data));
+            }
+            
+            // Then collect file data
+            let files = async_repo.list_files().await
+                .map_err(|e| anyhow::anyhow!("Failed to get file list: {}", e))?;
+            
+            debug!("Collected {} files for export", files.len());
+            
+            // Convert files to scan messages
+            let file_index_offset = scan_messages.len();
+            for (index, file_info) in files.into_iter().enumerate() {
+                let header = MessageHeader::new(ScanMode::FILES, (file_index_offset + index) as u64);
                 let data = MessageData::FileInfo {
                     path: file_info.path,
                     size: file_info.size as u64,
@@ -1162,9 +1209,10 @@ async fn execute_plugin_function_with_data(
     args: &cli::Args,
     config: &config::ConfigManager,
 ) -> Result<()> {
-    use plugin::{PluginRequest, InvocationType};
+    use plugin::{PluginRequest, InvocationType, Plugin};
     use plugin::context::RequestPriority;
     use scanner::ScanMode;
+    use std::sync::Arc;
     
     debug!("Executing plugin '{}' function '{}' with {} scan messages", plugin_name, function_name, scan_data.len());
     
@@ -1300,43 +1348,106 @@ async fn execute_plugin_function_with_data(
         return Ok(()); // Success, return early
     }
     
-    // For the metrics plugin specifically, process file data
+    // For the metrics plugin specifically, process file data using the actual MetricsPlugin
     if plugin_name == "metrics" && !scan_data.is_empty() {
-        // Process scan data to extract file metrics
-        let mut file_count = 0;
-        let mut total_lines = 0u64;
-        let mut total_size = 0u64;
+        debug!("Processing {} scan messages for metrics plugin", scan_data.len());
         
+        // Create a new metrics plugin instance and initialize it
+        let mut metrics_plugin = plugin::builtin::MetricsPlugin::new();
+        
+        // Initialize the plugin with a minimal context
+        let context = plugin::context::PluginContext::new(
+            Arc::new(scanner::config::ScannerConfig::default()),
+            Arc::new(repo.clone()),
+            Arc::new(scanner::query::QueryParams::new()),
+        );
+        metrics_plugin.initialize(&context).await?;
+        
+        // Process scan data through the metrics plugin
+        use plugin::traits::ScannerPlugin;
+        let mut processed_messages = Vec::new();
         for message in &scan_data {
-            if let scanner::messages::MessageData::FileInfo { path: _, size, lines } = &message.data {
-                file_count += 1;
-                total_lines += *lines as u64;
-                total_size += *size;
+            let results = metrics_plugin.process_scan_data(message).await?;
+            processed_messages.extend(results);
+        }
+        
+        // Execute the metrics function to get calculated complexity
+        let invocation_type = if function_name == "default" || function_name == "metrics" {
+            InvocationType::Default
+        } else {
+            InvocationType::Function(function_name.to_string())
+        };
+        
+        let request = PluginRequest::Execute {
+            request_id: uuid::Uuid::now_v7().to_string(),
+            scan_modes: scanner::modes::ScanMode::FILES,
+            parameters: HashMap::new(),
+            timeout_ms: None,
+            priority: RequestPriority::Normal,
+            invoked_as: function_name.to_string(),
+            invocation_type,
+        };
+        
+        match metrics_plugin.execute(request).await? {
+            plugin::PluginResponse::Execute { data, .. } => {
+                // Display the report directly
+                display_plugin_data(plugin_name, function_name, &data, args, config).await?;
+                return Ok(());
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Unexpected response from metrics plugin"));
+            }
+        }
+    }
+    
+    // For the export plugin specifically, we need to pass the scan data
+    if plugin_name == "export" && !scan_data.is_empty() {
+        debug!("Processing {} scan messages for export plugin", scan_data.len());
+        
+        // Create a new export plugin instance and initialize it
+        let mut export_plugin = plugin::builtin::ExportPlugin::new();
+        
+        // Initialize the plugin with a minimal context
+        let context = plugin::context::PluginContext::new(
+            Arc::new(scanner::config::ScannerConfig::default()),
+            Arc::new(repo.clone()),
+            Arc::new(scanner::query::QueryParams::new()),
+        );
+        export_plugin.initialize(&context).await?;
+        
+        // Add all scan messages to the export plugin
+        for message in scan_data {
+            export_plugin.add_data(message)?;
+        }
+        
+        // Execute the export function
+        let invocation_type = if function_name == "default" || function_name == "export" {
+            InvocationType::Default
+        } else {
+            InvocationType::Function(function_name.to_string())
+        };
+        
+        let request = PluginRequest::Execute {
+            request_id: uuid::Uuid::now_v7().to_string(),
+            scan_modes: ScanMode::HISTORY | ScanMode::FILES,
+            invoked_as: plugin_name.to_string(),
+            invocation_type,
+            parameters: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: RequestPriority::Normal,
+        };
+        
+        // Execute the export
+        match export_plugin.execute(request).await {
+            Ok(response) => {
+                display_plugin_response(plugin_name, function_name, response, args, config).await?;
+            }
+            Err(e) => {
+                error!("Export plugin execution failed: {}", e);
+                return Err(anyhow::anyhow!("Export failed: {}", e));
             }
         }
         
-        debug!("Processed {} files, {} total lines, {} total bytes", file_count, total_lines, total_size);
-        
-        // Calculate metrics
-        let average_lines_per_file = if file_count > 0 {
-            total_lines as f64 / file_count as f64
-        } else {
-            0.0
-        };
-        
-        let report_data = serde_json::json!({
-            "total_files": file_count,
-            "total_lines": total_lines,
-            "total_blank_lines": 0, // TODO: Calculate from actual file content
-            "total_comment_lines": 0, // TODO: Calculate from actual file content
-            "total_complexity": 0, // TODO: Calculate complexity metrics
-            "average_lines_per_file": average_lines_per_file,
-            "average_complexity": 0.0, // TODO: Calculate average complexity
-            "function": "metrics"
-        });
-        
-        // Display the report directly
-        display_plugin_data(plugin_name, function_name, &report_data, args, config).await?;
         return Ok(()); // Success, return early
     }
     

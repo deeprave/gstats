@@ -9,6 +9,7 @@ pub mod change_frequency;
 pub mod hotspot_detector;
 pub mod duplication_detector;
 pub mod debt_assessor;
+pub mod complexity_calculator;
 
 // Re-export built-in plugins
 pub use commits::CommitsPlugin;
