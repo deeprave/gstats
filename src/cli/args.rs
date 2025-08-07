@@ -70,6 +70,10 @@ pub struct Args {
     #[arg(long = "no-color", help = "Disable colored output")]
     pub no_color: bool,
     
+    /// Use compact output format for quick scanning
+    #[arg(long, help = "Display results in compact, one-line format suitable for CI/CD")]
+    pub compact: bool,
+    
     /// Configuration file path
     #[arg(long, value_name = "FILE")]
     pub config_file: Option<PathBuf>,
@@ -120,10 +124,10 @@ pub struct Args {
     #[arg(short = 'E', long = "exclude-author", value_name = "AUTHOR", action = ArgAction::Append, help = "Exclude specific authors (supports comma-separated)")]
     pub exclude_author: Vec<String>,
     
-    /// Limit the number of results returned
-    /// Example: --limit 100
-    #[arg(short = 'L', long = "limit", value_name = "N", help = "Maximum number of results")]
-    pub limit: Option<usize>,
+    /// Limit the number of commits to scan from repository
+    /// Example: --scan-limit 100
+    #[arg(long = "scan-limit", value_name = "N", help = "Maximum number of commits to scan from repository")]
+    pub scan_limit: Option<usize>,
     
     // ============ SCANNER CONFIGURATION ============
     
@@ -143,10 +147,14 @@ pub struct Args {
     #[arg(long = "queue-size", value_name = "N")]
     pub queue_size: Option<usize>,
     
-    /// Plugin commands to execute
-    /// Examples: commits, metrics, export, commits:authors
-    #[arg(value_name = "COMMAND", help = "Plugin commands to execute (e.g., commits, metrics, export)")]
-    pub plugins: Vec<String>,
+    /// Plugin command to execute
+    /// Examples: commits, metrics, export, export:csv
+    #[arg(value_name = "COMMAND", help = "Plugin command to execute (e.g., commits, metrics, export)")]
+    pub command: Option<String>,
+    
+    /// Plugin-specific arguments (captured after plugin command)
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub plugin_args: Vec<String>,
     
     // ============ PLUGIN DISCOVERY & HELP ============
     
@@ -303,6 +311,7 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
+            compact: false,
             config_file: None,
             config_name: None,
             since: None,
@@ -313,12 +322,13 @@ mod tests {
             exclude_file: Vec::new(),
             author: Vec::new(),
             exclude_author: Vec::new(),
-            limit: None,
+            scan_limit: None,
             performance_mode: false,
             no_performance_mode: false,
             max_memory: None,
             queue_size: None,
-            plugins: Vec::new(),
+            command: None,
+            plugin_args: Vec::new(),
             list_plugins: false,
             show_plugins: false,
             plugins_help: false,
@@ -449,8 +459,8 @@ mod tests {
         assert!(args.exclude_file.is_empty());
         assert!(args.author.is_empty());
         assert!(args.exclude_author.is_empty());
-        assert!(args.limit.is_none());
-        assert!(args.plugins.is_empty());
+        assert!(args.scan_limit.is_none());
+        assert!(args.command.is_none());
     }
 
     #[test]
@@ -464,8 +474,9 @@ mod tests {
             exclude_file: vec!["*.tmp".to_string()],
             author: vec!["alice@example.com".to_string()],
             exclude_author: vec!["bot@automated.com".to_string()],
-            limit: Some(100),
-            plugins: vec!["commits".to_string(), "metrics".to_string()],
+            scan_limit: Some(100),
+            command: Some("commits".to_string()),
+            plugin_args: vec!["--metrics".to_string()],
             ..create_test_args()
         };
         
@@ -477,8 +488,9 @@ mod tests {
         assert_eq!(args.exclude_file, vec!["*.tmp"]);
         assert_eq!(args.author, vec!["alice@example.com"]);
         assert_eq!(args.exclude_author, vec!["bot@automated.com"]);
-        assert_eq!(args.limit, Some(100));
-        assert_eq!(args.plugins, vec!["commits", "metrics"]);
+        assert_eq!(args.scan_limit, Some(100));
+        assert_eq!(args.command, Some("commits".to_string()));
+        assert_eq!(args.plugin_args, vec!["--metrics"]);
     }
 
     #[test]
@@ -546,5 +558,33 @@ mod tests {
         assert_eq!(args.plugins_dir, vec!["./my_plugins", "./shared_plugins"]);
         assert_eq!(args.plugin_load, Some("plugin1,plugin2,./custom/plugin.yaml".to_string()));
         assert_eq!(args.plugin_exclude, Some("unwanted_plugin,./path/to/exclude.yaml".to_string()));
+    }
+    
+    // ===== GS-39 Phase 1: Compact Flag Tests (RED) =====
+    
+    #[test]
+    fn test_compact_flag_default() {
+        let args = create_test_args();
+        assert!(!args.compact, "Compact flag should default to false");
+    }
+    
+    #[test] 
+    fn test_compact_flag_enabled() {
+        let args = Args {
+            compact: true,
+            ..create_test_args()
+        };
+        assert!(args.compact, "Compact flag should be true when enabled");
+    }
+    
+    #[test]
+    fn test_compact_flag_validation() {
+        let args = Args {
+            compact: true,
+            verbose: false,
+            quiet: false,
+            ..create_test_args()
+        };
+        assert!(validate_args(&args).is_ok(), "Compact flag should pass validation");
     }
 }

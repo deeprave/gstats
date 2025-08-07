@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginFunction}
+    PluginResult, PluginError, traits::{PluginType, PluginFunction, PluginArgumentParser, PluginArgDefinition}
 };
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
@@ -25,6 +25,9 @@ struct ExportConfig {
     output_path: String,
     include_metadata: bool,
     max_entries: Option<usize>,
+    output_all: bool,
+    csv_delimiter: String,
+    csv_quote_char: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +37,7 @@ pub enum ExportFormat {
     Xml,
     Yaml,
     Html,
+    Markdown,
 }
 
 impl ExportPlugin {
@@ -94,6 +98,17 @@ impl ExportPlugin {
         Ok(())
     }
 
+    /// Get data to export with limit applied
+    fn get_data_to_export(&self) -> Vec<&ScanMessage> {
+        if let Some(max_entries) = self.export_config.max_entries {
+            self.collected_data.iter().take(max_entries).collect()
+        } else if self.export_config.output_all {
+            self.collected_data.iter().collect()
+        } else {
+            self.collected_data.iter().take(10).collect() // Default limit
+        }
+    }
+
     /// Export collected data to the configured format
     pub async fn export_data(&self) -> PluginResult<String> {
         if !self.initialized {
@@ -106,6 +121,7 @@ impl ExportPlugin {
             ExportFormat::Xml => self.export_xml(),
             ExportFormat::Yaml => self.export_yaml(),
             ExportFormat::Html => self.export_html(),
+            ExportFormat::Markdown => self.export_markdown(),
         }
     }
 
@@ -113,16 +129,19 @@ impl ExportPlugin {
     fn export_json(&self) -> PluginResult<String> {
         let mut export_data = HashMap::new();
         
+        let data_to_export = self.get_data_to_export();
+
         if self.export_config.include_metadata {
             export_data.insert("metadata", json!({
                 "export_timestamp": std::time::SystemTime::now(),
                 "total_entries": self.collected_data.len(),
+                "exported_entries": data_to_export.len(),
                 "format": "json",
                 "plugin_version": self.info.version,
             }));
         }
 
-        let data: Vec<serde_json::Value> = self.collected_data.iter()
+        let data: Vec<serde_json::Value> = data_to_export.iter()
             .map(|msg| json!({
                 "header": {
                     "scan_mode": format!("{:?}", msg.header.scan_mode),
@@ -141,20 +160,34 @@ impl ExportPlugin {
     /// Export data as CSV
     fn export_csv(&self) -> PluginResult<String> {
         let mut csv_content = String::new();
+        let delimiter = &self.export_config.csv_delimiter;
+        let quote_char = &self.export_config.csv_quote_char;
 
         // CSV header
-        csv_content.push_str("timestamp,scan_mode,data_json\n");
+        csv_content.push_str(&format!("timestamp{}scan_mode{}data_json\n", delimiter, delimiter));
+
+        let data_to_export = self.get_data_to_export();
 
         // CSV rows
-        for message in &self.collected_data {
+        for message in data_to_export {
             let timestamp = message.header.timestamp;
             let scan_mode = format!("{:?}", message.header.scan_mode);
             let data_json = serde_json::to_string(&message.data)
                 .map_err(|e| PluginError::execution_failed(format!("JSON serialization failed: {}", e)))?;
 
-            // Escape CSV values
-            let escaped_json = data_json.replace('"', "\"\"");
-            csv_content.push_str(&format!("{},{},\"{}\"\n", timestamp, scan_mode, escaped_json));
+            // Escape CSV values based on quote character
+            let escaped_json = if quote_char == "\"" {
+                data_json.replace('"', "\"\"")
+            } else {
+                data_json.replace(quote_char, &format!("{}{}", quote_char, quote_char))
+            };
+            
+            csv_content.push_str(&format!(
+                "{}{}{}{}{}{}{}\n", 
+                timestamp, delimiter, 
+                scan_mode, delimiter,
+                quote_char, escaped_json, quote_char
+            ));
         }
 
         Ok(csv_content)
@@ -174,8 +207,10 @@ impl ExportPlugin {
             xml_content.push_str("  </metadata>\n");
         }
 
+        let data_to_export = self.get_data_to_export();
+
         xml_content.push_str("  <entries>\n");
-        for message in &self.collected_data {
+        for message in data_to_export {
             xml_content.push_str("    <entry>\n");
             xml_content.push_str(&format!("      <timestamp>{}</timestamp>\n", message.header.timestamp));
             xml_content.push_str(&format!("      <scan_mode>{:?}</scan_mode>\n", message.header.scan_mode));
@@ -213,16 +248,19 @@ impl ExportPlugin {
     fn export_yaml(&self) -> PluginResult<String> {
         let mut export_data = HashMap::new();
         
+        let data_to_export = self.get_data_to_export();
+
         if self.export_config.include_metadata {
             export_data.insert("metadata", json!({
                 "export_timestamp": format!("{:?}", std::time::SystemTime::now()),
                 "total_entries": self.collected_data.len(),
+                "exported_entries": data_to_export.len(),
                 "format": "yaml",
                 "plugin_version": self.info.version,
             }));
         }
 
-        let data: Vec<serde_json::Value> = self.collected_data.iter()
+        let data: Vec<serde_json::Value> = data_to_export.iter()
             .map(|msg| json!({
                 "header": {
                     "scan_mode": format!("{:?}", msg.header.scan_mode),
@@ -264,9 +302,11 @@ impl ExportPlugin {
             html_content.push_str("    </div>\n");
         }
 
+        let data_to_export = self.get_data_to_export();
+
         // Group data by scan mode for better presentation
         let mut grouped_data: HashMap<String, Vec<&ScanMessage>> = HashMap::new();
-        for message in &self.collected_data {
+        for message in &data_to_export {
             let scan_mode_str = format!("{:?}", message.header.scan_mode);
             grouped_data.entry(scan_mode_str)
                 .or_default()
@@ -314,6 +354,106 @@ impl ExportPlugin {
         html_content.push_str("</body>\n</html>\n");
 
         Ok(html_content)
+    }
+
+    /// Export data as Markdown
+    fn export_markdown(&self) -> PluginResult<String> {
+        let mut md_content = String::new();
+        
+        // Markdown header
+        md_content.push_str("# Git Analytics Report\n\n");
+
+        if self.export_config.include_metadata {
+            md_content.push_str("## Report Metadata\n\n");
+            md_content.push_str(&format!("- **Generated:** {:?}\n", std::time::SystemTime::now()));
+            md_content.push_str(&format!("- **Total Entries:** {}\n", self.collected_data.len()));
+            md_content.push_str(&format!("- **Plugin Version:** {}\n\n", self.info.version));
+        }
+
+        let data_to_export = self.get_data_to_export();
+
+        // Group data by scan mode for better presentation
+        let mut grouped_data: HashMap<String, Vec<&ScanMessage>> = HashMap::new();
+        for message in &data_to_export {
+            let scan_mode_str = format!("{:?}", message.header.scan_mode);
+            // Strip "ScanMode(" prefix and ")" suffix if present for cleaner display
+            let clean_mode = if scan_mode_str.starts_with("ScanMode(") && scan_mode_str.ends_with(')') {
+                scan_mode_str[9..scan_mode_str.len()-1].to_string()
+            } else {
+                scan_mode_str
+            };
+            grouped_data.entry(clean_mode)
+                .or_default()
+                .push(message);
+        }
+
+        for (scan_mode, messages) in grouped_data {
+            md_content.push_str(&format!("## {}\n\n", scan_mode));
+            
+            for (idx, message) in messages.iter().enumerate() {
+                md_content.push_str(&format!("### Entry {} ({})\n\n", idx + 1, message.header.timestamp));
+                
+                // Display MessageData fields based on the message type
+                use crate::scanner::messages::MessageData;
+                match &message.data {
+                    MessageData::CommitInfo { hash, author, message: commit_msg, timestamp, changed_files } => {
+                        md_content.push_str(&format!("- **Hash:** {}\n", hash));
+                        md_content.push_str(&format!("- **Author:** {}\n", author));
+                        md_content.push_str(&format!("- **Message:** {}\n", commit_msg));
+                        md_content.push_str(&format!("- **Timestamp:** {}\n", timestamp));
+                        md_content.push_str(&format!("- **Changed Files:** {}\n", changed_files.len()));
+                        for file in changed_files {
+                            md_content.push_str(&format!("  - **{}:** +{} -{}\n", file.path, file.lines_added, file.lines_removed));
+                        }
+                    }
+                    MessageData::FileInfo { path, size, lines } => {
+                        md_content.push_str(&format!("- **Path:** {}\n", path));
+                        md_content.push_str(&format!("- **Size:** {} bytes\n", size));
+                        md_content.push_str(&format!("- **Lines:** {}\n", lines));
+                    }
+                    MessageData::MetricInfo { file_count, line_count, complexity } => {
+                        md_content.push_str(&format!("- **File Count:** {}\n", file_count));
+                        md_content.push_str(&format!("- **Line Count:** {}\n", line_count));
+                        md_content.push_str(&format!("- **Complexity:** {:.2}\n", complexity));
+                    }
+                    MessageData::SecurityInfo { vulnerability, severity, location } => {
+                        md_content.push_str(&format!("- **Vulnerability:** {}\n", vulnerability));
+                        md_content.push_str(&format!("- **Severity:** {}\n", severity));
+                        md_content.push_str(&format!("- **Location:** {}\n", location));
+                    }
+                    MessageData::DependencyInfo { name, version, license } => {
+                        md_content.push_str(&format!("- **Name:** {}\n", name));
+                        md_content.push_str(&format!("- **Version:** {}\n", version));
+                        if let Some(lic) = license {
+                            md_content.push_str(&format!("- **License:** {}\n", lic));
+                        }
+                    }
+                    _ => {
+                        // Fallback to JSON serialization for other types
+                        match serde_json::to_value(&message.data) {
+                            Ok(json_value) => {
+                                if let serde_json::Value::Object(map) = json_value {
+                                    for (key, value) in map {
+                                        let value_str = match value {
+                                            serde_json::Value::String(s) => s,
+                                            _ => value.to_string(),
+                                        };
+                                        md_content.push_str(&format!("- **{}:** {}\n", key, value_str));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                md_content.push_str("- **Error:** Failed to serialize data\n");
+                            }
+                        }
+                    }
+                }
+                
+                md_content.push_str("\n");
+            }
+        }
+
+        Ok(md_content)
     }
 
     /// Get CSS styles for HTML export
@@ -523,6 +663,31 @@ impl ExportPlugin {
             errors: vec![],
         })
     }
+    
+    /// Execute Markdown export function
+    async fn execute_markdown_export(&self) -> PluginResult<PluginResponse> {
+        let markdown_data = self.export_markdown()?;
+        
+        let data = json!({
+            "markdown_data": markdown_data,
+            "entries_count": self.collected_data.len(),
+            "function": "markdown"
+        });
+        
+        Ok(PluginResponse::Execute {
+            request_id: "markdown_export".to_string(),
+            status: crate::plugin::context::ExecutionStatus::Success,
+            data,
+            metadata: crate::plugin::context::ExecutionMetadata {
+                duration_ms: 0,
+                memory_used: 0,
+                items_processed: self.collected_data.len() as u64,
+                plugin_version: self.info.version.clone(),
+                extra: HashMap::new(),
+            },
+            errors: vec![],
+        })
+    }
 }
 
 impl Default for ExportPlugin {
@@ -538,6 +703,9 @@ impl Default for ExportConfig {
             output_path: "gstats_export.json".to_string(),
             include_metadata: true,
             max_entries: None,
+            output_all: false,
+            csv_delimiter: ",".to_string(),
+            csv_quote_char: "\"".to_string(),
         }
     }
 }
@@ -562,6 +730,7 @@ impl Plugin for ExportPlugin {
                     "xml" => ExportFormat::Xml,
                     "yaml" => ExportFormat::Yaml,
                     "html" => ExportFormat::Html,
+                    "markdown" | "md" => ExportFormat::Markdown,
                     _ => ExportFormat::Json,
                 };
             }
@@ -618,6 +787,9 @@ impl Plugin for ExportPlugin {
                     }
                     "yaml" => {
                         self.execute_yaml_export().await
+                    }
+                    "markdown" | "md" => {
+                        self.execute_markdown_export().await
                     }
                     _ => Err(PluginError::execution_failed(
                         format!("Unknown function: {}", function_name)
@@ -700,12 +872,176 @@ impl Plugin for ExportPlugin {
                 description: "Export data as YAML format".to_string(),
                 is_default: false,
             },
+            PluginFunction {
+                name: "markdown".to_string(),
+                aliases: vec!["md".to_string()],
+                description: "Export data as Markdown format".to_string(),
+                is_default: false,
+            },
         ]
     }
     
     /// Get the default function name
     fn default_function(&self) -> Option<&str> {
         Some("export")
+    }
+}
+
+#[async_trait]
+impl PluginArgumentParser for ExportPlugin {
+    async fn parse_plugin_args(&mut self, args: &[String]) -> PluginResult<()> {
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--output" | "-o" => {
+                    if i + 1 < args.len() {
+                        self.export_config.output_path = args[i + 1].clone();
+                        i += 2;
+                    } else {
+                        return Err(PluginError::execution_failed("--output requires a value"));
+                    }
+                }
+                "--format" | "-f" => {
+                    if i + 1 < args.len() {
+                        self.export_config.output_format = match args[i + 1].to_lowercase().as_str() {
+                            "json" => ExportFormat::Json,
+                            "csv" => ExportFormat::Csv,
+                            "xml" => ExportFormat::Xml,
+                            "yaml" => ExportFormat::Yaml,
+                            "html" => ExportFormat::Html,
+                            "markdown" | "md" => ExportFormat::Markdown,
+                            _ => return Err(PluginError::execution_failed(
+                                format!("Unknown format: {}", args[i + 1])
+                            )),
+                        };
+                        i += 2;
+                    } else {
+                        return Err(PluginError::execution_failed("--format requires a value"));
+                    }
+                }
+                "--all" => {
+                    self.export_config.output_all = true;
+                    i += 1;
+                }
+                "--output-limit" => {
+                    if i + 1 < args.len() {
+                        match args[i + 1].parse::<usize>() {
+                            Ok(limit) => {
+                                self.export_config.max_entries = Some(limit);
+                                self.export_config.output_all = false; // --output-limit overrides --all
+                                i += 2;
+                            }
+                            Err(_) => {
+                                return Err(PluginError::execution_failed(
+                                    format!("Invalid limit value: {}", args[i + 1])
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(PluginError::execution_failed("--output-limit requires a value"));
+                    }
+                }
+                "--csv-delimiter" => {
+                    if i + 1 < args.len() {
+                        self.export_config.csv_delimiter = args[i + 1].clone();
+                        i += 2;
+                    } else {
+                        return Err(PluginError::execution_failed("--csv-delimiter requires a value"));
+                    }
+                }
+                "--csv-quote" => {
+                    if i + 1 < args.len() {
+                        self.export_config.csv_quote_char = args[i + 1].clone();
+                        i += 2;
+                    } else {
+                        return Err(PluginError::execution_failed("--csv-quote requires a value"));
+                    }
+                }
+                "--include-metadata" => {
+                    self.export_config.include_metadata = true;
+                    i += 1;
+                }
+                "--no-metadata" => {
+                    self.export_config.include_metadata = false;
+                    i += 1;
+                }
+                _ => {
+                    return Err(PluginError::execution_failed(
+                        format!("Unknown argument: {}", args[i])
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn get_arg_schema(&self) -> Vec<PluginArgDefinition> {
+        vec![
+            PluginArgDefinition {
+                name: "--output, -o".to_string(),
+                description: "Output file path".to_string(),
+                required: false,
+                default_value: Some("gstats_export.json".to_string()),
+                arg_type: "string".to_string(),
+                examples: vec!["data.json".to_string(), "report.csv".to_string()],
+            },
+            PluginArgDefinition {
+                name: "--format, -f".to_string(),
+                description: "Output format (json, csv, xml, yaml, html, markdown)".to_string(),
+                required: false,
+                default_value: Some("json".to_string()),
+                arg_type: "string".to_string(),
+                examples: vec!["json".to_string(), "csv".to_string(), "html".to_string()],
+            },
+            PluginArgDefinition {
+                name: "--all".to_string(),
+                description: "Export all entries (override default limit of 10)".to_string(),
+                required: false,
+                default_value: Some("false".to_string()),
+                arg_type: "boolean".to_string(),
+                examples: vec![],
+            },
+            PluginArgDefinition {
+                name: "--output-limit".to_string(),
+                description: "Limit number of entries to export (overrides --all)".to_string(),
+                required: false,
+                default_value: None,
+                arg_type: "number".to_string(),
+                examples: vec!["100".to_string(), "500".to_string()],
+            },
+            PluginArgDefinition {
+                name: "--csv-delimiter".to_string(),
+                description: "CSV field delimiter character".to_string(),
+                required: false,
+                default_value: Some(",".to_string()),
+                arg_type: "string".to_string(),
+                examples: vec![",".to_string(), "\t".to_string(), ";".to_string()],
+            },
+            PluginArgDefinition {
+                name: "--csv-quote".to_string(),
+                description: "CSV quote character for field values".to_string(),
+                required: false,
+                default_value: Some("\"".to_string()),
+                arg_type: "string".to_string(),
+                examples: vec!["\"".to_string(), "'".to_string()],
+            },
+            PluginArgDefinition {
+                name: "--include-metadata".to_string(),
+                description: "Include export metadata in output".to_string(),
+                required: false,
+                default_value: Some("true".to_string()),
+                arg_type: "boolean".to_string(),
+                examples: vec![],
+            },
+            PluginArgDefinition {
+                name: "--no-metadata".to_string(),
+                description: "Exclude export metadata from output".to_string(),
+                required: false,
+                default_value: Some("false".to_string()),
+                arg_type: "boolean".to_string(),
+                examples: vec![],
+            },
+        ]
     }
 }
 
@@ -950,5 +1286,103 @@ mod tests {
         // Test XML escaping
         assert_eq!(plugin.escape_xml("AT&T \"quoted\" text"), 
                    "AT&amp;T &quot;quoted&quot; text");
+    }
+
+    #[tokio::test]
+    async fn test_plugin_argument_parsing() {
+        let mut plugin = ExportPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+
+        // Test --all argument
+        let args = vec!["--all".to_string()];
+        assert!(plugin.parse_plugin_args(&args).await.is_ok());
+        assert!(plugin.export_config.output_all);
+
+        // Reset plugin
+        let mut plugin = ExportPlugin::new();
+        plugin.initialize(&context).await.unwrap();
+
+        // Test --output-limit argument
+        let args = vec!["--output-limit".to_string(), "50".to_string()];
+        assert!(plugin.parse_plugin_args(&args).await.is_ok());
+        assert_eq!(plugin.export_config.max_entries, Some(50));
+        assert!(!plugin.export_config.output_all); // Should be false when limit is set
+
+        // Reset plugin
+        let mut plugin = ExportPlugin::new();
+        plugin.initialize(&context).await.unwrap();
+
+        // Test CSV-specific options
+        let args = vec![
+            "--csv-delimiter".to_string(), ";".to_string(),
+            "--csv-quote".to_string(), "'".to_string()
+        ];
+        assert!(plugin.parse_plugin_args(&args).await.is_ok());
+        assert_eq!(plugin.export_config.csv_delimiter, ";");
+        assert_eq!(plugin.export_config.csv_quote_char, "'");
+
+        // Reset plugin
+        let mut plugin = ExportPlugin::new();
+        plugin.initialize(&context).await.unwrap();
+
+        // Test format and output arguments
+        let args = vec![
+            "--format".to_string(), "markdown".to_string(),
+            "--output".to_string(), "report.md".to_string()
+        ];
+        assert!(plugin.parse_plugin_args(&args).await.is_ok());
+        assert_eq!(plugin.export_config.output_format, ExportFormat::Markdown);
+        assert_eq!(plugin.export_config.output_path, "report.md");
+
+        // Reset plugin
+        let mut plugin = ExportPlugin::new();
+        plugin.initialize(&context).await.unwrap();
+
+        // Test invalid format
+        let args = vec!["--format".to_string(), "invalid".to_string()];
+        assert!(plugin.parse_plugin_args(&args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_markdown_export() {
+        let mut plugin = ExportPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+
+        // Add test data
+        let data = MessageData::CommitInfo {
+            hash: "abc123".to_string(),
+            author: "test@example.com".to_string(),
+            message: "Test commit".to_string(),
+            timestamp: 123456789,
+            changed_files: vec![crate::scanner::messages::FileChangeData {
+                path: "src/main.rs".to_string(),
+                lines_added: 12,
+                lines_removed: 4,
+            }],
+        };
+        let message = create_test_message(ScanMode::HISTORY, data);
+        plugin.add_data(message).unwrap();
+
+        let markdown_output = plugin.export_markdown().unwrap();
+        assert!(markdown_output.contains("# Git Analytics Report"));
+        assert!(markdown_output.contains("## Report Metadata"));
+        assert!(markdown_output.contains("## HISTORY"));
+        assert!(markdown_output.contains("- **Message:** Test commit"));
+        assert!(markdown_output.contains("- **Hash:** abc123"));
+    }
+
+    #[tokio::test]
+    async fn test_get_arg_schema() {
+        let plugin = ExportPlugin::new();
+        let schema = plugin.get_arg_schema();
+        
+        assert!(!schema.is_empty());
+        assert!(schema.iter().any(|arg| arg.name.contains("--output")));
+        assert!(schema.iter().any(|arg| arg.name.contains("--format")));
+        assert!(schema.iter().any(|arg| arg.name.contains("--all")));
+        assert!(schema.iter().any(|arg| arg.name.contains("--output-limit")));
+        assert!(schema.iter().any(|arg| arg.name.contains("--csv-delimiter")));
     }
 }

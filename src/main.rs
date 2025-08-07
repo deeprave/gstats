@@ -15,12 +15,25 @@ use log::{info, error, debug};
 use crate::stats::RepositoryFileStats;
 use crate::scanner::async_engine::repository::AsyncRepositoryHandle;
 
+use crate::display::CompactFormat;
+
 /// Statistics about what was actually processed during scanning
 #[derive(Debug, Clone)]
 pub struct ProcessedStatistics {
     pub files_processed: usize,
     pub commits_processed: usize,
     pub authors_processed: usize,
+}
+
+impl CompactFormat for ProcessedStatistics {
+    fn to_compact_format(&self) -> String {
+        format!(
+            "Files: {} | Commits: {} | Authors: {}",
+            self.files_processed,
+            self.commits_processed,
+            self.authors_processed
+        )
+    }
 }
 
 fn main() {
@@ -590,14 +603,13 @@ async fn run_scanner(
     let mut plugin_handler = cli::plugin_handler::PluginHandler::with_plugin_config(plugin_config)?;
     plugin_handler.build_command_mappings().await?;
     
-    // Resolve plugin commands using CommandMapper
-    let plugin_names = if args.plugins.is_empty() {
-        vec!["commits".to_string()] // Default plugin
-    } else {
-        resolve_plugin_commands(&plugin_handler, &args.plugins, &args).await?
-    };
+    // Resolve plugin command using CommandMapper
+    let command = args.command.as_ref().map(|s| s.as_str()).unwrap_or("commits");
+    let plugin_names = vec![resolve_single_plugin_command(&plugin_handler, command, &args).await?];
+    let original_commands = vec![command.to_string()];
     
     debug!("Active plugins: {:?}", plugin_names);
+    debug!("Plugin arguments: {:?}", args.plugin_args);
     
     // Create callback-based message producer (queue bypassed via plugin callbacks)
     let message_producer = Arc::new(scanner::CallbackMessageProducer::new(
@@ -694,11 +706,11 @@ async fn run_scanner(
             
             // Execute plugins to generate reports and get processed statistics
             let plugin_spinner = progress.start_spinner("Processing plugin analysis...");
-            let _processed_stats = execute_plugins_analysis(&plugin_registry, &args.plugins, repo.clone(), &stats, &args, &config_manager).await?;
+            let _processed_stats = execute_plugins_analysis(&plugin_registry, &plugin_names, repo.clone(), &stats, &args, &config_manager).await?;
             plugin_spinner.complete(display::StatusType::Success, "Plugin analysis complete").await;
             
             // Display the plugin reports
-            display_plugin_reports(&plugin_registry, &args.plugins, repo.clone(), &stats, &args, &config_manager).await?;
+            display_plugin_reports(&plugin_registry, &original_commands, repo.clone(), &stats, &args, &config_manager).await?;
             
             // Note: Analysis Summary is now displayed before the plugin reports in execute_plugins_and_display_reports
         }
@@ -825,6 +837,39 @@ fn determine_scan_modes(plugin_names: &[String]) -> scanner::ScanMode {
 }
 
 /// Resolve plugin commands using CommandMapper
+async fn resolve_single_plugin_command(
+    plugin_handler: &cli::plugin_handler::PluginHandler,
+    command: &str,
+    args: &cli::Args,
+) -> Result<String> {
+    use cli::command_mapper::CommandResolution;
+    
+    debug!("Resolving command: '{}'", command);
+    
+    match plugin_handler.resolve_command_with_colors(command, args.no_color, args.color).await {
+        Ok(resolution) => {
+            match resolution {
+                CommandResolution::Function { plugin_name, function_name, .. } => {
+                    debug!("Resolved '{}' to plugin '{}' function '{}'", command, plugin_name, function_name);
+                    Ok(plugin_name)
+                }
+                CommandResolution::DirectPlugin { plugin_name, default_function } => {
+                    debug!("Resolved '{}' to plugin '{}' (default: {:?})", command, plugin_name, default_function);
+                    Ok(plugin_name)
+                }
+                CommandResolution::Explicit { plugin_name, function_name } => {
+                    debug!("Resolved '{}' to plugin '{}' function '{}'", command, plugin_name, function_name);
+                    Ok(plugin_name)
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to resolve command '{}': {}", command, e);
+            Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e))
+        }
+    }
+}
+
 async fn resolve_plugin_commands(
     plugin_handler: &cli::plugin_handler::PluginHandler,
     commands: &[String],
@@ -1025,14 +1070,23 @@ fn estimate_line_count(size: usize) -> usize {
 }
 
 /// Create a summary of file statistics for JSON output
-fn create_file_statistics_summary(file_stats: &RepositoryFileStats) -> serde_json::Value {
+fn create_file_statistics_summary(file_stats: &RepositoryFileStats, output_all: bool, output_limit: Option<usize>) -> serde_json::Value {
     let top_files_by_commits = file_stats.files_by_commit_count();
     let top_files_by_changes = file_stats.files_by_net_change();
+    
+    // Determine how many files to show based on flags
+    let files_to_show = if output_all {
+        top_files_by_commits.len()
+    } else if let Some(limit) = output_limit {
+        limit.min(top_files_by_commits.len())
+    } else {
+        10.min(top_files_by_commits.len()) // Default limit
+    };
     
     serde_json::json!({
         "total_files": file_stats.file_count(),
         "total_commits_across_files": file_stats.total_commits(),
-        "top_files_by_commits": top_files_by_commits.iter().take(10).map(|(path, stats)| {
+        "top_files_by_commits": top_files_by_commits.iter().take(files_to_show).map(|(path, stats)| {
             serde_json::json!({
                 "path": path,
                 "commits": stats.commit_count,
@@ -1045,7 +1099,7 @@ fn create_file_statistics_summary(file_stats: &RepositoryFileStats) -> serde_jso
                 "authors": stats.author_count()
             })
         }).collect::<Vec<_>>(),
-        "top_files_by_changes": top_files_by_changes.iter().take(10).map(|(path, stats)| {
+        "top_files_by_changes": top_files_by_changes.iter().take(files_to_show).map(|(path, stats)| {
             serde_json::json!({
                 "path": path,
                 "commits": stats.commit_count,
@@ -1155,25 +1209,31 @@ async fn display_plugin_reports(
             }
         };
         
-        let mut summary_parts = Vec::new();
-        
-        // Only include file metrics if file analysis was performed
-        if processed_stats.files_processed > 0 {
-            summary_parts.push(format!("{}/{} files", processed_stats.files_processed, repo_stats.total_files));
-        }
-        
-        // Always include commit metrics if they were processed
-        if processed_stats.commits_processed > 0 {
-            summary_parts.push(format!("{}/{} commits", processed_stats.commits_processed, repo_stats.total_commits));
-        }
-        
-        // Always include author metrics if they were processed
-        if processed_stats.authors_processed > 0 {
-            summary_parts.push(format!("{}/{} authors", processed_stats.authors_processed, repo_stats.total_authors));
-        }
-        
-        if !summary_parts.is_empty() {
-            info!("Analysis Summary: {}", summary_parts.join(", "));
+        // Use compact format if requested
+        if args.compact {
+            use crate::display::CompactFormat;
+            println!("{}", processed_stats.to_compact_format());
+        } else {
+            let mut summary_parts = Vec::new();
+            
+            // Only include file metrics if file analysis was performed
+            if processed_stats.files_processed > 0 {
+                summary_parts.push(format!("{}/{} files", processed_stats.files_processed, repo_stats.total_files));
+            }
+            
+            // Always include commit metrics if they were processed
+            if processed_stats.commits_processed > 0 {
+                summary_parts.push(format!("{}/{} commits", processed_stats.commits_processed, repo_stats.total_commits));
+            }
+            
+            // Always include author metrics if they were processed
+            if processed_stats.authors_processed > 0 {
+                summary_parts.push(format!("{}/{} authors", processed_stats.authors_processed, repo_stats.total_authors));
+            }
+            
+            if !summary_parts.is_empty() {
+                info!("Analysis Summary: {}", summary_parts.join(", "));
+            }
         }
     }
     
@@ -1235,6 +1295,36 @@ async fn execute_plugin_function_with_data(
     // For the commits plugin specifically, create a new instance and process the scan data
     if plugin_name == "commits" && !scan_data.is_empty() {
         
+        // Parse plugin-specific arguments for commits plugin
+        let mut output_all = false;
+        let mut output_limit: Option<usize> = None;
+        
+        // Simple argument parsing for commits plugin arguments
+        let mut i = 0;
+        while i < args.plugin_args.len() {
+            match args.plugin_args[i].as_str() {
+                "--all" => {
+                    output_all = true;
+                    i += 1;
+                }
+                "--output-limit" | "--limit" => {
+                    if i + 1 < args.plugin_args.len() {
+                        if let Ok(limit) = args.plugin_args[i + 1].parse::<usize>() {
+                            output_limit = Some(limit);
+                            output_all = false; // --output-limit/--limit overrides --all
+                        }
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        
+        
         // Process scan data directly to extract detailed author and file statistics
         let mut author_stats: HashMap<String, usize> = HashMap::new();
         let mut commit_count = 0;
@@ -1295,17 +1385,28 @@ async fn execute_plugin_function_with_data(
         let mut authors: Vec<_> = author_stats.iter().collect();
         authors.sort_by(|a, b| b.1.cmp(a.1)); // Sort by commit count descending
         
+        // Determine how many items to show based on flags
+        let authors_to_show = if output_all {
+            authors.len()
+        } else if let Some(limit) = output_limit {
+            limit.min(authors.len())
+        } else {
+            10.min(authors.len()) // Default limit
+        };
+
         let report_data = match function_name {
             "authors" | "contributors" | "committers" => {
                 serde_json::json!({
                     "total_authors": author_stats.len(),
-                    "top_authors": authors.iter().take(10).map(|(name, count)| {
+                    "top_authors": authors.iter().take(authors_to_show).map(|(name, count)| {
                         serde_json::json!({ "name": name, "commits": count })
                     }).collect::<Vec<_>>(),
                     "author_stats": author_stats,
                     "unique_files": file_stats.file_count(),
-                    "file_statistics": create_file_statistics_summary(&file_stats),
-                    "function": "authors"
+                    "file_statistics": create_file_statistics_summary(&file_stats, output_all, output_limit),
+                    "function": "authors",
+                    "output_all": output_all,
+                    "output_limit": output_limit
                 })
             }
             "commits" | "commit" | "history" => {
@@ -1319,21 +1420,25 @@ async fn execute_plugin_function_with_data(
                     "total_commits": commit_count,
                     "unique_authors": author_stats.len(),
                     "unique_files": file_stats.file_count(),
-                    "file_statistics": create_file_statistics_summary(&file_stats),
+                    "file_statistics": create_file_statistics_summary(&file_stats, output_all, output_limit),
                     "avg_commits_per_author": avg_commits_per_author,
-                    "function": "commits"
+                    "function": "commits",
+                    "output_all": output_all,
+                    "output_limit": output_limit
                 })
             }
             _ => {
                 serde_json::json!({
                     "total_authors": author_stats.len(),
-                    "top_authors": authors.iter().take(10).map(|(name, count)| {
+                    "top_authors": authors.iter().take(authors_to_show).map(|(name, count)| {
                         serde_json::json!({ "name": name, "commits": count })
                     }).collect::<Vec<_>>(),
                     "author_stats": author_stats,
                     "unique_files": file_stats.file_count(),
-                    "file_statistics": create_file_statistics_summary(&file_stats),
-                    "function": function_name
+                    "file_statistics": create_file_statistics_summary(&file_stats, output_all, output_limit),
+                    "function": function_name,
+                    "output_all": output_all,
+                    "output_limit": output_limit
                 })
             }
         };
@@ -1489,6 +1594,13 @@ async fn display_plugin_response(
     args: &cli::Args,
     config: &config::ConfigManager,
 ) -> Result<()> {
+    // Check if compact format is requested
+    if args.compact {
+        use crate::display::CompactFormat;
+        println!("{}", response.to_compact_format());
+        return Ok(());
+    }
+    
     match response {
         plugin::PluginResponse::Execute { data, errors, .. } => {
             // Display any errors first
@@ -1540,16 +1652,16 @@ async fn display_plugin_data(
     // Handle specific plugin output formats
     match (plugin_name, function_name) {
         ("commits", "authors" | "contributors" | "committers") => {
-            display_author_report(data, &colour_manager).await?;
+            display_author_report(data, &colour_manager, args.compact).await?;
         }
         ("commits", "commits" | "commit" | "history") => {
-            display_commit_report(data, &colour_manager).await?;
+            display_commit_report(data, &colour_manager, args.compact).await?;
         }
         ("metrics", _) => {
-            display_metrics_report(data, &colour_manager).await?;
+            display_metrics_report(data, &colour_manager, args.compact).await?;
         }
         ("export", _) => {
-            display_export_report(data, &colour_manager).await?;
+            display_export_report(data, &colour_manager, args.compact).await?;
         }
         _ => {
             // Generic JSON display for unknown plugins
@@ -1561,8 +1673,30 @@ async fn display_plugin_data(
 }
 
 /// Display author analysis report with colors
-async fn display_author_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+async fn display_author_report(data: &serde_json::Value, colour_manager: &display::ColourManager, compact: bool) -> Result<()> {
+    if compact {
+        // Compact format: single-line output
+        let total_authors = data.get("total_authors").and_then(|v| v.as_u64()).unwrap_or(0);
+        let unique_files = data.get("unique_files").and_then(|v| v.as_u64()).unwrap_or(0);
+        let top_author = data.get("top_authors")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|author| author.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("N/A");
+        let top_commits = data.get("top_authors")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|author| author.get("commits"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        
+        println!("Authors: {} | Files: {} | Top: {} ({} commits)",
+                 total_authors, unique_files, top_author, top_commits);
+        return Ok(());
+    }
     
+    // Standard format
     println!("\n{}", colour_manager.highlight("=== Author Analysis Report ==="));
     
     if let Some(total_authors) = data.get("total_authors").and_then(|v| v.as_u64()) {
@@ -1607,13 +1741,17 @@ async fn display_author_report(data: &serde_json::Value, colour_manager: &displa
     }
     
     // Display author-specific insights instead of file analysis for author reports
-    display_author_insights(data.as_object().unwrap_or(&serde_json::Map::new()), colour_manager).await?;
+    display_author_insights(data.as_object().unwrap_or(&serde_json::Map::new()), colour_manager, data).await?;
     
     Ok(())
 }
 
 /// Display author-specific insights showing top files by author
-async fn display_author_insights(data: &serde_json::Map<String, serde_json::Value>, colour_manager: &display::ColourManager) -> Result<()> {
+async fn display_author_insights(data: &serde_json::Map<String, serde_json::Value>, colour_manager: &display::ColourManager, full_data: &serde_json::Value) -> Result<()> {
+    
+    // Extract output limit settings from full data
+    let output_all = full_data.get("output_all").and_then(|v| v.as_bool()).unwrap_or(false);
+    let output_limit = full_data.get("output_limit").and_then(|v| v.as_u64()).map(|v| v as usize);
     
     // Get author stats and file statistics
     let author_stats = data.get("author_stats").and_then(|v| v.as_object());
@@ -1627,9 +1765,16 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
             })
             .collect();
         
-        // Sort by commit count descending and take top 5 authors
+        // Sort by commit count descending and apply limits
         authors.sort_by(|a, b| b.1.cmp(&a.1));
-        let top_authors = authors.into_iter().take(5).collect::<Vec<_>>();
+        let authors_to_show = if output_all {
+            authors.len()
+        } else if let Some(limit) = output_limit {
+            limit.min(authors.len())
+        } else {
+            5.min(authors.len()) // Default limit for insights
+        };
+        let top_authors = authors.into_iter().take(authors_to_show).collect::<Vec<_>>();
         
         // Extract top files data for each author from file statistics
         if let Some(top_files_by_commits) = file_stats.get("top_files_by_commits").and_then(|v| v.as_array()) {
@@ -1643,8 +1788,16 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
                 // Find files this author has worked on (simplified - showing top files from overall data)
                 // Note: This is showing overall file stats, not per-author stats yet
                 // TODO: Implement proper per-author file tracking in the future
+                let files_to_show = if output_all {
+                    top_files_by_commits.len()
+                } else if let Some(limit) = output_limit {
+                    limit.min(top_files_by_commits.len())
+                } else {
+                    10.min(top_files_by_commits.len()) // Default limit for file insights
+                };
+                
                 let mut file_count = 0;
-                for file_data in top_files_by_commits.iter().take(10) {
+                for file_data in top_files_by_commits.iter().take(files_to_show) {
                     if let (
                         Some(path),
                         Some(total_commits),
@@ -1700,7 +1853,20 @@ async fn display_author_insights(data: &serde_json::Map<String, serde_json::Valu
 }
 
 /// Display commit analysis report with colors
-async fn display_commit_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+async fn display_commit_report(data: &serde_json::Value, colour_manager: &display::ColourManager, compact: bool) -> Result<()> {
+    if compact {
+        // Compact format: single-line output
+        let total_commits = data.get("total_commits").and_then(|v| v.as_u64()).unwrap_or(0);
+        let unique_authors = data.get("unique_authors").and_then(|v| v.as_u64()).unwrap_or(0);
+        let unique_files = data.get("unique_files").and_then(|v| v.as_u64()).unwrap_or(0);
+        let avg_commits = data.get("avg_commits_per_author").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        
+        println!("Commits: {} | Authors: {} | Files: {} | Avg/Author: {:.1}",
+                 total_commits, unique_authors, unique_files, avg_commits);
+        return Ok(());
+    }
+    
+    // Standard format
     println!("\n{}", colour_manager.highlight("=== Commit Analysis Report ==="));
     
     if let Some(total_commits) = data.get("total_commits").and_then(|v| v.as_u64()) {
@@ -1721,14 +1887,27 @@ async fn display_commit_report(data: &serde_json::Value, colour_manager: &displa
     
     // Display Path Analysis Report if file statistics are available
     if let Some(file_stats) = data.get("file_statistics") {
-        display_path_analysis_report(file_stats, colour_manager).await?;
+        display_path_analysis_report(file_stats, colour_manager, data).await?;
     }
     
     Ok(())
 }
 
 /// Display metrics report with colors
-async fn display_metrics_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+async fn display_metrics_report(data: &serde_json::Value, colour_manager: &display::ColourManager, compact: bool) -> Result<()> {
+    if compact {
+        // Compact format: single-line output
+        let total_files = data.get("total_files").and_then(|v| v.as_u64()).unwrap_or(0);
+        let total_lines = data.get("total_lines").and_then(|v| v.as_u64()).unwrap_or(0);
+        let avg_lines = data.get("average_lines_per_file").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let complexity = data.get("total_complexity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        
+        println!("Files: {} | Lines: {} | Avg/File: {:.1} | Complexity: {:.1}",
+                 total_files, total_lines, avg_lines, complexity);
+        return Ok(());
+    }
+    
+    // Standard format
     println!("\n{}", colour_manager.highlight("=== Metrics Report ==="));
     
     // Display basic metrics with colors if available
@@ -1752,14 +1931,24 @@ async fn display_metrics_report(data: &serde_json::Value, colour_manager: &displ
 }
 
 /// Display export report with colors
-async fn display_export_report(data: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
-    println!("\n{}", colour_manager.highlight("=== Export Report ==="));
-    println!("{}", serde_json::to_string_pretty(data)?);
+async fn display_export_report(data: &serde_json::Value, colour_manager: &display::ColourManager, compact: bool) -> Result<()> {
+    if compact {
+        // Compact format: single-line JSON output
+        println!("Export: {}", serde_json::to_string(data)?);
+    } else {
+        // Standard format
+        println!("\n{}", colour_manager.highlight("=== Export Report ==="));
+        println!("{}", serde_json::to_string_pretty(data)?);
+    }
     Ok(())
 }
 
 /// Display path analysis report showing file commit statistics with colors
-async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_manager: &display::ColourManager) -> Result<()> {
+async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_manager: &display::ColourManager, full_data: &serde_json::Value) -> Result<()> {
+    
+    // Extract output limit settings from full data
+    let output_all = full_data.get("output_all").and_then(|v| v.as_bool()).unwrap_or(false);
+    let output_limit = full_data.get("output_limit").and_then(|v| v.as_u64()).map(|v| v as usize);
     
     println!("\n{}", colour_manager.highlight("=== Path Analysis Report ==="));
     
@@ -1776,10 +1965,18 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_man
         if !top_files.is_empty() {
             println!("\n{}", colour_manager.info("Most Frequently Modified Files (by commit count):"));
             
+            let files_to_show = if output_all {
+                top_files.len()
+            } else if let Some(limit) = output_limit {
+                limit.min(top_files.len())
+            } else {
+                10.min(top_files.len()) // Default limit
+            };
+            
             let headers = &["Rank", "File Path", "Commits", "Lines +", "Lines -", "Net Change", "Current Lines", "Authors"];
             let mut rows = Vec::new();
             
-            for (i, file) in top_files.iter().take(10).enumerate() {
+            for (i, file) in top_files.iter().take(files_to_show).enumerate() {
                 if let (
                     Some(path),
                     Some(commits),
@@ -1832,10 +2029,18 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_man
         if !top_changes.is_empty() {
             println!("\n{}", colour_manager.info("Largest Net Changes (by lines changed):"));
             
+            let changes_to_show = if output_all {
+                top_changes.len()
+            } else if let Some(limit) = output_limit {
+                limit.min(top_changes.len())
+            } else {
+                10.min(top_changes.len()) // Default limit
+            };
+            
             let headers = &["Rank", "File Path", "Net Change", "Lines +", "Lines -", "Current Lines", "Commits"];
             let mut rows = Vec::new();
             
-            for (i, file) in top_changes.iter().take(10).enumerate() {
+            for (i, file) in top_changes.iter().take(changes_to_show).enumerate() {
                 if let (
                     Some(path),
                     Some(net_change),
@@ -1881,4 +2086,22 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_man
     }
     
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_processed_statistics_compact_format() {
+        let stats = ProcessedStatistics {
+            files_processed: 42,
+            commits_processed: 156,
+            authors_processed: 7,
+        };
+        
+        let compact = stats.to_compact_format();
+        assert_eq!(compact, "Files: 42 | Commits: 156 | Authors: 7");
+        assert!(!compact.contains('\n'), "Compact format should not contain newlines");
+    }
 }

@@ -65,3 +65,6 @@ benchmark_results/
 book/
 target/doc/
 .claude/
+.amazonq/
+
+.tasks/

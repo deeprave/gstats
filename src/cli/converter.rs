@@ -114,12 +114,12 @@ pub fn args_to_query_params(args: &crate::cli::Args) -> Result<QueryParams, CliE
     let authors = convert_author_arguments(&args.author, &args.exclude_author)?;
     
     // Validate limit
-    let limit = validate_limit(args.limit)?;
+    let scan_limit = validate_scan_limit(args.scan_limit)?;
     
     Ok(QueryParams {
         date_range,
         file_paths,
-        limit,
+        limit: scan_limit,
         authors,
     })
 }
@@ -201,13 +201,13 @@ fn validate_author(author: &str) -> Result<String, CliError> {
 }
 
 /// Validate limit argument
-fn validate_limit(limit: Option<usize>) -> Result<Option<usize>, CliError> {
-    if let Some(limit_value) = limit {
+fn validate_scan_limit(scan_limit: Option<usize>) -> Result<Option<usize>, CliError> {
+    if let Some(limit_value) = scan_limit {
         if limit_value == 0 {
             return Err(CliError::InvalidLimit { limit: limit_value });
         }
     }
-    Ok(limit)
+    Ok(scan_limit)
 }
 
 /// Plugin configuration merged from CLI arguments and config file
@@ -299,6 +299,7 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
+            compact: false,
             config_file: None,
             config_name: None,
             since: None,
@@ -309,12 +310,13 @@ mod tests {
             exclude_file: Vec::new(),
             author: Vec::new(),
             exclude_author: Vec::new(),
-            limit: None,
+            scan_limit: None,
             performance_mode: false,
             no_performance_mode: false,
             max_memory: None,
             queue_size: None,
-            plugins: Vec::new(),
+            command: None,
+            plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
             list_by_type: None,
@@ -426,10 +428,10 @@ mod tests {
     }
     
     #[test]
-    fn test_validate_limit() {
-        assert!(validate_limit(Some(100)).unwrap() == Some(100));
-        assert!(validate_limit(None).unwrap().is_none());
-        assert!(validate_limit(Some(0)).is_err());
+    fn test_validate_scan_limit() {
+        assert!(validate_scan_limit(Some(100)).unwrap() == Some(100));
+        assert!(validate_scan_limit(None).unwrap().is_none());
+        assert!(validate_scan_limit(Some(0)).is_err());
     }
     
     
@@ -445,6 +447,7 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
+            compact: false,
             config_file: None,
             config_name: None,
             since: Some("2023-01-01".to_string()),
@@ -455,12 +458,13 @@ mod tests {
             exclude_file: vec!["*.tmp".to_string()],
             author: vec!["alice@example.com".to_string()],
             exclude_author: vec!["spam@example.com".to_string()],
-            limit: Some(100),
+            scan_limit: Some(100),
             performance_mode: false,
             no_performance_mode: false,
             max_memory: None,
             queue_size: None,
-            plugins: vec!["commits".to_string()],
+            command: Some("commits".to_string()),
+            plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
             list_by_type: None,
@@ -572,6 +576,7 @@ mod tests {
                 log_file_level: None,
                 color: false,
                 no_color: false,
+                compact: false,
                 config_file: None,
                 config_name: None,
                 since: None,
@@ -582,12 +587,13 @@ mod tests {
                 exclude_file: vec![],
                 author: vec![],
                 exclude_author: vec![],
-                limit: None,
+                scan_limit: None,
                 performance_mode: false,
                 no_performance_mode: false,
                 max_memory: Some(memory_str.to_string()),
                 queue_size: None,
-                plugins: vec![],
+                command: None,
+                plugin_args: Vec::new(),
                 list_plugins: false,
                 plugin_info: None,
                     list_by_type: None,
@@ -703,6 +709,7 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
+            compact: false,
             config_file: None,
             config_name: None,
             since: None,
@@ -713,12 +720,13 @@ mod tests {
             exclude_file: vec![],
             author: vec![],
             exclude_author: vec![],
-            limit: None,
+            scan_limit: None,
             performance_mode: true,
             no_performance_mode: true,
             max_memory: None,
             queue_size: None,
-            plugins: vec![],
+            command: None,
+            plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
             list_by_type: None,
@@ -752,6 +760,7 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
+            compact: false,
             config_file: None,
             config_name: None,
             since: None,
@@ -762,12 +771,13 @@ mod tests {
             exclude_file: vec![],
             author: vec![],
             exclude_author: vec![],
-            limit: None,
+            scan_limit: None,
             performance_mode: false,
             no_performance_mode: false,
             max_memory: Some("invalid".to_string()),
             queue_size: None,
-            plugins: vec![],
+            command: None,
+            plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
             list_by_type: None,

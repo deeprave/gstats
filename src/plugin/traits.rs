@@ -528,3 +528,85 @@ impl PluginDescriptor {
         self
     }
 }
+
+/// Plugin argument parsing trait for handling plugin-specific command line arguments
+#[async_trait]
+pub trait PluginArgumentParser {
+    /// Parse plugin-specific arguments
+    /// 
+    /// This method is called with the raw arguments that were captured after the plugin command.
+    /// The plugin should parse these arguments and store configuration appropriately.
+    /// 
+    /// # Arguments
+    /// * `args` - Raw command line arguments captured for this plugin
+    /// 
+    /// # Returns
+    /// * `Ok(())` if parsing was successful
+    /// * `Err(PluginError)` if parsing failed or arguments were invalid
+    async fn parse_plugin_args(&mut self, args: &[String]) -> PluginResult<()>;
+    
+    /// Get argument schema for help generation and validation
+    /// 
+    /// This method allows plugins to describe their available arguments for help display
+    /// and argument validation. The schema includes argument names, descriptions, types,
+    /// and whether they are required.
+    /// 
+    /// # Returns
+    /// Vector of argument definitions that this plugin supports
+    fn get_arg_schema(&self) -> Vec<PluginArgDefinition>;
+    
+    /// Generate help text for this plugin's arguments
+    /// 
+    /// This method should return formatted help text that explains the plugin's
+    /// command line arguments. This will be displayed when users request plugin-specific help.
+    /// 
+    /// # Returns
+    /// Formatted help text as a String
+    fn get_args_help(&self) -> String {
+        let schema = self.get_arg_schema();
+        if schema.is_empty() {
+            return "No plugin-specific arguments available.".to_string();
+        }
+        
+        let mut help = String::new();
+        help.push_str("Plugin-specific arguments:\n");
+        
+        for arg in schema {
+            let required_marker = if arg.required { " (required)" } else { "" };
+            let default_text = if let Some(ref default) = arg.default_value {
+                format!(" [default: {}]", default)
+            } else {
+                String::new()
+            };
+            
+            help.push_str(&format!(
+                "  {:<20} {}{}{}\n",
+                arg.name, arg.description, required_marker, default_text
+            ));
+        }
+        
+        help
+    }
+}
+
+/// Plugin argument definition for schema and help generation
+#[derive(Debug, Clone)]
+pub struct PluginArgDefinition {
+    /// Argument name (e.g., "--output", "--csv-delimiter")
+    pub name: String,
+    
+    /// Human-readable description of the argument
+    pub description: String,
+    
+    /// Whether this argument is required
+    pub required: bool,
+    
+    /// Default value if not provided
+    pub default_value: Option<String>,
+    
+    /// Argument type for validation (e.g., "string", "number", "boolean")
+    pub arg_type: String,
+    
+    /// Example values to show in help
+    pub examples: Vec<String>,
+}

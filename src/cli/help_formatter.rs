@@ -229,27 +229,43 @@ impl HelpFormatter {
     
     /// Write static plugin table (fallback)
     fn write_plugin_table(&self, output: &mut String) {
-        // Table header with colors
-        writeln!(output, "    ┌─────────┬────────────────────────────────────────────────────────┐").unwrap();
-        writeln!(output, "    │ {} │ {}                                              │", 
-                self.colour_manager.highlight("Plugin "),
-                self.colour_manager.highlight("Functions")).unwrap();
-        writeln!(output, "    ├─────────┼────────────────────────────────────────────────────────┤").unwrap();
-        
-        // Plugin rows
+        // Plugin rows data
         let plugins = vec![
             ("commits", "authors, contributors, committers, commits, history"),
             ("metrics", "metrics, complexity, quality"),
             ("export", "export, json, csv, xml"),
         ];
         
-        for (plugin, functions) in plugins {
-            writeln!(output, "    │ {} │ {:<54} │", 
-                    self.colour_manager.success(&format!("{:<7}", plugin)),
-                    functions).unwrap();
-        }
+        // Calculate column widths based on content
+        let plugin_width = "Plugin".len().max(
+            plugins.iter().map(|(p, _)| p.len()).max().unwrap_or(0)
+        );
+        let functions_width = "Functions".len().max(
+            plugins.iter().map(|(_, f)| f.len()).max().unwrap_or(0)
+        );
         
-        writeln!(output, "    └─────────┴────────────────────────────────────────────────────────┘").unwrap();
+        // Header row
+        writeln!(output, "    {:<width1$} {:<width2$}", 
+                self.colour_manager.highlight("Plugin"),
+                self.colour_manager.highlight("Functions"),
+                width1 = plugin_width,
+                width2 = functions_width).unwrap();
+        
+        // Separator row (dashes under headers)
+        writeln!(output, "    {:<width1$} {:<width2$}", 
+                "-".repeat(plugin_width),
+                "-".repeat(functions_width),
+                width1 = plugin_width,
+                width2 = functions_width).unwrap();
+        
+        // Data rows
+        for (plugin, functions) in plugins {
+            writeln!(output, "    {:<width1$} {:<width2$}", 
+                    self.colour_manager.success(plugin),
+                    functions,
+                    width1 = plugin_width,
+                    width2 = functions_width).unwrap();
+        }
     }
     
     /// Write main options
@@ -259,6 +275,7 @@ impl HelpFormatter {
             ("-v, --verbose", "Verbose output (debug level logging)"),
             ("-q, --quiet", "Quiet output (errors only)"),
             ("--debug", "Debug output (trace level logging)"),
+            ("--compact", "Display results in compact, one-line format suitable for CI/CD"),
             ("--color", "Force colored output even when redirected"),
             ("--no-color", "Disable colored output"),
             ("--log-format <FORMAT>", "Log format: text or json [default: text]"),

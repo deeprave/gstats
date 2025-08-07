@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize};
 use crate::scanner::{ScannerConfig, QueryParams};
 use crate::scanner::modes::ScanMode;
 use crate::git::RepositoryHandle;
+use crate::display::CompactFormat;
 
 /// Context provided to plugins during initialization and execution
 #[derive(Clone)]
@@ -404,6 +405,86 @@ impl RuntimeFlavorExt for tokio::runtime::RuntimeFlavor {
             #[allow(unreachable_patterns)]
             _ => "unknown".to_string(),
         }
+    }
+}
+
+// CompactFormat implementations for plugin types
+impl CompactFormat for PluginResponse {
+    fn to_compact_format(&self) -> String {
+        match self {
+            PluginResponse::Execute { status, data, metadata, .. } => {
+                let status_str = match status {
+                    ExecutionStatus::Success => "✓",
+                    ExecutionStatus::Warning => "⚠",
+                    ExecutionStatus::Failed => "✗",
+                    ExecutionStatus::Cancelled => "⊗",
+                    ExecutionStatus::Timeout => "⧖",
+                };
+                
+                // Extract key metrics from the data
+                let summary = if let Some(function) = data.get("function").and_then(|f| f.as_str()) {
+                    let function_summary = match function {
+                        "commits" => {
+                            let total = data.get("total_commits").and_then(|c| c.as_u64()).unwrap_or(0);
+                            let authors = data.get("unique_authors").and_then(|a| a.as_u64()).unwrap_or(0);
+                            format!("{} commits, {} authors", total, authors)
+                        }
+                        "authors" => {
+                            let total = data.get("total_authors").and_then(|a| a.as_u64()).unwrap_or(0);
+                            format!("{} authors", total)
+                        }
+                        "metrics" => {
+                            let files = data.get("total_files").and_then(|f| f.as_u64()).unwrap_or(0);
+                            let complexity = data.get("total_complexity").and_then(|c| c.as_f64()).unwrap_or(0.0);
+                            format!("{} files, complexity: {:.1}", files, complexity)
+                        }
+                        _ => format!("{} function", function),
+                    };
+                    format!("{}: {}", function, function_summary)
+                } else {
+                    "execution complete".to_string()
+                };
+                
+                format!("{} {} | {}", status_str, summary, metadata.to_compact_format())
+            }
+            PluginResponse::Statistics(msg) => {
+                format!("📊 Statistics: {:?}", msg)
+                    .replace('\n', " ")
+                    .chars()
+                    .take(80)
+                    .collect::<String>()
+            }
+            PluginResponse::Capabilities(caps) => {
+                format!("🔧 {} capabilities", caps.len())
+            }
+            PluginResponse::Data(data) => {
+                let preview = data.replace('\n', " ").chars().take(50).collect::<String>();
+                format!("📄 Data: {}...", preview)
+            }
+            PluginResponse::ProcessedData(messages) => {
+                format!("🔄 {} processed messages", messages.len())
+            }
+        }
+    }
+}
+
+impl CompactFormat for ExecutionMetadata {
+    fn to_compact_format(&self) -> String {
+        let duration = if self.duration_ms < 1000 {
+            format!("{}ms", self.duration_ms)
+        } else {
+            format!("{:.1}s", self.duration_ms as f64 / 1000.0)
+        };
+        
+        let memory = if self.memory_used < 1024 {
+            format!("{}B", self.memory_used)
+        } else if self.memory_used < 1024 * 1024 {
+            format!("{:.1}KB", self.memory_used as f64 / 1024.0)
+        } else {
+            format!("{:.1}MB", self.memory_used as f64 / (1024.0 * 1024.0))
+        };
+        
+        format!("{} items in {} ({})", self.items_processed, duration, memory)
     }
 }
 
