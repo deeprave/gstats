@@ -89,7 +89,7 @@ fn run() -> Result<()> {
         .build()?;
     
     // Handle plugin management commands
-    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.check_plugin.is_some() || args.list_by_type.is_some() {
+    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.list_by_type.is_some() {
         return runtime.block_on(async {
             let config_manager = load_configuration(&args)?;
             handle_plugin_commands(&args, &config_manager).await
@@ -543,11 +543,6 @@ async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigManager
         return Ok(());
     }
     
-    if let Some(plugin_name) = &args.check_plugin {
-        let report = handler.check_plugin_compatibility(plugin_name).await?;
-        println!("Plugin '{}' compatibility: {:?}", plugin_name, report);
-        return Ok(());
-    }
     
     if let Some(plugin_type_str) = &args.list_by_type {
         let plugin_type = match plugin_type_str.as_str() {

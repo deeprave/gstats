@@ -11,8 +11,7 @@ use crate::plugin::{
 use crate::cli::converter::PluginConfig;
 use crate::cli::command_mapper::{CommandMapper, CommandResolution};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use log::debug;
 
 /// CLI Plugin Handler for managing plugin operations
@@ -134,68 +133,6 @@ impl PluginHandler {
         Ok(plugins)
     }
     
-    /// Validate plugin names and check if they exist
-    pub async fn validate_plugin_names(&self, plugin_names: &[String]) -> Result<Vec<String>> {
-        if plugin_names.is_empty() {
-            return Ok(vec!["commits".to_string()]); // Default plugin
-        }
-        
-        debug!("Validating {} plugin names", plugin_names.len());
-        
-        let available_plugins = self.discover_plugins().await
-            .context("Failed to discover available plugins")?;
-        
-        let available_names: HashMap<String, &PluginDescriptor> = available_plugins.iter()
-            .map(|desc| (desc.info.name.clone(), desc))
-            .collect();
-        
-        let mut validated = Vec::new();
-        let mut errors = Vec::new();
-        
-        for plugin_name in plugin_names {
-            let trimmed = plugin_name.trim();
-            
-            if trimmed.is_empty() {
-                errors.push(format!("Empty plugin name"));
-                continue;
-            }
-            
-            // Basic name validation
-            if !trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-                errors.push(format!(
-                    "Invalid plugin name '{}': must contain only letters, numbers, underscores, and hyphens", 
-                    trimmed
-                ));
-                continue;
-            }
-            
-            // Check if plugin exists
-            if let Some(descriptor) = available_names.get(trimmed) {
-                debug!("Validated plugin: {} v{}", descriptor.info.name, descriptor.info.version);
-                validated.push(trimmed.to_string());
-            } else {
-                // Check for fuzzy matches
-                let suggestions = find_similar_plugin_names(trimmed, available_names.keys());
-                let suggestion_text = if suggestions.is_empty() {
-                    String::new()
-                } else {
-                    format!(". Did you mean: {}", suggestions.join(", "))
-                };
-                
-                errors.push(format!("Plugin '{}' not found{}", trimmed, suggestion_text));
-            }
-        }
-        
-        if !errors.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Plugin validation failed:\n  {}",
-                errors.join("\n  ")
-            ));
-        }
-        
-        debug!("Validated {} plugins successfully", validated.len());
-        Ok(validated)
-    }
     
     /// Get plugin information by name
     pub async fn get_plugin_info(&self, plugin_name: &str) -> PluginResult<Option<PluginInfo>> {
@@ -239,43 +176,6 @@ impl PluginHandler {
             .collect();
         
         Ok(plugins)
-    }
-    
-    /// Check plugin compatibility with current API
-    pub async fn check_plugin_compatibility(&self, plugin_name: &str) -> PluginResult<CompatibilityReport> {
-        let current_api_version = crate::scanner::version::get_api_version()
-            .try_into()
-            .map_err(|_| PluginError::generic("Invalid API version format"))?;
-        
-        if let Some(_plugin_info) = self.get_plugin_info(plugin_name).await? {
-            let descriptor = self.discovery.discover_plugins().await?
-                .into_iter()
-                .find(|desc| desc.info.name == plugin_name)
-                .ok_or_else(|| PluginError::plugin_not_found(plugin_name))?;
-            
-            let is_compatible = descriptor.info.is_compatible_with_api(current_api_version);
-            let plugin_major = descriptor.info.api_version / 10000;
-            let current_major = current_api_version / 10000;
-            
-            Ok(CompatibilityReport {
-                plugin_name: plugin_name.to_string(),
-                plugin_version: descriptor.info.version.clone(),
-                plugin_api_version: descriptor.info.api_version,
-                current_api_version,
-                is_compatible,
-                compatibility_message: if is_compatible {
-                    "Plugin is compatible with current API".to_string()
-                } else {
-                    format!(
-                        "Plugin API version {} (major {}) is incompatible with current API version {} (major {})",
-                        descriptor.info.api_version, plugin_major,
-                        current_api_version, current_major
-                    )
-                },
-            })
-        } else {
-            Err(PluginError::plugin_not_found(plugin_name))
-        }
     }
     
     /// Build command mappings from discovered plugins and built-in plugins
@@ -415,16 +315,6 @@ pub struct PluginInfo {
     pub capabilities: Vec<String>,
 }
 
-/// Plugin compatibility report
-#[derive(Debug)]
-pub struct CompatibilityReport {
-    pub plugin_name: String,
-    pub plugin_version: String,
-    pub plugin_api_version: u32,
-    pub current_api_version: u32,
-    pub is_compatible: bool,
-    pub compatibility_message: String,
-}
 
 /// Function mapping information for plugin-help display
 #[derive(Debug, Clone)]
@@ -436,62 +326,6 @@ pub struct FunctionMapping {
     pub is_default: bool,
 }
 
-/// Find similar plugin names using basic string distance
-fn find_similar_plugin_names<'a>(
-    target: &str,
-    available: impl Iterator<Item = &'a String>
-) -> Vec<String> {
-    let mut suggestions = Vec::new();
-    let target_lower = target.to_lowercase();
-    
-    for name in available {
-        let name_lower = name.to_lowercase();
-        
-        // Check for substring matches
-        if name_lower.contains(&target_lower) || target_lower.contains(&name_lower) {
-            suggestions.push(name.clone());
-            continue;
-        }
-        
-        // Check for simple edit distance (basic implementation)
-        if simple_edit_distance(&target_lower, &name_lower) <= 2 && name.len() > 2 {
-            suggestions.push(name.clone());
-        }
-    }
-    
-    // Limit to 3 suggestions
-    suggestions.truncate(3);
-    suggestions
-}
-
-/// Simple edit distance calculation (Levenshtein distance)
-fn simple_edit_distance(s1: &str, s2: &str) -> usize {
-    let len1 = s1.len();
-    let len2 = s2.len();
-    
-    if len1 == 0 { return len2; }
-    if len2 == 0 { return len1; }
-    
-    let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
-    
-    // Initialize first row and column
-    for i in 0..=len1 { matrix[i][0] = i; }
-    for j in 0..=len2 { matrix[0][j] = j; }
-    
-    let s1_chars: Vec<char> = s1.chars().collect();
-    let s2_chars: Vec<char> = s2.chars().collect();
-    
-    for i in 1..=len1 {
-        for j in 1..=len2 {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
-            matrix[i][j] = (matrix[i - 1][j] + 1)
-                .min(matrix[i][j - 1] + 1)
-                .min(matrix[i - 1][j - 1] + cost);
-        }
-    }
-    
-    matrix[len1][len2]
-}
 
 
 #[cfg(test)]
@@ -572,38 +406,6 @@ mod tests {
         assert_eq!(plugins[1].name, "beta-plugin");
     }
 
-    #[tokio::test]
-    async fn test_validate_plugin_names_valid() {
-        let temp_dir = tempdir().unwrap();
-        
-        create_test_plugin_descriptor(temp_dir.path(), "valid-plugin", "1.0.0", PluginType::Scanner).await.unwrap();
-        
-        let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
-        let result = handler.validate_plugin_names(&["valid-plugin".to_string()]).await.unwrap();
-        
-        assert_eq!(result, vec!["valid-plugin"]);
-    }
-
-    #[tokio::test]
-    async fn test_validate_plugin_names_invalid() {
-        let temp_dir = tempdir().unwrap();
-        
-        let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
-        let result = handler.validate_plugin_names(&["nonexistent-plugin".to_string()]).await;
-        
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Plugin 'nonexistent-plugin' not found"));
-    }
-
-    #[tokio::test]
-    async fn test_validate_plugin_names_empty_defaults_to_commits() {
-        let temp_dir = tempdir().unwrap();
-        
-        let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
-        let result = handler.validate_plugin_names(&[]).await.unwrap();
-        
-        assert_eq!(result, vec!["commits"]);
-    }
 
     #[tokio::test]
     async fn test_get_plugin_info() {
@@ -638,35 +440,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_simple_edit_distance() {
-        assert_eq!(simple_edit_distance("", ""), 0);
-        assert_eq!(simple_edit_distance("a", ""), 1);
-        assert_eq!(simple_edit_distance("", "a"), 1);
-        assert_eq!(simple_edit_distance("abc", "abc"), 0);
-        assert_eq!(simple_edit_distance("abc", "abd"), 1);
-        assert_eq!(simple_edit_distance("commits", "commit"), 1);
-        assert_eq!(simple_edit_distance("metrics", "metric"), 1);
-    }
 
-    #[test]
-    fn test_find_similar_plugin_names() {
-        let available = vec![
-            "commits".to_string(),
-            "metrics".to_string(),
-            "history".to_string(),
-            "files".to_string(),
-        ];
-        
-        let suggestions = find_similar_plugin_names("commit", available.iter());
-        assert!(suggestions.contains(&"commits".to_string()));
-        
-        let suggestions = find_similar_plugin_names("metric", available.iter());
-        assert!(suggestions.contains(&"metrics".to_string()));
-        
-        let suggestions = find_similar_plugin_names("xyz", available.iter());
-        assert!(suggestions.is_empty());
-    }
 
     #[tokio::test]
     async fn test_build_command_mappings_includes_external_plugins() {

@@ -14,7 +14,7 @@ use gstats::scanner::{
     async_engine::repository::AsyncRepositoryHandle,
 };
 use gstats::git::RepositoryHandle;
-use gstats::queue::{MemoryQueue, QueueMessageProducer};
+use gstats::scanner::CallbackMessageProducer;
 
 /// Create a test repository with specified number of commits
 fn create_test_repository(commit_count: usize) -> (TempDir, String) {
@@ -78,7 +78,6 @@ fn bench_scanner_config_creation(c: &mut Criterion) {
                 .buffer_size(8192)
                 .performance_mode(true)
                 .with_max_memory(128 * 1024 * 1024)
-                .with_queue_size(2000)
                 .build()
                 .unwrap()
         })
@@ -122,9 +121,7 @@ fn bench_scanner_engine_creation(c: &mut Criterion) {
     let config = ScannerConfig::default();
     
     let rt = Arc::new(Runtime::new().unwrap());
-    let memory_queue = Arc::new(MemoryQueue::new(10000, 128 * 1024 * 1024));
-    let message_producer = Arc::new(QueueMessageProducer::new(
-        Arc::clone(&memory_queue),
+    let message_producer = Arc::new(CallbackMessageProducer::new(
         "BenchmarkProducer".to_string()
     ));
     
@@ -152,9 +149,7 @@ fn bench_scanner_repository_sizes(c: &mut Criterion) {
         let repo_handle = RepositoryHandle::open(&repo_path).unwrap();
         let config = ScannerConfig::default();
         
-        let memory_queue = Arc::new(MemoryQueue::new(10000, 128 * 1024 * 1024));
-        let message_producer = Arc::new(QueueMessageProducer::new(
-            Arc::clone(&memory_queue),
+        let message_producer = Arc::new(CallbackMessageProducer::new(
             "BenchmarkProducer".to_string()
         ));
         
@@ -189,9 +184,7 @@ fn bench_scan_modes(c: &mut Criterion) {
     let config = ScannerConfig::default();
     
     let rt = Arc::new(Runtime::new().unwrap());
-    let memory_queue = Arc::new(MemoryQueue::new(10000, 128 * 1024 * 1024));
-    let message_producer = Arc::new(QueueMessageProducer::new(
-        Arc::clone(&memory_queue),
+    let message_producer = Arc::new(CallbackMessageProducer::new(
         "BenchmarkProducer".to_string()
     ));
     

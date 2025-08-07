@@ -4,48 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use log::{debug, info, error};
 
-/// Check if the given path is a git repository
-pub fn is_git_repository<P: AsRef<Path>>(path: P) -> bool {
-    let path = path.as_ref();
-    debug!("Checking if path is git repository: {}", path.display());
-    
-    match Repository::open(path) {
-        Ok(_) => {
-            debug!("Git repository detected at: {}", path.display());
-            true
-        }
-        Err(e) => {
-            debug!("Not a git repository at {}: {}", path.display(), e);
-            false
-        }
-    }
-}
 
-/// Validate that the given path is an accessible git repository
-/// Returns the canonical path if valid, error otherwise
-pub fn validate_git_repository<P: AsRef<Path>>(path: P) -> Result<String> {
-    // Use the new function internally to avoid code duplication
-    let repo = validate_git_repository_handle(path)?;
-    
-    // Get the canonical path from the repository
-    let workdir = repo.workdir()
-        .or_else(|| Some(repo.path()))
-        .expect("Repository must have a path");
-    
-    let canonical_path = workdir.canonicalize()
-        .with_context(|| format!("Failed to resolve canonical path for: {}", workdir.display()))?;
-    
-    let path_str = canonical_path.to_string_lossy().to_string();
-    Ok(path_str)
-}
 
-/// Resolve repository path from optional argument
-/// If no path provided, uses current directory and validates it's a git repository
-pub fn resolve_repository_path(repository_arg: Option<String>) -> Result<String> {
-    // Use the new function internally and convert back to string
-    let handle = resolve_repository_handle(repository_arg)?;
-    Ok(handle.path())
-}
 
 /// A wrapper around git2::Repository that provides scanner-friendly functionality
 #[derive(Clone)]
@@ -113,42 +73,6 @@ impl RepositoryHandle {
 unsafe impl Send for RepositoryHandle {}
 unsafe impl Sync for RepositoryHandle {}
 
-/// Context for scanner initialization containing all necessary components
-pub struct ScannerInitContext {
-    repository: RepositoryHandle,
-    config: crate::scanner::ScannerConfig,
-    query: crate::scanner::QueryParams,
-}
-
-impl ScannerInitContext {
-    /// Create a new scanner initialization context
-    pub fn new(
-        repository: RepositoryHandle,
-        config: crate::scanner::ScannerConfig,
-        query: crate::scanner::QueryParams,
-    ) -> Self {
-        Self {
-            repository,
-            config,
-            query,
-        }
-    }
-    
-    /// Get the repository handle
-    pub fn repository(&self) -> &RepositoryHandle {
-        &self.repository
-    }
-    
-    /// Get the scanner configuration
-    pub fn config(&self) -> &crate::scanner::ScannerConfig {
-        &self.config
-    }
-    
-    /// Get the query parameters
-    pub fn query(&self) -> &crate::scanner::QueryParams {
-        &self.query
-    }
-}
 
 /// Validate that the given path is an accessible git repository
 /// Returns a Repository handle if valid, error otherwise
@@ -204,72 +128,3 @@ pub fn resolve_repository_handle(repository_arg: Option<String>) -> Result<Repos
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_git_repository_with_current_dir() {
-        // Current directory should be a git repository (since we're in gstats repo)
-        assert!(is_git_repository("."));
-    }
-
-    #[test]
-    fn test_is_git_repository_with_non_git_dir() {
-        // We'll use /tmp which should exist but not be a git repo
-        assert!(!is_git_repository("/tmp"));
-    }
-
-    #[test]
-    fn test_validate_git_repository_current_dir() {
-        // Current directory should validate successfully
-        let result = validate_git_repository(".");
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.contains("gstats")); // Should contain our project name
-    }
-
-    #[test]
-    fn test_validate_git_repository_nonexistent_path() {
-        // Non-existent path should return error
-        let result = validate_git_repository("/definitely/does/not/exist");
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Directory does not exist"));
-    }
-
-    #[test]
-    fn test_validate_git_repository_non_git_dir() {
-        // Existing directory that's not a git repository should return error
-        let result = validate_git_repository("/tmp");
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        // The error message now comes from git2 library via validate_git_repository_handle
-        assert!(error_msg.contains("Not a valid git repository"));
-    }
-
-    #[test]
-    fn test_resolve_repository_path_with_none() {
-        // None should default to current directory and validate it
-        let result = resolve_repository_path(None);
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.contains("gstats"));
-    }
-
-    #[test]
-    fn test_resolve_repository_path_with_current_dir() {
-        // Explicit current directory should work
-        let result = resolve_repository_path(Some(".".to_string()));
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.contains("gstats"));
-    }
-
-    #[test]
-    fn test_resolve_repository_path_with_invalid_path() {
-        // Invalid path should return error
-        let result = resolve_repository_path(Some("/invalid/path".to_string()));
-        assert!(result.is_err());
-    }
-}

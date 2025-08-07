@@ -53,7 +53,6 @@ bitflags = { version = "2.4", features = ["serde"] }
 bincode = "1.3"
 thiserror = "1.0"
 crossbeam = "0.8"
-crossbeam-queue = "0.3"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 tokio = { version = "1.41", features = ["full"] }
@@ -84,17 +83,8 @@ toml = "0.8"
 name = "scanner_benchmarks"
 harness = false
 
-[[bench]]
-name = "memory_benchmarks" 
-harness = false
 
-[[bench]]
-name = "queue_benchmarks"
-harness = false
 
-[[bench]]
-name = "integration_benchmarks"
-harness = false
 
 # Performance validation tests
 [[test]]

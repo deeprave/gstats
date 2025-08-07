@@ -167,10 +167,6 @@ pub struct Args {
     #[arg(long = "plugin-info", value_name = "PLUGIN", help = "Show detailed information about specific plugin")]
     pub plugin_info: Option<String>,
     
-    /// Verify plugin compatibility with current API version
-    /// Example: --check-plugin my_custom_plugin
-    #[arg(long = "check-plugin", value_name = "PLUGIN", help = "Check plugin compatibility with current API")]
-    pub check_plugin: Option<String>,
     
     /// List plugins by category
     /// Examples: --list-by-type scanner, --list-by-type output
@@ -327,7 +323,6 @@ mod tests {
             show_plugins: false,
             plugins_help: false,
             plugin_info: None,
-            check_plugin: None,
             list_by_type: None,
             plugin_dir: None,
             plugins_dir: Vec::new(),
