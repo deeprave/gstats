@@ -430,8 +430,8 @@ impl Default for DebtSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::change_frequency::FileChangeStats;
-    use super::super::duplication_detector::{CodeBlock, DuplicateGroup};
+    use crate::plugin::builtin::utils::change_frequency::FileChangeStats;
+    use crate::plugin::builtin::utils::duplication_detector::{CodeBlock, DuplicateGroup};
     
     fn create_test_complexity_metrics() -> HashMap<String, FileComplexityMetrics> {
         let mut metrics = HashMap::new();

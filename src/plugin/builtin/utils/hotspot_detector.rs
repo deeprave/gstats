@@ -339,13 +339,13 @@ mod tests {
     fn create_test_change_stats() -> HashMap<String, FileChangeStats> {
         let mut stats = HashMap::new();
         
-        let mut frequent_changes = super::super::change_frequency::FileChangeStats::new("complex.rs".to_string());
+        let mut frequent_changes = crate::plugin::builtin::utils::change_frequency::FileChangeStats::new("complex.rs".to_string());
         frequent_changes.add_change(1000, "alice".to_string(), "abc123".to_string());
         frequent_changes.add_change(2000, "bob".to_string(), "def456".to_string());
         frequent_changes.add_change(3000, "charlie".to_string(), "ghi789".to_string());
         stats.insert("complex.rs".to_string(), frequent_changes);
         
-        let mut rare_changes = super::super::change_frequency::FileChangeStats::new("simple.rs".to_string());
+        let mut rare_changes = crate::plugin::builtin::utils::change_frequency::FileChangeStats::new("simple.rs".to_string());
         rare_changes.add_change(1000, "alice".to_string(), "abc123".to_string());
         stats.insert("simple.rs".to_string(), rare_changes);
         

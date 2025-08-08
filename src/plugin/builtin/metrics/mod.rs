@@ -6,11 +6,11 @@ use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
-use super::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
-use super::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
-use super::duplication_detector::DuplicationDetector;
-use super::debt_assessor::DebtAssessor;
-use super::complexity_calculator::ComplexityCalculator;
+use crate::plugin::builtin::utils::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
+use crate::plugin::builtin::utils::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
+use crate::plugin::builtin::utils::duplication_detector::DuplicationDetector;
+use crate::plugin::builtin::utils::debt_assessor::DebtAssessor;
+use crate::plugin::builtin::utils::complexity_calculator::ComplexityCalculator;
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use crate::git::RepositoryHandle;
 use async_trait::async_trait;
