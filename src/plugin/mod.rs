@@ -31,7 +31,7 @@ pub mod builtin;
 pub mod tests;
 
 // Re-export core types for easier access
-pub use traits::{Plugin, ScannerPlugin, PluginArgumentParser, PluginArgDefinition};
+pub use traits::{Plugin, ScannerPlugin};
 pub use error::{PluginError, PluginResult};
 pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType};
 

@@ -115,9 +115,17 @@ fn test_export_json_format_with_data() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     println!("Export JSON output:\n{}", stdout);
     
-    // Find the JSON part in the output (it comes after the report header)
+    // Find the JSON part in the output (it's the first JSON object, before the Export Report)
     let json_start = stdout.find("{").expect("JSON output should start with { somewhere in output");
-    let json_end = stdout.rfind("}").expect("JSON output should end with }");
+    
+    // Find the end of the first JSON object - look for the closing } before "=== Export Report ==="
+    let report_start = stdout.find("=== Export Report ===")
+        .unwrap_or(stdout.len()); // If no report section, use end of string
+    
+    // Find the last } before the report section
+    let json_end = stdout[..report_start].rfind("}")
+        .expect("JSON output should end with } before Export Report");
+    
     let json_str = &stdout[json_start..=json_end];
     
     // Try to parse as JSON

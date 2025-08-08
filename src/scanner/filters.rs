@@ -411,11 +411,11 @@ mod tests {
         let end = UNIX_EPOCH + Duration::from_secs(2000);
         let range = DateRange::new(start, end);
         
-        let filter = DateFilter::new(range);
+        let _filter = DateFilter::new(range);
         // Test that filter was created successfully
         
-        let after_filter = DateFilter::after(start);
-        let before_filter = DateFilter::before(end);
+        let _after_filter = DateFilter::after(start);
+        let _before_filter = DateFilter::before(end);
         // Filters should be created without panicking
     }
 
@@ -450,14 +450,14 @@ mod tests {
         let include_paths = vec!["src/", "tests/"];
         let exclude_paths = vec!["target/", "build/"];
         
-        let include_filter = PathFilter::include_paths(include_paths);
-        let exclude_filter = PathFilter::exclude_paths(exclude_paths);
+        let _include_filter = PathFilter::include_paths(include_paths);
+        let _exclude_filter = PathFilter::exclude_paths(exclude_paths);
         
         let file_filter = FilePathFilter {
             include: vec!["src/".into(), "tests/".into()],
             exclude: vec!["target/".into()],
         };
-        let combined_filter = PathFilter::new(file_filter);
+        let _combined_filter = PathFilter::new(file_filter);
         // Filters should be created successfully
     }
 
@@ -490,14 +490,14 @@ mod tests {
         let include_authors = vec!["alice", "bob"];
         let exclude_authors = vec!["bot", "automated"];
         
-        let include_filter = AuthorFilter::include_authors(include_authors);
-        let exclude_filter = AuthorFilter::exclude_authors(exclude_authors);
+        let _include_filter = AuthorFilter::include_authors(include_authors);
+        let _exclude_filter = AuthorFilter::exclude_authors(exclude_authors);
         
         let query_filter = QueryAuthorFilter {
             include: vec!["alice".to_string()],
             exclude: vec!["bot".to_string()],
         };
-        let combined_filter = AuthorFilter::new(query_filter);
+        let _combined_filter = AuthorFilter::new(query_filter);
         // Filters should be created successfully
     }
 

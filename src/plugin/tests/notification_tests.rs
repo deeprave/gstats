@@ -8,7 +8,7 @@ use crate::plugin::traits::{QueueUpdate, QueueUpdateType, ScanProgress, SystemEv
 use crate::plugin::error::PluginError;
 use crate::scanner::modes::ScanMode;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tokio::time::timeout;
 
 #[tokio::test]

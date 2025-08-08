@@ -64,10 +64,6 @@ pub struct WorkflowGuide {
     pub description: String,
 }
 
-/// Individual step in a workflow
-#[derive(Debug, Clone)]
-pub struct WorkflowStep {
-}
 
 /// Contextual help system
 pub struct ContextualHelp {

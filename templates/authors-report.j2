@@ -1,0 +1,73 @@
+{#
+  TEMPLATE: Author Contribution Report (Markdown)
+  BEST FOR: gstats authors
+  USAGE: gstats authors --template templates/authors-report.j2 --output authors.md
+  OUTPUT: Detailed breakdown of author contributions and statistics with commit summaries
+  SUPPORTS: --all, --output-limit flags
+#}
+# Author Contribution Report - {{ repository.name }}
+
+**Repository:** {{ repository.name }}  
+**Analysis Date:** {{ repository.scan_timestamp }}  
+**Total Items Analyzed:** {{ scan_config.total_items_scanned | number_format }}
+
+## Summary
+
+- **Total Commits:** {{ statistics.total_commits | number_format }}
+- **Total Contributors:** {{ authors.total_authors | number_format }}
+- **Files Modified:** {{ files.total_files | number_format }}
+
+## Author Contributions
+
+{% if scan_config.output_all -%}
+{%- for author in authors.list -%}
+### {{ loop.index }}. {{ author.name }}
+
+- **Commits:** {{ author.commits | number_format }} ({{ author.percentage }}%)
+- **Contribution Share:** {{ author.percentage }}% of total repository activity
+- **Average commits per contributor:** {{ (statistics.total_commits / authors.total_authors) | round(precision=1) }}
+
+#### Recent Contributions
+{% for commit in commits.list -%}
+  {%- if commit.author == author.name %}
+- **{{ commit.hash | slice(end=8) }}** - {{ commit.message | first_line }}
+  {%- endif -%}
+{% endfor %}
+
+{% endfor -%}
+{%- elif scan_config.output_limit -%}
+{%- for author in authors.list | slice(end=scan_config.output_limit) -%}
+### {{ loop.index }}. {{ author.name }}
+
+- **Commits:** {{ author.commits | number_format }} ({{ author.percentage }}%)
+- **Contribution Share:** {{ author.percentage }}% of total repository activity
+- **Average commits per contributor:** {{ (statistics.total_commits / authors.total_authors) | round(precision=1) }}
+
+#### Recent Contributions (Top {{ scan_config.output_limit }})
+{% for commit in commits.list | slice(end=scan_config.output_limit) -%}
+  {%- if commit.author == author.name %}
+- **{{ commit.hash | slice(end=8) }}** - {{ commit.message | first_line }}
+  {%- endif -%}
+{% endfor %}
+
+{% endfor -%}
+{%- else -%}
+{%- for author in authors.list | slice(end=10) -%}
+### {{ loop.index }}. {{ author.name }}
+
+- **Commits:** {{ author.commits | number_format }} ({{ author.percentage }}%)
+- **Contribution Share:** {{ author.percentage }}% of total repository activity
+- **Average commits per contributor:** {{ (statistics.total_commits / authors.total_authors) | round(precision=1) }}
+
+#### Recent Contributions (Top 10)
+{% for commit in commits.list | slice(end=10) -%}
+  {%- if commit.author == author.name %}
+- **{{ commit.hash | slice(end=8) }}** - {{ commit.message | first_line }}
+  {%- endif -%}
+{% endfor %}
+
+{% endfor -%}
+{%- endif %}
+
+---
+*Generated with gstats template system on {{ repository.scan_timestamp }}*

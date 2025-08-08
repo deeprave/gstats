@@ -208,7 +208,6 @@ impl Default for SharedPluginRegistry {
 mod tests {
     use super::*;
     use crate::plugin::tests::mock_plugins::*;
-    use crate::scanner::modes::ScanMode;
     
     #[tokio::test]
     async fn test_registry_basic_operations() {

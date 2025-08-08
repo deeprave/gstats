@@ -3,7 +3,7 @@
 //! Tests API version compatibility logic and dependency resolution.
 
 use crate::plugin::compatibility::VersionCompatibilityChecker;
-use crate::plugin::traits::{PluginInfo, PluginDependency, PluginType};
+use crate::plugin::traits::{PluginInfo, PluginType};
 use crate::plugin::error::PluginError;
 
 #[test]

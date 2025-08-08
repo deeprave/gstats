@@ -884,7 +884,7 @@ mod tests {
         let manager = TaskManager::new(5);
         
         // Spawn a long-running task
-        let task_id = manager.spawn_task(ScanMode::FILES, |cancel| async move {
+        let _task_id = manager.spawn_task(ScanMode::FILES, |cancel| async move {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {
                     Err(ScanError::async_operation("Should have been cancelled"))

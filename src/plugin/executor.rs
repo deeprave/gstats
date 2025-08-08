@@ -262,7 +262,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::registry::PluginRegistry;
     use crate::plugin::tests::mock_plugins::{MockScannerPlugin, create_test_context};
     use crate::scanner::messages::{MessageHeader, MessageData};
     use futures::stream;

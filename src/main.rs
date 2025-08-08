@@ -870,54 +870,6 @@ async fn resolve_single_plugin_command(
     }
 }
 
-async fn resolve_plugin_commands(
-    plugin_handler: &cli::plugin_handler::PluginHandler,
-    commands: &[String],
-    args: &cli::Args,
-) -> Result<Vec<String>> {
-    use cli::command_mapper::CommandResolution;
-    
-    let mut resolved_plugins = Vec::new();
-    
-    for command in commands {
-        debug!("Resolving command: '{}'", command);
-        
-        match plugin_handler.resolve_command_with_colors(command, args.no_color, args.color).await {
-            Ok(resolution) => {
-                match resolution {
-                    CommandResolution::Function { plugin_name, function_name, .. } => {
-                        debug!("Resolved '{}' to plugin '{}' function '{}'", command, plugin_name, function_name);
-                        resolved_plugins.push(plugin_name);
-                    }
-                    CommandResolution::DirectPlugin { plugin_name, default_function } => {
-                        debug!("Resolved '{}' to plugin '{}' (default: {:?})", command, plugin_name, default_function);
-                        resolved_plugins.push(plugin_name);
-                    }
-                    CommandResolution::Explicit { plugin_name, function_name } => {
-                        debug!("Resolved '{}' to plugin '{}' function '{}'", command, plugin_name, function_name);
-                        resolved_plugins.push(plugin_name);
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e));
-            }
-        }
-    }
-    
-    // Remove duplicates while preserving order
-    let mut unique_plugins = Vec::new();
-    for plugin in resolved_plugins {
-        if !unique_plugins.contains(&plugin) {
-            unique_plugins.push(plugin);
-        }
-    }
-    
-    debug!("Resolved {} commands to {} unique plugins: {:?}", 
-           commands.len(), unique_plugins.len(), unique_plugins);
-    
-    Ok(unique_plugins)
-}
 
 
 /// Collect scan data directly from repository for plugin processing
@@ -1117,12 +1069,12 @@ fn create_file_statistics_summary(file_stats: &RepositoryFileStats, output_all: 
 
 /// Execute plugins analysis (without displaying output)
 async fn execute_plugins_analysis(
-    plugin_registry: &plugin::SharedPluginRegistry,
+    _plugin_registry: &plugin::SharedPluginRegistry,
     requested_commands: &[String],
-    repo: git::RepositoryHandle,
+    _repo: git::RepositoryHandle,
     stats: &scanner::async_engine::EngineStats,
-    args: &cli::Args,
-    config: &config::ConfigManager,
+    _args: &cli::Args,
+    _config: &config::ConfigManager,
 ) -> Result<Option<ProcessedStatistics>> {
     
     let commands = if requested_commands.is_empty() {
@@ -1265,6 +1217,7 @@ async fn execute_plugin_function_with_data(
     config: &config::ConfigManager,
 ) -> Result<()> {
     use plugin::{PluginRequest, InvocationType, Plugin};
+    use plugin::traits::PluginArgumentParser;
     use plugin::context::RequestPriority;
     use scanner::ScanMode;
     use std::sync::Arc;
@@ -1291,6 +1244,53 @@ async fn execute_plugin_function_with_data(
             ));
         }
     };
+    
+    // Check if template arguments are present - if so, route to export plugin
+    let has_template_args = args.plugin_args.iter().any(|arg| 
+        arg.starts_with("--template") || arg == "--output" || arg == "-o"
+    );
+    
+    if has_template_args {
+        // Template arguments detected - route to export plugin instead
+        debug!("Template arguments detected, routing to export plugin");
+        
+        // Create a new export plugin instance directly
+        let mut export_instance = plugin::builtin::ExportPlugin::new();
+        
+        // Create plugin context
+        let scanner_config = std::sync::Arc::new(scanner::ScannerConfig::default());
+        let query_params = std::sync::Arc::new(scanner::QueryParams::default());
+        let plugin_context = plugin::context::PluginContext::new(
+            scanner_config,
+            std::sync::Arc::new(repo.clone()),
+            query_params,
+        );
+        
+        export_instance.initialize(&plugin_context).await?;
+        
+        // Parse template-specific arguments using the export plugin's argument parser
+        if let Err(e) = export_instance.parse_plugin_args(&args.plugin_args).await {
+            error!("Failed to parse export plugin arguments: {}", e);
+            return Err(e.into());
+        }
+        
+        // Add all scan data to export plugin
+        for message in &scan_data {
+            export_instance.add_data(message.clone())?;
+        }
+        
+        // Execute the export
+        let export_response = export_instance.execute(PluginRequest::Export).await?;
+        debug!("Export plugin response: {:?}", export_response);
+        
+        // If output file is specified, don't display console output
+        if args.plugin_args.iter().any(|arg| arg == "--output" || arg == "-o") {
+            info!("Export completed successfully");
+            return Ok(());
+        }
+        
+        return Ok(());
+    }
     
     // For the commits plugin specifically, create a new instance and process the scan data
     if plugin_name == "commits" && !scan_data.is_empty() {

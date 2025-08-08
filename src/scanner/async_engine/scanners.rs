@@ -298,7 +298,6 @@ fn estimate_line_count(size: usize) -> usize {
 mod tests {
     use super::*;
     use crate::git;
-    use tokio_stream::StreamExt;
     
     #[tokio::test]
     async fn test_async_file_scanner() {

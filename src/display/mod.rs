@@ -11,6 +11,5 @@ pub mod format;
 
 pub use colours::*;
 pub use config::*;
-pub use themes::*;
 pub use progress::*;
 pub use format::*;

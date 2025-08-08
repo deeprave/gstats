@@ -1,0 +1,115 @@
+{#
+  TEMPLATE: Security Audit Report (Markdown)
+  BEST FOR: gstats commits
+  USAGE: gstats commits --template templates/security-audit.j2 --output security-audit.md
+  OUTPUT: Security-focused analysis identifying high-risk files and contributors
+  SUPPORTS: --all, --output-limit flags
+  PURPOSE: Automated security audit for identifying code activity patterns requiring review
+#}
+# Security Audit Report
+
+**Repository:** {{ repository.name }}  
+**Audit Date:** {{ repository.scan_timestamp | date(format="%Y-%m-%d") }}  
+**Auditor:** {% if auditor %}{{ auditor }}{% else %}Automated gstats analysis{% endif %}
+
+## Executive Summary
+
+This automated security audit analyzes code activity patterns that may indicate areas requiring security review.
+
+- **Total commits analyzed:** {{ statistics.total_commits | number_format }}
+- **Contributors identified:** {{ authors.total_authors | number_format }}
+- **Files under review:** {{ files.total_files | number_format }}
+- **Analysis period:** Full repository history
+
+## High-Risk Files
+
+Files with high modification frequency may need additional security review:
+
+{% for file in files.top_by_commits | slice(end=15) %}
+{% if file.commits > 10 %}
+### ⚠️ {{ file.path }}
+- **Activity Level:** HIGH ({{ file.commits }} commits)
+- **Code Churn:** {{ file.net_change | abs }} net lines changed
+- **Risk Assessment:** Files with >10 commits require review
+- **Lines Added:** {{ file.lines_added | number_format }}
+- **Lines Removed:** {{ file.lines_removed | number_format }}
+
+{% endif %}
+{% endfor %}
+
+## Contributor Risk Analysis
+
+Analysis of contributors with significant codebase impact:
+
+{% for author in authors.list %}
+{% if author.percentage > 15.0 %}
+### 🔍 {{ author.name }} - {{ author.percentage | percentage(precision=1) }}% contribution
+- **Commits:** {{ author.commits | number_format }}
+- **Impact Level:** {% if author.percentage > 50 %}CRITICAL{% elif author.percentage > 30 %}HIGH{% else %}MEDIUM{% endif %}
+- **Security Consideration:** Contributors with >15% codebase impact should have appropriate access controls
+
+{% endif %}
+{% endfor %}
+
+## File Change Concentration
+
+Files with extreme change patterns that warrant security attention:
+
+{% for file in files.top_by_changes | slice(end=10) %}
+{% if file.net_change | abs > 500 %}
+### 📊 {{ file.path }}
+- **Net Change:** {{ file.net_change }} lines
+- **Modification Frequency:** {{ file.commits }} commits
+- **Risk Factor:** {% if file.net_change | abs > 1000 %}HIGH{% else %}MEDIUM{% endif %} - Large change volumes
+
+{% endif %}
+{% endfor %}
+
+## Security Recommendations
+
+Based on the analysis patterns, consider the following security measures:
+
+### 1. Code Review Processes
+- Implement mandatory code review for files with >10 commits
+- Require additional reviewer approval for contributors with >30% impact
+- Establish review requirements for changes >100 lines
+
+### 2. Access Control Review
+{% for author in authors.list | slice(end=3) %}
+- Review access permissions for **{{ author.name }}** ({{ author.percentage | percentage(precision=1) }}% of commits)
+{% endfor %}
+
+### 3. File Monitoring
+High-activity files requiring ongoing security monitoring:
+{% for file in files.top_by_commits | slice(end=5) %}
+- `{{ file.path }}` ({{ file.commits }} commits)
+{% endfor %}
+
+### 4. Automated Security Measures
+- Set up automated security scanning for high-change files
+- Implement commit hooks for security policy enforcement
+- Enable branch protection rules for critical changes
+
+## Risk Assessment Summary
+
+| Risk Category | Count | Action Required |
+|---------------|-------|-----------------|
+| High-activity files (>10 commits) | {{ files.top_by_commits | selectattr("commits", "gt", 10) | list | length }} | Security review |
+| High-impact contributors (>15%) | {{ authors.list | selectattr("percentage", "gt", 15.0) | list | length }} | Access review |
+| Large-change files (>500 lines) | {{ files.top_by_changes | selectattr("net_change", "abs", "gt", 500) | list | length }} | Code audit |
+
+## Compliance Notes
+
+- This audit focuses on activity patterns, not code content
+- Manual security review of identified files is recommended
+- Consider integrating static analysis tools for comprehensive coverage
+- Regular audits should be scheduled based on development velocity
+
+---
+**Audit Metadata:**
+- Analysis Engine: gstats v1.0
+- Template: security-audit.j2
+- Generated: {{ repository.scan_timestamp }}
+- Repository: {{ repository.path }}
+
+*This is an automated analysis. Results should be validated by security professionals.*

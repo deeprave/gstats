@@ -1,0 +1,57 @@
+{#
+  TEMPLATE: Commit Summary Report (Markdown)
+  BEST FOR: gstats commits
+  USAGE: gstats commits --template templates/commit-summary.j2 --output summary.md
+  OUTPUT: Comprehensive repository analysis with commit history, top files, and contributors
+  SUPPORTS: --all, --output-limit flags
+#}
+# {{ repository.name }} Analysis
+
+**Repository:** {{ repository.name }}  
+**Analyzed:** {{ repository.scan_timestamp }}  
+**Total Items Scanned:** {{ scan_config.total_items_scanned | number_format }}
+
+## Overview
+
+- **Total Commits:** {{ statistics.total_commits | number_format }}
+- **Contributors:** {{ authors.total_authors | number_format }}
+- **Files Modified:** {{ files.total_files | number_format }}
+
+## Top Contributors
+
+{% for author in authors.list %}
+{{ loop.index }}. **{{ author.name }}** - {{ author.commits }} commits ({{ author.percentage | percentage }}%)
+{% endfor %}
+
+## Most Active Files
+{% if scan_config.output_all -%}
+{%- for file in files.top_by_commits -%}
+- `{{ file.path }}` ({{ file.commits }} commits, {{ file.net_change }} net lines)
+{% endfor -%}
+{%- elif scan_config.output_limit -%}
+{%- for file in files.top_by_commits | slice(end=scan_config.output_limit) -%}
+- `{{ file.path }}` ({{ file.commits }} commits, {{ file.net_change }} net lines)
+{% endfor -%}
+{%- else -%}
+{%- for file in files.top_by_commits | slice(end=10) -%}
+- `{{ file.path }}` ({{ file.commits }} commits, {{ file.net_change }} net lines)
+{% endfor -%}
+{%- endif %}
+
+## Recent Activity
+{% if scan_config.output_all -%}
+{%- for commit in commits.list -%}
+- **{{ commit.hash | slice(end=8) }}** by {{ commit.author }} - {{ commit.message | first_line }}
+{% endfor -%}
+{%- elif scan_config.output_limit -%}
+{%- for commit in commits.list | slice(end=scan_config.output_limit) -%}
+- **{{ commit.hash | slice(end=8) }}** by {{ commit.author }} - {{ commit.message | first_line }}
+{% endfor -%}
+{%- else -%}
+{%- for commit in commits.list | slice(end=5) -%}
+- **{{ commit.hash | slice(end=8) }}** by {{ commit.author }} - {{ commit.message | first_line }}
+{% endfor -%}
+{%- endif %}
+
+---
+*Generated with gstats template system on {{ repository.scan_timestamp }}*

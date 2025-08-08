@@ -166,12 +166,6 @@ impl FileBasedDiscovery {
         None
     }
     
-    /// Update cache with new descriptors
-    fn update_cache(&mut self, descriptors: Vec<PluginDescriptor>) {
-        if self.cache_enabled {
-            self.cached_descriptors = Some((SystemTime::now(), descriptors.clone()));
-        }
-    }
 }
 
 #[async_trait]

@@ -1,0 +1,72 @@
+{#
+  TEMPLATE: Raw Data Export (JSON)
+  BEST FOR: gstats commits, gstats authors, or any command
+  USAGE: gstats commits --template templates/data-export.json.j2 --output data.json
+  OUTPUT: Structured JSON data for programmatic processing or API integration
+  SUPPORTS: --all, --output-limit flags
+  NOTE: Perfect for feeding data to other tools or systems
+#}
+{
+  "metadata": {
+    "repository": "{{ repository.name }}",
+    "analysis_date": "{{ repository.scan_timestamp }}",
+    "total_commits": {{ statistics.total_commits }},
+    "total_authors": {{ authors.total_authors }},
+    "total_files": {{ files.total_files }},
+    "generator": "gstats template system"
+    {% if project %},"project": "{{ project }}"{% endif %}
+    {% if version %},"version": "{{ version }}"{% endif %}
+  },
+  "statistics": {{ statistics | tojson }},
+  "authors": {
+    "total": {{ authors.total_authors }},
+    "contributors": [
+      {% for author in authors.list %}
+      {
+        "rank": {{ loop.index }},
+        "name": "{{ author.name }}",
+        "commits": {{ author.commits }},
+        "percentage": {{ author.percentage }}
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  },
+  "files": {
+    "total": {{ files.total_files }},
+    "most_active": [
+      {% for file in files.top_by_commits | slice(end=20) %}
+      {
+        "rank": {{ loop.index }},
+        "path": "{{ file.path }}",
+        "commits": {{ file.commits }},
+        "lines_added": {{ file.lines_added }},
+        "lines_removed": {{ file.lines_removed }},
+        "net_change": {{ file.net_change }}
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ],
+    "largest_changes": [
+      {% for file in files.top_by_changes | slice(end=10) %}
+      {
+        "rank": {{ loop.index }},
+        "path": "{{ file.path }}",
+        "net_change": {{ file.net_change }},
+        "commits": {{ file.commits }}
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  },
+  "recent_commits": [
+    {% for commit in commits.list | slice(end=10) %}
+    {
+      "hash": "{{ commit.hash }}",
+      "author": "{{ commit.author }}",
+      "message": "{{ commit.message }}",
+      "timestamp": "{{ commit.timestamp }}",
+      "files_changed": {{ commit.files_changed }},
+      "lines_added": {{ commit.lines_added }},
+      "lines_removed": {{ commit.lines_removed }}
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}

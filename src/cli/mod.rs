@@ -12,4 +12,3 @@ pub mod contextual_help;
 pub mod help_formatter;
 
 pub use args::Args;
-pub use help_formatter::HelpFormatter;
