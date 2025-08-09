@@ -294,6 +294,29 @@ impl AsyncRepositoryHandle {
             }
         }).await
     }
+    
+    /// Estimate the number of messages that would be generated for given scan modes
+    pub async fn estimate_scan_size(&self, modes: ScanMode) -> ScanResult<usize> {
+        let mut estimate = 0;
+        
+        // Estimate based on scan modes
+        if modes.contains(ScanMode::FILES) || modes.contains(ScanMode::METRICS) {
+            // Count files in repository
+            let files = self.list_files().await?;
+            estimate += files.len();
+        }
+        
+        if modes.contains(ScanMode::HISTORY) || modes.contains(ScanMode::CHANGE_FREQUENCY) {
+            // Count commits (limit to reasonable number for estimation)
+            let commits = self.get_commit_history(Some(1000)).await?;
+            estimate += commits.len();
+        }
+        
+        // Add some overhead for metadata messages
+        estimate += 10;
+        
+        Ok(estimate)
+    }
 }
 
 /// Repository statistics

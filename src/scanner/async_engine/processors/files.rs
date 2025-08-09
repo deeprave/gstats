@@ -1,10 +1,12 @@
 use crate::scanner::async_engine::events::{RepositoryEvent, FileInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
+use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::scanner::modes::ScanMode;
 use crate::scanner::query::QueryParams;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use log::{debug, info};
 
@@ -17,6 +19,7 @@ pub struct FileEventProcessor {
     total_size: u64,
     processing_start_time: Option<Instant>,
     stats: ProcessorStats,
+    shared_state: Option<Arc<SharedProcessorState>>,
 }
 
 impl FileEventProcessor {
@@ -30,6 +33,7 @@ impl FileEventProcessor {
             total_size: 0,
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -50,6 +54,7 @@ impl FileEventProcessor {
             total_size: 0,
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -63,6 +68,7 @@ impl FileEventProcessor {
             total_size: 0,
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -146,6 +152,18 @@ impl FileEventProcessor {
             false
         }
     }
+
+    /// Estimate file complexity based on size and line count
+    fn estimate_file_complexity(&self, file_info: &FileInfo) -> f64 {
+        let size_factor = (file_info.size as f64 / 1024.0).min(10.0) / 10.0; // Normalize to 0-1
+        let line_factor = if let Some(lines) = file_info.line_count {
+            (lines as f64 / 100.0).min(10.0) / 10.0 // Normalize to 0-1
+        } else {
+            0.5 // Default for binary files
+        };
+        
+        (size_factor * 0.3 + line_factor * 0.7) * 100.0 // Weighted score out of 100
+    }
 }
 
 #[async_trait]
@@ -158,10 +176,26 @@ impl EventProcessor for FileEventProcessor {
         "files"
     }
 
+    fn set_shared_state(&mut self, shared_state: Arc<SharedProcessorState>) {
+        self.shared_state = Some(shared_state);
+    }
+
+    fn shared_state(&self) -> Option<&Arc<SharedProcessorState>> {
+        self.shared_state.as_ref()
+    }
+
     async fn initialize(&mut self) -> PluginResult<()> {
         self.processing_start_time = Some(Instant::now());
         debug!("Initialized FileEventProcessor with {} include patterns and {} exclude patterns", 
                self.file_patterns.len(), self.excluded_patterns.len());
+        Ok(())
+    }
+
+    async fn on_repository_metadata(&mut self, metadata: &RepositoryMetadata) -> PluginResult<()> {
+        debug!(
+            "FileEventProcessor received repository metadata: {} files expected",
+            metadata.total_files.unwrap_or(0)
+        );
         Ok(())
     }
 
@@ -172,6 +206,28 @@ impl EventProcessor for FileEventProcessor {
         match event {
             RepositoryEvent::FileScanned { file_info } => {
                 if self.should_include_file(file_info) {
+                    // Cache file in shared state if available
+                    if let Some(shared_state) = &self.shared_state {
+                        if let Err(e) = shared_state.cache_file(file_info.clone()) {
+                            debug!("Failed to cache file in shared state: {}", e);
+                        }
+
+                        // Share file complexity data with other processors if it's a source code file
+                        if self.is_source_code_file(file_info) {
+                            let complexity_data = ProcessorSharedData::FileComplexity {
+                                file_path: file_info.relative_path.clone(),
+                                complexity_score: self.estimate_file_complexity(file_info),
+                                lines_of_code: file_info.line_count.unwrap_or(0),
+                                cyclomatic_complexity: 1, // Basic estimate
+                            };
+
+                            let key = format!("file_complexity_{}", file_info.relative_path);
+                            if let Err(e) = shared_state.share_processor_data(key, complexity_data) {
+                                debug!("Failed to share file complexity data: {}", e);
+                            }
+                        }
+                    }
+
                     let message = self.create_file_message(file_info);
                     messages.push(message);
                     self.file_count += 1;
@@ -220,6 +276,13 @@ impl EventProcessor for FileEventProcessor {
 
     fn get_stats(&self) -> ProcessorStats {
         self.stats.clone()
+    }
+}
+
+impl SharedStateAccess for FileEventProcessor {
+    fn shared_state(&self) -> &SharedProcessorState {
+        self.shared_state.as_ref()
+            .expect("SharedProcessorState not initialized")
     }
 }
 

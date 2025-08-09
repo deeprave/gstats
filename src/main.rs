@@ -11,7 +11,8 @@ use anyhow::Result;
 use std::process;
 use std::sync::Arc;
 use std::collections::HashMap;
-use log::{info, error, debug};
+use std::time::SystemTime;
+use log::{info, error, debug, warn};
 use crate::stats::RepositoryFileStats;
 use crate::scanner::async_engine::repository::AsyncRepositoryHandle;
 
@@ -671,22 +672,23 @@ async fn run_scanner(
         .message_producer(message_producer as Arc<dyn scanner::MessageProducer + Send + Sync>)
         .runtime(runtime);
     
-    // Create base scanners
+    // Create base scanners - using placeholder scanner during legacy cleanup
     let async_repo = Arc::new(scanner::async_engine::repository::AsyncRepositoryHandle::new(repo.clone()));
     
-    // Create file scanner
-    let file_scanner = Arc::new(scanner::async_engine::scanners::AsyncFileScanner::new(
+    // Create placeholder scanners (EventDrivenScanner has git2 Send/Sync issues)
+    let file_scanner = Arc::new(scanner::async_engine::scanners::PlaceholderScanner::with_name(
         Arc::clone(&async_repo),
+        "FileScanner".to_string(),
     ));
     
-    // Create history scanner  
-    let history_scanner = Arc::new(scanner::async_engine::scanners::AsyncHistoryScanner::new(
+    let history_scanner = Arc::new(scanner::async_engine::scanners::PlaceholderScanner::with_name(
         Arc::clone(&async_repo),
+        "HistoryScanner".to_string(),
     ));
     
-    // Create combined scanner
-    let combined_scanner = Arc::new(scanner::async_engine::scanners::AsyncCombinedScanner::new(
+    let combined_scanner = Arc::new(scanner::async_engine::scanners::PlaceholderScanner::with_name(
         Arc::clone(&async_repo),
+        "CombinedScanner".to_string(),
     ));
     
     // Wrap scanners with plugin processing
@@ -758,7 +760,7 @@ async fn run_scanner(
             plugin_spinner.complete(display::StatusType::Success, "Plugin analysis complete").await;
             
             // Display the plugin reports
-            display_plugin_reports(&plugin_registry, &original_commands, repo.clone(), &stats, &args, &config_manager).await?;
+            display_plugin_reports(&plugin_registry, &original_commands, repo.clone(), &stats, &args, &config_manager, &query_params).await?;
             
             // Note: Analysis Summary is now displayed before the plugin reports in execute_plugins_and_display_reports
         }
@@ -920,27 +922,33 @@ async fn resolve_single_plugin_command(
 
 
 
-/// Collect scan data directly from repository for plugin processing
-async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHandle) -> Result<Vec<scanner::messages::ScanMessage>> {
+/// Collect scan data with event-driven processing integration
+async fn collect_scan_data_with_event_processing(
+    plugin_name: &str, 
+    repo: git::RepositoryHandle,
+    query_params: &scanner::QueryParams,
+) -> Result<Vec<scanner::messages::ScanMessage>> {
     use scanner::messages::{ScanMessage, MessageHeader, MessageData};
     use scanner::modes::ScanMode;
+    use scanner::async_engine::events::{RepositoryEvent, CommitInfo as EventCommitInfo, FileInfo as EventFileInfo};
+    use scanner::async_engine::processors::EventProcessingCoordinator;
     
     // Only collect data for plugins that need it
     if plugin_name != "commits" && plugin_name != "metrics" && plugin_name != "export" {
         return Ok(Vec::new());
     }
     
-    debug!("Collecting scan data for {} plugin", plugin_name);
+    debug!("Collecting scan data with event processing for {} plugin", plugin_name);
     
     // Create progress indicator for data collection
     let colour_manager = display::ColourManager::new(); // Use defaults for internal operations
     let progress = display::ProgressIndicator::new(colour_manager);
     
     let collection_message = match plugin_name {
-        "commits" => "Scanning commit history...",
-        "metrics" => "Analyzing file metrics...",
-        "export" => "Collecting data for export...",
-        _ => "Collecting repository data...",
+        "commits" => "Scanning commit history with event processing...",
+        "metrics" => "Analyzing file metrics with event processing...",
+        "export" => "Collecting data for export with event processing...",
+        _ => "Collecting repository data with event processing...",
     };
     
     // Start spinner for data collection
@@ -948,98 +956,214 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
     
     // Create async repository handle for data collection
     let async_repo = Arc::new(scanner::async_engine::repository::AsyncRepositoryHandle::new(repo));
-    let mut scan_messages = Vec::new();
     
-    // Collect data based on plugin requirements
+    // Determine scan modes based on plugin requirements
+    let scan_modes = match plugin_name {
+        "commits" => ScanMode::HISTORY,
+        "metrics" => ScanMode::FILES | ScanMode::METRICS,
+        "export" => ScanMode::FILES | ScanMode::HISTORY,
+        _ => ScanMode::FILES,
+    };
+    
+    // Create event processing coordinator
+    let mut coordinator = EventProcessingCoordinator::new(scan_modes);
+    let mut all_scan_messages = Vec::new();
+    
+    // Collect and process data based on plugin requirements
     match plugin_name {
         "commits" => {
-            // Collect commit history (limit to reasonable number)
+            // Collect commit history and create events
             let commits = async_repo.get_commit_history(Some(1000)).await
                 .map_err(|e| anyhow::anyhow!("Failed to get commit history: {}", e))?;
             
             debug!("Collected {} commits from repository", commits.len());
             
-            // Convert commits to scan messages
+            // Create repository events and process them
             for (index, commit_info) in commits.into_iter().enumerate() {
-                let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
-                let data = MessageData::CommitInfo {
-                    hash: commit_info.id,
-                    author: commit_info.author,
-                    message: commit_info.message,
-                    timestamp: commit_info.timestamp,
-                    changed_files: commit_info.changed_files.into_iter()
-                        .map(|fc| scanner::messages::FileChangeData {
-                            path: fc.path,
-                            lines_added: fc.lines_added,
-                            lines_removed: fc.lines_removed,
-                        })
-                        .collect(),
+                // Create event from commit data
+                let event_commit = EventCommitInfo {
+                    hash: commit_info.id.clone(),
+                    short_hash: commit_info.id.chars().take(8).collect(),
+                    author_name: commit_info.author.clone(),
+                    author_email: String::new(), // Not available in old structure
+                    committer_name: commit_info.author.clone(),
+                    committer_email: String::new(), // Not available in old structure
+                    message: commit_info.message.clone(),
+                    timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(commit_info.timestamp as u64),
+                    parent_hashes: Vec::new(), // Not available in old structure
+                    changed_files: commit_info.changed_files.iter().map(|fc| fc.path.clone()).collect(),
+                    insertions: commit_info.changed_files.iter().map(|fc| fc.lines_added).sum(),
+                    deletions: commit_info.changed_files.iter().map(|fc| fc.lines_removed).sum(),
                 };
-                scan_messages.push(ScanMessage::new(header, data));
+                
+                let event = RepositoryEvent::CommitDiscovered {
+                    commit: event_commit,
+                    index,
+                };
+                
+                // Process event through coordinator
+                match coordinator.process_event(&event).await {
+                    Ok(messages) => {
+                        all_scan_messages.extend(messages);
+                    }
+                    Err(e) => {
+                        warn!("Error processing commit event: {}", e);
+                        // Fallback to direct message creation
+                        let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
+                        let data = MessageData::CommitInfo {
+                            hash: commit_info.id,
+                            author: commit_info.author,
+                            message: commit_info.message,
+                            timestamp: commit_info.timestamp,
+                            changed_files: commit_info.changed_files.into_iter()
+                                .map(|fc| scanner::messages::FileChangeData {
+                                    path: fc.path,
+                                    lines_added: fc.lines_added,
+                                    lines_removed: fc.lines_removed,
+                                })
+                                .collect(),
+                        };
+                        all_scan_messages.push(ScanMessage::new(header, data));
+                    }
+                }
             }
         }
         "metrics" => {
-            // Collect file data for metrics analysis
+            // Collect file data and create events
             let files = async_repo.list_files().await
                 .map_err(|e| anyhow::anyhow!("Failed to get file list: {}", e))?;
             
             debug!("Collected {} files from repository", files.len());
             
-            // Convert files to scan messages
-            for (index, file_info) in files.into_iter().enumerate() {
-                let header = MessageHeader::new(ScanMode::FILES, index as u64);
-                let data = MessageData::FileInfo {
-                    path: file_info.path,
-                    size: file_info.size as u64,
-                    lines: estimate_line_count(file_info.size) as u32,
+            // Create repository events and process them
+            for file_info in files.into_iter() {
+                // Create event from file data
+                let event_file = EventFileInfo {
+                    path: file_info.path.clone().into(), // Convert String to PathBuf
+                    relative_path: file_info.path.clone(),
+                    size: file_info.size as u64, // Convert usize to u64
+                    extension: None, // Not available in old structure
+                    is_binary: false, // Default assumption
+                    line_count: Some(estimate_line_count(file_info.size)),
+                    last_modified: None, // Not available in old structure
                 };
-                scan_messages.push(ScanMessage::new(header, data));
+                
+                let event = RepositoryEvent::FileScanned {
+                    file_info: event_file,
+                };
+                
+                // Process event through coordinator
+                match coordinator.process_event(&event).await {
+                    Ok(messages) => {
+                        all_scan_messages.extend(messages);
+                    }
+                    Err(e) => {
+                        warn!("Error processing file event: {}", e);
+                        // Fallback to direct message creation
+                        let header = MessageHeader::new(ScanMode::FILES, all_scan_messages.len() as u64);
+                        let data = MessageData::FileInfo {
+                            path: file_info.path,
+                            size: file_info.size as u64,
+                            lines: estimate_line_count(file_info.size) as u32,
+                        };
+                        all_scan_messages.push(ScanMessage::new(header, data));
+                    }
+                }
             }
         }
         "export" => {
             // Export plugin needs both commits and file data
             
-            // First collect commit history
+            // First collect and process commit history
             let commits = async_repo.get_commit_history(Some(1000)).await
                 .map_err(|e| anyhow::anyhow!("Failed to get commit history: {}", e))?;
             
             debug!("Collected {} commits for export", commits.len());
             
-            // Convert commits to scan messages
             for (index, commit_info) in commits.into_iter().enumerate() {
-                let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
-                let data = MessageData::CommitInfo {
-                    hash: commit_info.id,
-                    author: commit_info.author,
-                    message: commit_info.message,
-                    timestamp: commit_info.timestamp,
-                    changed_files: commit_info.changed_files.into_iter()
-                        .map(|f| scanner::messages::FileChangeData {
-                            path: f.path,
-                            lines_added: f.lines_added,
-                            lines_removed: f.lines_removed,
-                        })
-                        .collect(),
+                let event_commit = EventCommitInfo {
+                    hash: commit_info.id.clone(),
+                    short_hash: commit_info.id.chars().take(8).collect(),
+                    author_name: commit_info.author.clone(),
+                    author_email: String::new(), // Not available in old structure
+                    committer_name: commit_info.author.clone(),
+                    committer_email: String::new(), // Not available in old structure
+                    message: commit_info.message.clone(),
+                    timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(commit_info.timestamp as u64),
+                    parent_hashes: Vec::new(), // Not available in old structure
+                    changed_files: commit_info.changed_files.iter().map(|fc| fc.path.clone()).collect(),
+                    insertions: commit_info.changed_files.iter().map(|fc| fc.lines_added).sum(),
+                    deletions: commit_info.changed_files.iter().map(|fc| fc.lines_removed).sum(),
                 };
-                scan_messages.push(ScanMessage::new(header, data));
+                
+                let event = RepositoryEvent::CommitDiscovered {
+                    commit: event_commit,
+                    index,
+                };
+                
+                match coordinator.process_event(&event).await {
+                    Ok(messages) => {
+                        all_scan_messages.extend(messages);
+                    }
+                    Err(e) => {
+                        warn!("Error processing commit event for export: {}", e);
+                        // Fallback to direct message creation
+                        let header = MessageHeader::new(ScanMode::HISTORY, index as u64);
+                        let data = MessageData::CommitInfo {
+                            hash: commit_info.id,
+                            author: commit_info.author,
+                            message: commit_info.message,
+                            timestamp: commit_info.timestamp,
+                            changed_files: commit_info.changed_files.into_iter()
+                                .map(|f| scanner::messages::FileChangeData {
+                                    path: f.path,
+                                    lines_added: f.lines_added,
+                                    lines_removed: f.lines_removed,
+                                })
+                                .collect(),
+                        };
+                        all_scan_messages.push(ScanMessage::new(header, data));
+                    }
+                }
             }
             
-            // Then collect file data
+            // Then collect and process file data
             let files = async_repo.list_files().await
                 .map_err(|e| anyhow::anyhow!("Failed to get file list: {}", e))?;
             
             debug!("Collected {} files for export", files.len());
             
-            // Convert files to scan messages
-            let file_index_offset = scan_messages.len();
-            for (index, file_info) in files.into_iter().enumerate() {
-                let header = MessageHeader::new(ScanMode::FILES, (file_index_offset + index) as u64);
-                let data = MessageData::FileInfo {
-                    path: file_info.path,
-                    size: file_info.size as u64,
-                    lines: estimate_line_count(file_info.size) as u32,
+            for file_info in files.into_iter() {
+                let event_file = EventFileInfo {
+                    path: file_info.path.clone().into(), // Convert String to PathBuf
+                    relative_path: file_info.path.clone(),
+                    size: file_info.size as u64, // Convert usize to u64
+                    extension: None, // Not available in old structure
+                    is_binary: false, // Default assumption
+                    line_count: Some(estimate_line_count(file_info.size)),
+                    last_modified: None, // Not available in old structure
                 };
-                scan_messages.push(ScanMessage::new(header, data));
+                
+                let event = RepositoryEvent::FileScanned {
+                    file_info: event_file,
+                };
+                
+                match coordinator.process_event(&event).await {
+                    Ok(messages) => {
+                        all_scan_messages.extend(messages);
+                    }
+                    Err(e) => {
+                        warn!("Error processing file event for export: {}", e);
+                        // Fallback to direct message creation
+                        let header = MessageHeader::new(ScanMode::FILES, all_scan_messages.len() as u64);
+                        let data = MessageData::FileInfo {
+                            path: file_info.path,
+                            size: file_info.size as u64,
+                            lines: estimate_line_count(file_info.size) as u32,
+                        };
+                        all_scan_messages.push(ScanMessage::new(header, data));
+                    }
+                }
             }
         }
         _ => {
@@ -1048,15 +1172,19 @@ async fn collect_scan_data_for_plugin(plugin_name: &str, repo: git::RepositoryHa
         }
     }
     
-    // Stop spinner and show completion status
-    if !scan_messages.is_empty() {
-        let completion_message = format!("Collected {} items for analysis", scan_messages.len());
-        collection_spinner.complete(display::StatusType::Success, &completion_message).await;
-    } else {
-        collection_spinner.complete(display::StatusType::Info, "No data collection required for this plugin").await;
+    // Finalize event processing
+    match coordinator.finalize().await {
+        Ok(final_messages) => {
+            all_scan_messages.extend(final_messages);
+        }
+        Err(e) => {
+            warn!("Error finalizing event processing: {}", e);
+        }
     }
     
-    Ok(scan_messages)
+    collection_spinner.complete(display::StatusType::Success, &format!("Collected {} messages with event processing", all_scan_messages.len())).await;
+    
+    Ok(all_scan_messages)
 }
 
 /// Estimate line count from file size (rough heuristic)
@@ -1173,6 +1301,7 @@ async fn display_plugin_reports(
     stats: &scanner::async_engine::EngineStats,
     args: &cli::Args,
     config: &config::ConfigManager,
+    query_params: &scanner::QueryParams,
 ) -> Result<()> {
     
     let commands = if requested_commands.is_empty() {
@@ -1246,8 +1375,8 @@ async fn display_plugin_reports(
         _ => ("commits", "authors"), // Default
     };
     
-    // Collect scan data for the plugin
-    let scan_data = collect_scan_data_for_plugin(plugin_name, repo.clone()).await?;
+    // Collect scan data for the plugin with event processing
+    let scan_data = collect_scan_data_with_event_processing(plugin_name, repo.clone(), &query_params).await?;
     
     execute_plugin_function_with_data(plugin_registry, plugin_name, function_name, scan_data.clone(), repo.clone(), &args, config).await?;
     

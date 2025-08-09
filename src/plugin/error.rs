@@ -232,6 +232,12 @@ impl From<serde_yaml::Error> for PluginError {
     }
 }
 
+impl From<crate::scanner::async_engine::error::ScanError> for PluginError {
+    fn from(err: crate::scanner::async_engine::error::ScanError) -> Self {
+        PluginError::execution_failed(format!("Scanner error: {}", err))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

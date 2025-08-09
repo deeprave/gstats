@@ -1,11 +1,13 @@
 use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileChangeData};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
+use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::scanner::modes::ScanMode;
 use crate::plugin::builtin::utils::change_frequency::{FileChangeStats, TimeWindow};
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use log::{debug, info};
 
@@ -16,6 +18,7 @@ pub struct ChangeFrequencyEventProcessor {
     total_changes: usize,
     processing_start_time: Option<Instant>,
     stats: ProcessorStats,
+    shared_state: Option<Arc<SharedProcessorState>>,
 }
 
 impl ChangeFrequencyEventProcessor {
@@ -27,6 +30,7 @@ impl ChangeFrequencyEventProcessor {
             total_changes: 0,
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -38,6 +42,7 @@ impl ChangeFrequencyEventProcessor {
             total_changes: 0,
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -122,9 +127,25 @@ impl EventProcessor for ChangeFrequencyEventProcessor {
         "change_frequency"
     }
 
+    fn set_shared_state(&mut self, shared_state: Arc<SharedProcessorState>) {
+        self.shared_state = Some(shared_state);
+    }
+
+    fn shared_state(&self) -> Option<&Arc<SharedProcessorState>> {
+        self.shared_state.as_ref()
+    }
+
     async fn initialize(&mut self) -> PluginResult<()> {
         self.processing_start_time = Some(Instant::now());
         debug!("Initialized ChangeFrequencyEventProcessor with time window: {:?}", self.time_window);
+        Ok(())
+    }
+
+    async fn on_repository_metadata(&mut self, metadata: &RepositoryMetadata) -> PluginResult<()> {
+        debug!(
+            "ChangeFrequencyEventProcessor received repository metadata: {} commits expected",
+            metadata.total_commits.unwrap_or(0)
+        );
         Ok(())
     }
 
@@ -177,6 +198,13 @@ impl EventProcessor for ChangeFrequencyEventProcessor {
 
     fn get_stats(&self) -> ProcessorStats {
         self.stats.clone()
+    }
+}
+
+impl SharedStateAccess for ChangeFrequencyEventProcessor {
+    fn shared_state(&self) -> &SharedProcessorState {
+        self.shared_state.as_ref()
+            .expect("SharedProcessorState not initialized")
     }
 }
 

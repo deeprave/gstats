@@ -13,6 +13,8 @@ pub mod scanners;
 pub mod events;
 pub mod event_engine;
 pub mod processors;
+pub mod shared_state;
+pub mod event_filtering;
 
 // Re-export core types
 // pub use error::ScanResult;
@@ -20,6 +22,8 @@ pub use engine::{AsyncScannerEngineBuilder, EngineStats};
 pub use events::{RepositoryEvent, CommitInfo, FileChangeData, FileInfo, RepositoryStats, EventFilter, ChangeType};
 pub use event_engine::RepositoryEventEngine;
 pub use processors::{EventProcessor, ProcessorRegistry, ProcessorFactory, EventProcessingCoordinator};
+pub use shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, CacheStats, SharedStateAccess};
+pub use event_filtering::{AdvancedEventFilter, FilterDecision, ProcessorRouting, EventBatchingConfig, MemoryPressureMonitor};
 
 // Re-export statistics types for convenience
 

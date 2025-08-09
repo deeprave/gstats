@@ -1,10 +1,12 @@
 use crate::scanner::async_engine::events::RepositoryEvent;
+use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::ScanMessage;
 use crate::scanner::modes::ScanMode;
 use crate::scanner::async_engine::error::ScanError;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
 use log::{debug, info, warn};
 
 pub mod history;
@@ -19,6 +21,12 @@ pub trait EventProcessor: Send + Sync {
 
     /// Get a unique name for this processor
     fn name(&self) -> &'static str;
+
+    /// Set shared state for cross-processor communication
+    fn set_shared_state(&mut self, shared_state: Arc<SharedProcessorState>);
+
+    /// Get access to shared state
+    fn shared_state(&self) -> Option<&Arc<SharedProcessorState>>;
 
     /// Initialize the processor before event processing begins
     async fn initialize(&mut self) -> PluginResult<()> {
@@ -42,6 +50,11 @@ pub trait EventProcessor: Send + Sync {
     fn should_process_event(&self, event: &RepositoryEvent) -> bool {
         event.is_relevant_for_modes(self.supported_modes())
     }
+
+    /// Called when repository metadata is available (optional hook)
+    async fn on_repository_metadata(&mut self, _metadata: &RepositoryMetadata) -> PluginResult<()> {
+        Ok(())
+    }
 }
 
 /// Statistics for event processor performance
@@ -57,6 +70,7 @@ pub struct ProcessorStats {
 pub struct ProcessorRegistry {
     processors: HashMap<String, Box<dyn EventProcessor>>,
     active_modes: ScanMode,
+    shared_state: Arc<SharedProcessorState>,
 }
 
 impl ProcessorRegistry {
@@ -65,11 +79,31 @@ impl ProcessorRegistry {
         Self {
             processors: HashMap::new(),
             active_modes: modes,
+            shared_state: Arc::new(SharedProcessorState::new()),
         }
     }
 
+    /// Create a new processor registry with existing shared state
+    pub fn with_shared_state(modes: ScanMode, shared_state: Arc<SharedProcessorState>) -> Self {
+        Self {
+            processors: HashMap::new(),
+            active_modes: modes,
+            shared_state,
+        }
+    }
+
+    /// Get access to shared state
+    pub fn shared_state(&self) -> &Arc<SharedProcessorState> {
+        &self.shared_state
+    }
+
+    /// Initialize shared state with repository metadata
+    pub fn initialize_shared_state(&self, metadata: RepositoryMetadata) -> Result<(), String> {
+        self.shared_state.initialize(metadata)
+    }
+
     /// Register a processor
-    pub fn register_processor(&mut self, processor: Box<dyn EventProcessor>) {
+    pub fn register_processor(&mut self, mut processor: Box<dyn EventProcessor>) {
         let name = processor.name().to_string();
         let supported_modes = processor.supported_modes();
         
@@ -77,6 +111,9 @@ impl ProcessorRegistry {
         
         // Only register if the processor supports any of the active modes
         if supported_modes.intersects(self.active_modes) {
+            // Set shared state for the processor
+            processor.set_shared_state(self.shared_state.clone());
+            
             self.processors.insert(name.clone(), processor);
             info!("Registered processor '{}' for active modes", name);
         } else {
@@ -96,10 +133,22 @@ impl ProcessorRegistry {
 
     /// Initialize all registered processors
     pub async fn initialize_all(&mut self) -> PluginResult<()> {
+        // Get repository metadata from shared state
+        let metadata = self.shared_state.get_repository_metadata()
+            .map_err(|e| ScanError::processing(format!("Failed to get repository metadata: {}", e)))?;
+
         for (name, processor) in &mut self.processors {
             debug!("Initializing processor: {}", name);
+            
+            // Initialize the processor
             if let Err(e) = processor.initialize().await {
                 warn!("Failed to initialize processor '{}': {}", name, e);
+                return Err(e);
+            }
+
+            // Notify processor of repository metadata
+            if let Err(e) = processor.on_repository_metadata(&metadata).await {
+                warn!("Processor '{}' failed to handle repository metadata: {}", name, e);
                 return Err(e);
             }
         }
@@ -214,6 +263,18 @@ impl ProcessorFactory {
 
         registry
     }
+
+    /// Create a processor registry with shared state
+    pub fn create_registry_with_shared_state(modes: ScanMode, shared_state: Arc<SharedProcessorState>) -> ProcessorRegistry {
+        let mut registry = ProcessorRegistry::with_shared_state(modes, shared_state);
+        
+        let processors = Self::create_processors_for_modes(modes);
+        for processor in processors {
+            registry.register_processor(processor);
+        }
+
+        registry
+    }
 }
 
 /// Coordinator for managing event processing pipeline
@@ -222,24 +283,51 @@ pub struct EventProcessingCoordinator {
     total_events_processed: usize,
     total_messages_generated: usize,
     processing_start_time: Option<std::time::Instant>,
+    shared_state: Arc<SharedProcessorState>,
 }
 
 impl EventProcessingCoordinator {
     /// Create a new event processing coordinator
     pub fn new(modes: ScanMode) -> Self {
-        let registry = ProcessorFactory::create_registry_for_modes(modes);
+        let shared_state = Arc::new(SharedProcessorState::new());
+        let registry = ProcessorFactory::create_registry_with_shared_state(modes, shared_state.clone());
         
         Self {
             registry,
             total_events_processed: 0,
             total_messages_generated: 0,
             processing_start_time: None,
+            shared_state,
         }
     }
 
-    /// Initialize the coordinator and all processors
-    pub async fn initialize(&mut self) -> PluginResult<()> {
+    /// Create a new coordinator with existing shared state
+    pub fn with_shared_state(modes: ScanMode, shared_state: Arc<SharedProcessorState>) -> Self {
+        let registry = ProcessorFactory::create_registry_with_shared_state(modes, shared_state.clone());
+        
+        Self {
+            registry,
+            total_events_processed: 0,
+            total_messages_generated: 0,
+            processing_start_time: None,
+            shared_state,
+        }
+    }
+
+    /// Get access to shared state
+    pub fn shared_state(&self) -> &Arc<SharedProcessorState> {
+        &self.shared_state
+    }
+
+    /// Initialize the coordinator and all processors with repository metadata
+    pub async fn initialize(&mut self, metadata: RepositoryMetadata) -> PluginResult<()> {
         self.processing_start_time = Some(std::time::Instant::now());
+        
+        // Initialize shared state with repository metadata
+        self.registry.initialize_shared_state(metadata)
+            .map_err(|e| ScanError::processing(format!("Failed to initialize shared state: {}", e)))?;
+        
+        // Initialize all processors
         self.registry.initialize_all().await
     }
 
@@ -309,6 +397,7 @@ mod tests {
         name: &'static str,
         modes: ScanMode,
         messages_generated: usize,
+        shared_state: Option<Arc<SharedProcessorState>>,
     }
 
     impl MockProcessor {
@@ -317,6 +406,7 @@ mod tests {
                 name,
                 modes,
                 messages_generated: 0,
+                shared_state: None,
             }
         }
     }
@@ -329,6 +419,14 @@ mod tests {
 
         fn name(&self) -> &'static str {
             self.name
+        }
+
+        fn set_shared_state(&mut self, shared_state: Arc<SharedProcessorState>) {
+            self.shared_state = Some(shared_state);
+        }
+
+        fn shared_state(&self) -> Option<&Arc<SharedProcessorState>> {
+            self.shared_state.as_ref()
         }
 
         async fn process_event(&mut self, _event: &RepositoryEvent) -> PluginResult<Vec<ScanMessage>> {
@@ -416,7 +514,16 @@ mod tests {
     #[tokio::test]
     async fn test_event_processing_coordinator() {
         let mut coordinator = EventProcessingCoordinator::new(ScanMode::FILES);
-        coordinator.initialize().await.unwrap();
+        
+        let metadata = RepositoryMetadata {
+            total_commits: Some(0),
+            total_files: Some(5),
+            scan_start_time: Some(SystemTime::now()),
+            active_modes: ScanMode::FILES,
+            repository_path: Some("/test/repo".to_string()),
+        };
+        
+        coordinator.initialize(metadata).await.unwrap();
 
         let event = RepositoryEvent::RepositoryCompleted {
             stats: RepositoryStats {

@@ -123,14 +123,14 @@ async fn test_multiple_concurrent_scanners() {
     // Add multiple scanners for different modes
     builder = builder
         .add_scanner(Arc::new(ConcurrentScanner {
-            name: "FileScanner".to_string(),
+            name: "ConcurrentFileProcessor".to_string(),
             supported_modes: ScanMode::FILES,
             message_count: 10,
             work_duration_ms: 10,
             start_barrier: None,
         }))
         .add_scanner(Arc::new(ConcurrentScanner {
-            name: "HistoryScanner".to_string(),
+            name: "ConcurrentHistoryProcessor".to_string(),
             supported_modes: ScanMode::HISTORY,
             message_count: 10,
             work_duration_ms: 10,

@@ -78,6 +78,11 @@ impl ScanError {
         Self::Stream(msg.into())
     }
     
+    /// Create a processing error
+    pub fn processing(msg: impl Into<String>) -> Self {
+        Self::Task(msg.into()) // Map to Task variant for now
+    }
+    
     /// Create a resource limit error
     pub fn resource_limit(msg: impl Into<String>) -> Self {
         Self::ResourceLimit(msg.into())

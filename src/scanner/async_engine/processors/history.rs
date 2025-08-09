@@ -1,10 +1,12 @@
 use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
+use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::scanner::modes::ScanMode;
 use crate::scanner::query::QueryParams;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use log::{debug, info};
 
@@ -15,6 +17,7 @@ pub struct HistoryEventProcessor {
     filtered_commits: Vec<CommitInfo>,
     processing_start_time: Option<Instant>,
     stats: ProcessorStats,
+    shared_state: Option<Arc<SharedProcessorState>>,
 }
 
 impl HistoryEventProcessor {
@@ -26,6 +29,7 @@ impl HistoryEventProcessor {
             filtered_commits: Vec::new(),
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -37,6 +41,7 @@ impl HistoryEventProcessor {
             filtered_commits: Vec::new(),
             processing_start_time: None,
             stats: ProcessorStats::default(),
+            shared_state: None,
         }
     }
 
@@ -62,6 +67,17 @@ impl HistoryEventProcessor {
         };
 
         ScanMessage::new(header, commit_data)
+    }
+
+    /// Calculate a simple impact score for a commit
+    fn calculate_commit_impact_score(&self, commit: &CommitInfo) -> f64 {
+        let files_weight = 0.3;
+        let lines_weight = 0.7;
+        
+        let files_score = (commit.changed_files.len() as f64).min(10.0) / 10.0;
+        let lines_score = ((commit.insertions + commit.deletions) as f64).min(100.0) / 100.0;
+        
+        (files_score * files_weight + lines_score * lines_weight) * 100.0
     }
 
     /// Check if commit should be included based on query parameters
@@ -114,9 +130,25 @@ impl EventProcessor for HistoryEventProcessor {
         "history"
     }
 
+    fn set_shared_state(&mut self, shared_state: Arc<SharedProcessorState>) {
+        self.shared_state = Some(shared_state);
+    }
+
+    fn shared_state(&self) -> Option<&Arc<SharedProcessorState>> {
+        self.shared_state.as_ref()
+    }
+
     async fn initialize(&mut self) -> PluginResult<()> {
         self.processing_start_time = Some(Instant::now());
         debug!("Initialized HistoryEventProcessor");
+        Ok(())
+    }
+
+    async fn on_repository_metadata(&mut self, metadata: &RepositoryMetadata) -> PluginResult<()> {
+        debug!(
+            "HistoryEventProcessor received repository metadata: {} commits expected",
+            metadata.total_commits.unwrap_or(0)
+        );
         Ok(())
     }
 
@@ -127,6 +159,27 @@ impl EventProcessor for HistoryEventProcessor {
         match event {
             RepositoryEvent::CommitDiscovered { commit, index } => {
                 if self.should_include_commit(commit) {
+                    // Cache commit in shared state if available
+                    if let Some(shared_state) = &self.shared_state {
+                        if let Err(e) = shared_state.cache_commit(commit.clone()) {
+                            debug!("Failed to cache commit in shared state: {}", e);
+                        }
+
+                        // Share commit impact data with other processors
+                        let impact_data = ProcessorSharedData::CommitImpact {
+                            commit_hash: commit.hash.clone(),
+                            files_changed: commit.changed_files.len(),
+                            lines_added: commit.insertions,
+                            lines_removed: commit.deletions,
+                            impact_score: self.calculate_commit_impact_score(commit),
+                        };
+
+                        let key = format!("commit_impact_{}", commit.hash);
+                        if let Err(e) = shared_state.share_processor_data(key, impact_data) {
+                            debug!("Failed to share commit impact data: {}", e);
+                        }
+                    }
+
                     let message = self.create_commit_message(commit, *index);
                     messages.push(message);
                     self.filtered_commits.push(commit.clone());
@@ -174,6 +227,13 @@ impl EventProcessor for HistoryEventProcessor {
 
     fn get_stats(&self) -> ProcessorStats {
         self.stats.clone()
+    }
+}
+
+impl SharedStateAccess for HistoryEventProcessor {
+    fn shared_state(&self) -> &SharedProcessorState {
+        self.shared_state.as_ref()
+            .expect("SharedProcessorState not initialized")
     }
 }
 
