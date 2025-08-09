@@ -72,6 +72,11 @@ pub fn get_supported_modes() -> Vec<ModeInfo> {
             description: "Scan performance characteristics".to_string(),
             flag_value: ScanMode::PERFORMANCE.bits(),
         },
+        ModeInfo {
+            name: "change-frequency".to_string(),
+            description: "Scan file change frequency analysis".to_string(),
+            flag_value: ScanMode::CHANGE_FREQUENCY.bits(),
+        },
     ]
 }
 
@@ -81,7 +86,8 @@ pub fn get_supported_modes() -> Vec<ModeInfo> {
 /// * `ScanMode` - Bitflags containing all supported modes
 pub fn get_all_modes() -> ScanMode {
     ScanMode::FILES | ScanMode::HISTORY | ScanMode::METRICS | 
-    ScanMode::DEPENDENCIES | ScanMode::SECURITY | ScanMode::PERFORMANCE
+    ScanMode::DEPENDENCIES | ScanMode::SECURITY | ScanMode::PERFORMANCE |
+    ScanMode::CHANGE_FREQUENCY
 }
 
 /// Check if a scanning mode is valid (not empty)

@@ -10,10 +10,16 @@ pub mod stream;
 pub mod streaming_producer;
 pub mod repository;
 pub mod scanners;
+pub mod events;
+pub mod event_engine;
+pub mod processors;
 
 // Re-export core types
 // pub use error::ScanResult;
 pub use engine::{AsyncScannerEngineBuilder, EngineStats};
+pub use events::{RepositoryEvent, CommitInfo, FileChangeData, FileInfo, RepositoryStats, EventFilter, ChangeType};
+pub use event_engine::RepositoryEventEngine;
+pub use processors::{EventProcessor, ProcessorRegistry, ProcessorFactory, EventProcessingCoordinator};
 
 // Re-export statistics types for convenience
 
