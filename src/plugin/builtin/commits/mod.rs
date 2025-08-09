@@ -415,7 +415,6 @@ mod tests {
         
         PluginContext::new(
             scanner_config,
-            std::sync::Arc::new(repo),
             query_params,
         )
     }

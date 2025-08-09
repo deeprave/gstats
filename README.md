@@ -167,6 +167,33 @@ gstats --help
 
 All options can be configured via configuration file, with CLI arguments taking precedence.
 
+## Scan Modes
+
+gstats supports multiple scan modes that can be combined to provide comprehensive repository analysis:
+
+### Available Scan Modes
+- **FILES** - Scan file system structure and content
+- **HISTORY** - Scan git history and commits
+- **METRICS** - Scan for code metrics and statistics
+- **DEPENDENCIES** - Scan for dependencies and imports
+- **SECURITY** - Scan for security vulnerabilities
+- **PERFORMANCE** - Scan for performance bottlenecks
+- **CHANGE_FREQUENCY** - Analyse file change frequency patterns
+
+### Mode Combinations
+Scan modes can be combined using bitwise operations to enable multiple analysis types:
+- `FILES | HISTORY` - Analyse both file structure and git history
+- `HISTORY | CHANGE_FREQUENCY` - Combine commit analysis with change frequency patterns
+- `FILES | METRICS | SECURITY` - Comprehensive code analysis
+
+### Plugin Support
+Each plugin declares which scan modes it supports:
+- **Commits Plugin** - Supports `HISTORY` mode
+- **Metrics Plugin** - Supports `FILES | SECURITY` modes
+- **Export Plugin** - Supports all modes for data export
+
+The scanner engine automatically provides the appropriate data streams based on the requested modes, enabling plugins to focus on analysis rather than data collection.
+
 ## Architecture Overview
 
 gstats is built on a modern, async architecture designed for performance and extensibility:

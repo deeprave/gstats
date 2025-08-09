@@ -48,6 +48,17 @@ pub enum MessageData {
         timestamp: i64,
         changed_files: Vec<FileChangeData>,
     },
+    /// Change frequency analysis data
+    ChangeFrequencyInfo {
+        file_path: String,
+        change_count: u32,
+        author_count: u32,
+        last_changed: i64,
+        first_changed: i64,
+        frequency_score: f64,
+        recency_weight: f64,
+        authors: Vec<String>,
+    },
     /// Code metrics scanning data
     MetricInfo {
         file_count: u32,
@@ -125,6 +136,10 @@ impl ScanMessage {
             MessageData::CommitInfo { hash, author, message, changed_files, .. } => {
                 hash.len() + author.len() + message.len() + 
                 changed_files.iter().map(|f| f.path.len() + 16).sum::<usize>() // path + 2 usizes
+            },
+            MessageData::ChangeFrequencyInfo { file_path, authors, .. } => {
+                file_path.len() + authors.iter().map(|a| a.len()).sum::<usize>() + 
+                (authors.len() * std::mem::size_of::<String>()) + 32 // other fields
             },
             MessageData::DependencyInfo { name, version, license } => {
                 name.len() + version.len() + license.as_ref().map_or(0, |l| l.len())

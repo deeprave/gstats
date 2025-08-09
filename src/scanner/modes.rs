@@ -23,6 +23,8 @@ bitflags! {
         const SECURITY = 0x10;
         /// Scan for performance bottlenecks
         const PERFORMANCE = 0x20;
+        /// Scan for file change frequency analysis
+        const CHANGE_FREQUENCY = 0x40;
     }
 }
 

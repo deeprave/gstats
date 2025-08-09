@@ -16,6 +16,7 @@ use crate::plugin::{
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use pin_project::pin_project;
+use std::collections::HashMap;
 
 /// Plugin executor that processes messages through registered plugins
 pub struct PluginExecutor {
@@ -23,6 +24,8 @@ pub struct PluginExecutor {
     scan_modes: ScanMode,
     /// Track execution metrics
     metrics: Arc<RwLock<ExecutionMetrics>>,
+    /// Store aggregated results per plugin for later execution
+    aggregated_data: Arc<RwLock<HashMap<String, Vec<ScanMessage>>>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -40,37 +43,66 @@ impl PluginExecutor {
             registry: registry.inner().clone(),
             scan_modes,
             metrics: Arc::new(RwLock::new(ExecutionMetrics::default())),
+            aggregated_data: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Process a single message through all applicable plugins
     pub async fn process_message(&self, message: ScanMessage) -> Vec<ScanMessage> {
         let start_time = std::time::Instant::now();
-        let results = vec![message.clone()];
-        
+        let mut all_results = vec![message.clone()];
+
         // Get scanner plugins that support current scan mode
         let plugin_names = match self.get_applicable_plugins().await {
             Ok(plugins) => plugins,
             Err(e) => {
                 log::error!("Failed to get plugins: {}", e);
-                return results;
+                return all_results;
             }
         };
 
-        // Process message through each plugin
+        // Process message through each scanner plugin
         for plugin_name in plugin_names {
             log::debug!("Processing message through plugin: {}", plugin_name);
-            
-            // For now, we need to implement proper plugin message processing
-            // This requires either:
-            // 1. Adding an as_any() method to the Plugin trait, or
-            // 2. Adding a process_message method to the base Plugin trait, or
-            // 3. Using a different approach to handle ScannerPlugin specifically
-            //
-            // As a temporary solution, we'll log that processing would happen here
-            // The real issue is that plugins need their internal state updated during scanning
-            log::trace!("Plugin {} message processing not yet fully implemented", plugin_name);
-            
+
+            // Get the plugin from registry
+            let registry = self.registry.read().await;
+            if let Some(plugin) = registry.get_plugin(&plugin_name) {
+                // Try to downcast to ScannerPlugin
+                if let Some(scanner_plugin) = plugin.as_scanner_plugin() {
+                    // Check if this plugin supports the message's scan mode
+                    if scanner_plugin.supported_modes().intersects(message.header.scan_mode) {
+                        match scanner_plugin.process_scan_data(&message).await {
+                            Ok(processed_messages) => {
+                                log::debug!("Plugin {} processed message, got {} results",
+                                           plugin_name, processed_messages.len());
+
+                                // Store processed messages for aggregation
+                                {
+                                    let mut aggregated = self.aggregated_data.write().await;
+                                    let plugin_data = aggregated.entry(plugin_name.clone()).or_insert_with(Vec::new);
+                                    plugin_data.extend(processed_messages.clone());
+                                }
+
+                                all_results.extend(processed_messages);
+                            }
+                            Err(e) => {
+                                log::error!("Plugin {} failed to process message: {}", plugin_name, e);
+                                let mut metrics = self.metrics.write().await;
+                                metrics.errors += 1;
+                            }
+                        }
+                    } else {
+                        log::trace!("Plugin {} doesn't support scan mode {:?}",
+                                   plugin_name, message.header.scan_mode);
+                    }
+                } else {
+                    log::trace!("Plugin {} is not a ScannerPlugin", plugin_name);
+                }
+            } else {
+                log::warn!("Plugin {} not found in registry", plugin_name);
+            }
+
             // Update metrics
             let mut metrics = self.metrics.write().await;
             metrics.plugin_executions += 1;
@@ -82,7 +114,7 @@ impl PluginExecutor {
         metrics.messages_processed += 1;
         metrics.total_processing_time_ms += processing_time.as_millis() as u64;
 
-        results
+        all_results
     }
 
     /// Get plugins that support the current scan modes
@@ -114,6 +146,61 @@ impl PluginExecutor {
     pub async fn get_metrics(&self) -> ExecutionMetrics {
         self.metrics.read().await.clone()
     }
+
+    /// Finalize scanning by calling aggregate_results() on all ScannerPlugins
+    pub async fn finalize_scanning(&self) -> PluginResult<HashMap<String, ScanMessage>> {
+        let mut final_aggregated = HashMap::new();
+
+        // Get all plugins that have aggregated data
+        let aggregated_data = self.aggregated_data.read().await;
+        let plugin_names: Vec<String> = aggregated_data.keys().cloned().collect();
+        drop(aggregated_data); // Release the lock
+
+        for plugin_name in plugin_names {
+            log::debug!("Finalizing aggregated data for plugin: {}", plugin_name);
+
+            // Get the plugin and its aggregated data
+            let registry = self.registry.read().await;
+            if let Some(plugin) = registry.get_plugin(&plugin_name) {
+                if let Some(scanner_plugin) = plugin.as_scanner_plugin() {
+                    // Get the aggregated data for this plugin
+                    let aggregated_data = self.aggregated_data.read().await;
+                    if let Some(plugin_data) = aggregated_data.get(&plugin_name) {
+                        if !plugin_data.is_empty() {
+                            match scanner_plugin.aggregate_results(plugin_data.clone()).await {
+                                Ok(aggregated_message) => {
+                                    log::debug!("Plugin {} aggregated {} messages into final result",
+                                               plugin_name, plugin_data.len());
+                                    final_aggregated.insert(plugin_name.clone(), aggregated_message);
+                                }
+                                Err(e) => {
+                                    log::error!("Plugin {} failed to aggregate results: {}", plugin_name, e);
+                                    return Err(e);
+                                }
+                            }
+                        } else {
+                            log::debug!("Plugin {} has no data to aggregate", plugin_name);
+                        }
+                    }
+                }
+            }
+        }
+
+        log::info!("Finalized scanning with {} plugins having aggregated data", final_aggregated.len());
+        Ok(final_aggregated)
+    }
+
+    /// Get aggregated data for a specific plugin (for use in plugin execute methods)
+    pub async fn get_aggregated_data(&self, plugin_name: &str) -> Option<Vec<ScanMessage>> {
+        let aggregated_data = self.aggregated_data.read().await;
+        aggregated_data.get(plugin_name).cloned()
+    }
+
+    /// Clear all aggregated data (useful for cleanup)
+    pub async fn clear_aggregated_data(&self) {
+        let mut aggregated_data = self.aggregated_data.write().await;
+        aggregated_data.clear();
+    }
 }
 
 impl Clone for PluginExecutor {
@@ -122,6 +209,7 @@ impl Clone for PluginExecutor {
             registry: Arc::clone(&self.registry),
             scan_modes: self.scan_modes,
             metrics: Arc::clone(&self.metrics),
+            aggregated_data: Arc::clone(&self.aggregated_data),
         }
     }
 }
@@ -307,25 +395,23 @@ mod tests {
         let registry = create_test_registry().await;
         let executor = PluginExecutor::new(registry.clone(), ScanMode::FILES);
         
-        // Initialize the plugin
-        let _context = create_test_context();
-        {
-            let mut reg = registry.inner().write().await;
-            if let Some(_plugin) = reg.get_plugin_mut("test-scanner") {
-                // Plugin already exists, no need to create a new one
-                // Just initialize it
-                // plugin.initialize(&context).await.unwrap();
-            }
-        }
-        
         let message = create_test_message();
-        let results = executor.process_message(message).await;
-        
-        // Should have original message plus processed message
-        assert!(!results.is_empty());
-        
+        let results = executor.process_message(message.clone()).await;
+
+        // Should have original message plus processed messages from ScannerPlugin
+        // MockScannerPlugin.process_scan_data() returns 1 processed message
+        // So we expect: original (1) + processed (1) = 2 total
+        assert_eq!(results.len(), 2, "Expected original message + 1 processed message from ScannerPlugin");
+
+        // First message should be the original
+        assert_eq!(results[0], message);
+
+        // Second message should be the processed one (with modified timestamp)
+        assert_ne!(results[1], message, "Processed message should be different from original");
+
         let metrics = executor.get_metrics().await;
         assert_eq!(metrics.messages_processed, 1);
+        assert_eq!(metrics.plugin_executions, 1);
     }
 
     #[tokio::test]
@@ -354,32 +440,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_plugin_message_processor() {
+    async fn test_aggregated_data_storage_and_retrieval() {
         let registry = create_test_registry().await;
-        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-        
-        let processor = PluginMessageProcessor::new(
-            registry,
-            ScanMode::FILES,
-            tx
+        let executor = PluginExecutor::new(registry.clone(), ScanMode::FILES);
+
+        // Process multiple messages to build up aggregated data
+        let message1 = create_test_message();
+        let message2 = ScanMessage::new(
+            MessageHeader::new(ScanMode::FILES, 12346),
+            MessageData::FileInfo {
+                path: "test2.rs".to_string(),
+                size: 2048,
+                lines: 100,
+            }
         );
-        
-        // Create test stream
-        let messages = vec![
-            Ok(create_test_message()),
-            Ok(create_test_message()),
-        ];
-        let stream = stream::iter(messages);
-        
-        // Process stream
-        processor.process_stream(stream).await.unwrap();
-        
-        // Check output
-        let mut count = 0;
-        while let Ok(msg) = rx.try_recv() {
-            count += 1;
-        }
-        
-        assert!(count >= 2); // At least the original messages
+
+        // Process messages through plugins
+        let results1 = executor.process_message(message1.clone()).await;
+        let results2 = executor.process_message(message2.clone()).await;
+
+        // Verify messages were processed
+        assert!(results1.len() >= 1);
+        assert!(results2.len() >= 1);
+
+        // Check that aggregated data was stored
+        let aggregated_data = executor.get_aggregated_data("test-scanner").await;
+        assert!(aggregated_data.is_some(), "Aggregated data should be stored for test-scanner plugin");
+
+        let data = aggregated_data.unwrap();
+        assert!(data.len() >= 2, "Should have aggregated data from both processed messages");
+
+        // Test finalization
+        let final_aggregated = executor.finalize_scanning().await.unwrap();
+        assert!(final_aggregated.contains_key("test-scanner"), "Should have final aggregated data for test-scanner");
+
+        // Test cleanup
+        executor.clear_aggregated_data().await;
+        let cleared_data = executor.get_aggregated_data("test-scanner").await;
+        assert!(cleared_data.is_none(), "Aggregated data should be cleared");
     }
 }

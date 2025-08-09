@@ -855,11 +855,11 @@ fn create_plugin_context(repo_handle: git::RepositoryHandle) -> Result<plugin::P
     
     Ok(plugin::PluginContext {
         scanner_config,
-        repository: Arc::new(repo_handle),
         query_params,
         plugin_config: HashMap::new(),
         runtime_info,
         capabilities: Vec::new(),
+        aggregated_data: None,
     })
 }
 
@@ -1313,7 +1313,6 @@ async fn execute_plugin_function_with_data(
         let query_params = std::sync::Arc::new(scanner::QueryParams::default());
         let plugin_context = plugin::context::PluginContext::new(
             scanner_config,
-            std::sync::Arc::new(repo.clone()),
             query_params,
         );
         
@@ -1515,7 +1514,6 @@ async fn execute_plugin_function_with_data(
         // Initialize the plugin with a minimal context
         let context = plugin::context::PluginContext::new(
             Arc::new(scanner::config::ScannerConfig::default()),
-            Arc::new(repo.clone()),
             Arc::new(scanner::query::QueryParams::new()),
         );
         metrics_plugin.initialize(&context).await?;
@@ -1567,7 +1565,6 @@ async fn execute_plugin_function_with_data(
         // Initialize the plugin with a minimal context
         let context = plugin::context::PluginContext::new(
             Arc::new(scanner::config::ScannerConfig::default()),
-            Arc::new(repo.clone()),
             Arc::new(scanner::query::QueryParams::new()),
         );
         export_plugin.initialize(&context).await?;
@@ -1957,10 +1954,22 @@ async fn display_metrics_report(data: &serde_json::Value, colour_manager: &displ
         let total_files = data.get("total_files").and_then(|v| v.as_u64()).unwrap_or(0);
         let total_lines = data.get("total_lines").and_then(|v| v.as_u64()).unwrap_or(0);
         let avg_lines = data.get("average_lines_per_file").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let complexity = data.get("total_complexity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        
-        println!("Files: {} | Lines: {} | Avg/File: {:.1} | Complexity: {:.1}",
-                 total_files, total_lines, avg_lines, complexity);
+        let total_complexity = data.get("total_complexity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        // Calculate average complexity and risk assessment
+        let avg_complexity = if total_files > 0 { total_complexity / total_files as f64 } else { 0.0 };
+        let complexity_risk = if avg_complexity <= 10.0 {
+            "Low"
+        } else if avg_complexity <= 20.0 {
+            "Moderate"
+        } else if avg_complexity <= 50.0 {
+            "High"
+        } else {
+            "Very High"
+        };
+
+        println!("Source Code Files: {} | Lines: {} | Lines/File(avg): ({:.1}) | Cyclomatic Complexity(avg): {} ({:.1})",
+                 total_files, total_lines, avg_lines, complexity_risk, avg_complexity);
         return Ok(());
     }
     

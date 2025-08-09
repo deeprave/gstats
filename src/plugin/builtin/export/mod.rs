@@ -312,7 +312,6 @@ mod tests {
         
         PluginContext::new(
             scanner_config,
-            Arc::new(repo),
             query_params,
         )
     }

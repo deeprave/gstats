@@ -63,6 +63,11 @@ pub trait Plugin: Send + Sync {
         // Default implementation returns None
         None
     }
+
+    /// Downcast to ScannerPlugin if this plugin implements it
+    fn as_scanner_plugin(&self) -> Option<&dyn ScannerPlugin> {
+        None // Default implementation - plugins that implement ScannerPlugin should override this
+    }
 }
 
 /// Scanner-specific plugin capabilities extending the base Plugin trait

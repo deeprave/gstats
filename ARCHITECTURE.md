@@ -69,11 +69,13 @@ High-performance async scanning system for repository analysis.
 
 ```rust
 // Scanner modes (bitflags for combinations)
-ScanMode::FILES        // File system analysis
-ScanMode::HISTORY      // Git commit history
-ScanMode::METRICS      // Code quality metrics
-ScanMode::SECURITY     // Security vulnerability scanning
-ScanMode::DEPENDENCIES // Dependency analysis
+ScanMode::FILES            // File system analysis
+ScanMode::HISTORY          // Git commit history
+ScanMode::METRICS          // Code quality metrics
+ScanMode::SECURITY         // Security vulnerability scanning
+ScanMode::DEPENDENCIES     // Dependency analysis
+ScanMode::PERFORMANCE      // Performance bottleneck detection
+ScanMode::CHANGE_FREQUENCY // File change frequency analysis
 ```
 
 ### 3. Message Queue System (`src/queue/`)

@@ -178,11 +178,134 @@ impl AsyncScanner for AsyncHistoryScanner {
     }
 }
 
+/// Async change frequency scanner that analyzes file change patterns
+pub struct AsyncChangeFrequencyScanner {
+    repository: Arc<AsyncRepositoryHandle>,
+    name: String,
+    time_window_days: u32,
+}
+
+impl AsyncChangeFrequencyScanner {
+    /// Create a new async change frequency scanner
+    pub fn new(repository: Arc<AsyncRepositoryHandle>) -> Self {
+        Self {
+            repository,
+            name: "AsyncChangeFrequencyScanner".to_string(),
+            time_window_days: 90, // Default to 3 months
+        }
+    }
+    
+    /// Create a change frequency scanner with custom time window
+    pub fn with_time_window(repository: Arc<AsyncRepositoryHandle>, time_window_days: u32) -> Self {
+        Self {
+            repository,
+            name: format!("AsyncChangeFrequencyScanner-{}d", time_window_days),
+            time_window_days,
+        }
+    }
+    
+    /// Analyze change frequency for all files in the repository
+    async fn analyze_change_frequency(&self) -> ScanResult<impl Stream<Item = ScanResult<ScanMessage>>> {
+        use std::collections::HashMap;
+        use chrono::{Utc, Duration};
+        
+        // Get current time and calculate cutoff
+        let now = Utc::now();
+        let cutoff = now - Duration::days(self.time_window_days as i64);
+        let cutoff_timestamp = cutoff.timestamp();
+        
+        // Get commit history within time window
+        let commits = self.repository.get_commit_history(None).await?;
+        
+        // Build file change statistics
+        let mut file_stats: HashMap<String, (u32, Vec<String>, i64, i64)> = HashMap::new(); // (count, authors, first, last)
+        
+        for commit in commits {
+            if commit.timestamp >= cutoff_timestamp {
+                for file_change in &commit.changed_files {
+                    let entry = file_stats.entry(file_change.path.clone()).or_insert((0, Vec::new(), commit.timestamp, commit.timestamp));
+                    entry.0 += 1; // increment change count
+                    if !entry.1.contains(&commit.author) {
+                        entry.1.push(commit.author.clone()); // add unique author
+                    }
+                    entry.2 = entry.2.min(commit.timestamp); // first change
+                    entry.3 = entry.3.max(commit.timestamp); // last change
+                }
+            }
+        }
+        
+        // Convert to scan messages
+        let messages: Vec<ScanResult<ScanMessage>> = file_stats.into_iter().enumerate().map(|(index, (file_path, (change_count, authors, first_changed, last_changed)))| {
+            // Calculate frequency score (changes per day)
+            let days_in_window = self.time_window_days as f64;
+            let frequency_score = change_count as f64 / days_in_window;
+            
+            // Calculate recency weight (more recent changes get higher weight)
+            let days_since_last_change = (now.timestamp() - last_changed) as f64 / 86400.0; // seconds to days
+            let recency_weight = if days_since_last_change <= 0.0 {
+                1.0
+            } else {
+                1.0 / (1.0 + days_since_last_change / 30.0) // decay over 30 days
+            };
+            
+            let header = MessageHeader::new(ScanMode::CHANGE_FREQUENCY, index as u64);
+            let data = MessageData::ChangeFrequencyInfo {
+                file_path,
+                change_count,
+                author_count: authors.len() as u32,
+                last_changed,
+                first_changed,
+                frequency_score,
+                recency_weight,
+                authors,
+            };
+            
+            Ok(ScanMessage::new(header, data))
+        }).collect();
+        
+        Ok(stream::iter(messages))
+    }
+}
+
+#[async_trait::async_trait]
+impl AsyncScanner for AsyncChangeFrequencyScanner {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    
+    fn supports_mode(&self, mode: ScanMode) -> bool {
+        mode.contains(ScanMode::CHANGE_FREQUENCY)
+    }
+    
+    async fn scan_async(&self, modes: ScanMode) -> ScanResult<ScanMessageStream> {
+        if !modes.contains(ScanMode::CHANGE_FREQUENCY) {
+            return Err(ScanError::invalid_mode(modes));
+        }
+        
+        let stream = self.analyze_change_frequency().await?;
+        Ok(Box::pin(stream))
+    }
+    
+    async fn estimate_message_count(&self, modes: ScanMode) -> Option<usize> {
+        if !modes.contains(ScanMode::CHANGE_FREQUENCY) {
+            return None;
+        }
+        
+        // Estimate based on repository size - this is a rough estimate
+        // In practice, we'd need to analyze the git history to get an accurate count
+        match self.repository.get_repository_stats().await {
+            Ok(_stats) => Some(100), // Fallback estimate since file_count is not available
+            Err(_) => Some(100), // Fallback estimate
+        }
+    }
+}
+
 /// Combined scanner that handles multiple modes
 pub struct AsyncCombinedScanner {
     name: String,
     file_scanner: AsyncFileScanner,
     history_scanner: AsyncHistoryScanner,
+    change_frequency_scanner: AsyncChangeFrequencyScanner,
 }
 
 impl AsyncCombinedScanner {
@@ -190,11 +313,13 @@ impl AsyncCombinedScanner {
     pub fn new(repository: Arc<AsyncRepositoryHandle>) -> Self {
         let file_scanner = AsyncFileScanner::new(Arc::clone(&repository));
         let history_scanner = AsyncHistoryScanner::new(Arc::clone(&repository));
+        let change_frequency_scanner = AsyncChangeFrequencyScanner::new(Arc::clone(&repository));
         
         Self {
             name: "AsyncCombinedScanner".to_string(),
             file_scanner,
             history_scanner,
+            change_frequency_scanner,
         }
     }
     
@@ -210,11 +335,13 @@ impl AsyncCombinedScanner {
             format!("{}-History", name),
             max_commits
         );
+        let change_frequency_scanner = AsyncChangeFrequencyScanner::new(Arc::clone(&repository));
         
         Self {
             name,
             file_scanner,
             history_scanner,
+            change_frequency_scanner,
         }
     }
 }
@@ -226,7 +353,9 @@ impl AsyncScanner for AsyncCombinedScanner {
     }
     
     fn supports_mode(&self, mode: ScanMode) -> bool {
-        self.file_scanner.supports_mode(mode) || self.history_scanner.supports_mode(mode)
+        self.file_scanner.supports_mode(mode) || 
+        self.history_scanner.supports_mode(mode) || 
+        self.change_frequency_scanner.supports_mode(mode)
     }
     
     async fn scan_async(&self, modes: ScanMode) -> ScanResult<ScanMessageStream> {
@@ -242,6 +371,12 @@ impl AsyncScanner for AsyncCombinedScanner {
         if modes.contains(ScanMode::HISTORY) {
             let history_stream = self.history_scanner.scan_async(ScanMode::HISTORY).await?;
             streams.push(history_stream);
+        }
+        
+        // Add change frequency scanner stream if CHANGE_FREQUENCY mode is requested
+        if modes.contains(ScanMode::CHANGE_FREQUENCY) {
+            let change_frequency_stream = self.change_frequency_scanner.scan_async(ScanMode::CHANGE_FREQUENCY).await?;
+            streams.push(change_frequency_stream);
         }
         
         if streams.is_empty() {
@@ -271,6 +406,13 @@ impl AsyncScanner for AsyncCombinedScanner {
         
         if modes.contains(ScanMode::HISTORY) {
             if let Some(count) = self.history_scanner.estimate_message_count(ScanMode::HISTORY).await {
+                total += count;
+                has_estimate = true;
+            }
+        }
+        
+        if modes.contains(ScanMode::CHANGE_FREQUENCY) {
+            if let Some(count) = self.change_frequency_scanner.estimate_message_count(ScanMode::CHANGE_FREQUENCY).await {
                 total += count;
                 has_estimate = true;
             }
@@ -365,6 +507,39 @@ mod tests {
     }
     
     #[tokio::test]
+    async fn test_async_change_frequency_scanner() {
+        let sync_handle = git::resolve_repository_handle(None).unwrap();
+        let async_handle = Arc::new(AsyncRepositoryHandle::new(sync_handle));
+        let scanner = AsyncChangeFrequencyScanner::new(async_handle);
+        
+        assert_eq!(scanner.name(), "AsyncChangeFrequencyScanner");
+        assert!(scanner.supports_mode(ScanMode::CHANGE_FREQUENCY));
+        assert!(!scanner.supports_mode(ScanMode::FILES));
+        assert!(!scanner.supports_mode(ScanMode::HISTORY));
+        
+        // Test scanning with change frequency mode
+        let stream = scanner.scan_async(ScanMode::CHANGE_FREQUENCY).await.unwrap();
+        let messages: Vec<_> = tokio_stream::StreamExt::collect(tokio_stream::StreamExt::take(stream, 5)).await;
+        
+        // Should have some messages (may be empty if no recent changes)
+        assert!(messages.len() <= 5);
+        
+        // All messages should be successful and have CHANGE_FREQUENCY mode
+        for result in messages {
+            let message = result.unwrap();
+            assert_eq!(message.header().mode(), ScanMode::CHANGE_FREQUENCY);
+            
+            match message.data() {
+                MessageData::ChangeFrequencyInfo { file_path, change_count, .. } => {
+                    assert!(!file_path.is_empty());
+                    assert!(*change_count > 0);
+                },
+                _ => panic!("Expected ChangeFrequencyInfo message data"),
+            }
+        }
+    }
+    
+    #[tokio::test]
     async fn test_async_combined_scanner() {
         let sync_handle = git::resolve_repository_handle(None).unwrap();
         let async_handle = Arc::new(AsyncRepositoryHandle::new(sync_handle));
@@ -373,31 +548,34 @@ mod tests {
         assert_eq!(scanner.name(), "AsyncCombinedScanner");
         assert!(scanner.supports_mode(ScanMode::FILES));
         assert!(scanner.supports_mode(ScanMode::HISTORY));
+        assert!(scanner.supports_mode(ScanMode::CHANGE_FREQUENCY));
         assert!(scanner.supports_mode(ScanMode::FILES | ScanMode::HISTORY));
+        assert!(scanner.supports_mode(ScanMode::FILES | ScanMode::HISTORY | ScanMode::CHANGE_FREQUENCY));
         
-        // Test scanning both modes
-        let combined_mode = ScanMode::FILES | ScanMode::HISTORY;
+        // Test scanning all three modes
+        let combined_mode = ScanMode::FILES | ScanMode::HISTORY | ScanMode::CHANGE_FREQUENCY;
         let stream = scanner.scan_async(combined_mode).await.unwrap();
-        let messages: Vec<_> = tokio_stream::StreamExt::collect(tokio_stream::StreamExt::take(stream, 10)).await;
+        let messages: Vec<_> = tokio_stream::StreamExt::collect(tokio_stream::StreamExt::take(stream, 15)).await;
         
         assert!(!messages.is_empty());
         
-        // Should have messages from both scanners
+        // Should have messages from all scanners
         let mut has_files = false;
         let mut has_history = false;
+        let mut has_change_frequency = false;
         
         for result in messages {
             let message = result.unwrap();
             match message.header().mode() {
                 ScanMode::FILES => has_files = true,
                 ScanMode::HISTORY => has_history = true,
+                ScanMode::CHANGE_FREQUENCY => has_change_frequency = true,
                 _ => {}
             }
         }
         
-        // Both modes should be represented (though not guaranteed in small sample)
         // At minimum, we should have at least one type
-        assert!(has_files || has_history);
+        assert!(has_files || has_history || has_change_frequency);
     }
     
     #[tokio::test]
@@ -407,6 +585,7 @@ mod tests {
         
         let file_scanner = AsyncFileScanner::new(Arc::clone(&async_handle));
         let history_scanner = AsyncHistoryScanner::new(Arc::clone(&async_handle));
+        let change_frequency_scanner = AsyncChangeFrequencyScanner::new(Arc::clone(&async_handle));
         let combined_scanner = AsyncCombinedScanner::new(async_handle);
         
         // File scanner should provide estimate
@@ -419,8 +598,13 @@ mod tests {
         assert!(history_estimate.is_some());
         assert!(history_estimate.unwrap() > 0);
         
+        // Change frequency scanner should provide estimate
+        let change_frequency_estimate = change_frequency_scanner.estimate_message_count(ScanMode::CHANGE_FREQUENCY).await;
+        assert!(change_frequency_estimate.is_some());
+        assert!(change_frequency_estimate.unwrap() > 0);
+        
         // Combined scanner should provide estimate for combined modes
-        let combined_estimate = combined_scanner.estimate_message_count(ScanMode::FILES | ScanMode::HISTORY).await;
+        let combined_estimate = combined_scanner.estimate_message_count(ScanMode::FILES | ScanMode::HISTORY | ScanMode::CHANGE_FREQUENCY).await;
         assert!(combined_estimate.is_some());
         assert!(combined_estimate.unwrap() > 0);
     }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use crate::scanner::{ScannerConfig, QueryParams};
 use crate::scanner::modes::ScanMode;
-use crate::git::RepositoryHandle;
+use crate::scanner::messages::ScanMessage;
 use crate::display::CompactFormat;
 
 /// Context provided to plugins during initialization and execution
@@ -15,9 +15,6 @@ use crate::display::CompactFormat;
 pub struct PluginContext {
     /// Scanner configuration
     pub scanner_config: Arc<ScannerConfig>,
-    
-    /// Repository handle for git operations
-    pub repository: Arc<RepositoryHandle>,
     
     /// Query parameters for filtering
     pub query_params: Arc<QueryParams>,
@@ -30,6 +27,9 @@ pub struct PluginContext {
     
     /// Available capabilities
     pub capabilities: Vec<String>,
+
+    /// Aggregated scan data from scanner subsystem (populated after scanning)
+    pub aggregated_data: Option<ScanMessage>,
 }
 
 /// Runtime environment information
@@ -172,16 +172,15 @@ impl PluginContext {
     /// Create a new plugin context
     pub fn new(
         scanner_config: Arc<ScannerConfig>,
-        repository: Arc<RepositoryHandle>,
         query_params: Arc<QueryParams>,
     ) -> Self {
         Self {
             scanner_config,
-            repository,
             query_params,
             plugin_config: HashMap::new(),
             runtime_info: RuntimeInfo::current(),
             capabilities: Vec::new(),
+            aggregated_data: None,
         }
     }
     
@@ -435,8 +434,24 @@ impl CompactFormat for PluginResponse {
                         }
                         "metrics" => {
                             let files = data.get("total_files").and_then(|f| f.as_u64()).unwrap_or(0);
-                            let complexity = data.get("total_complexity").and_then(|c| c.as_f64()).unwrap_or(0.0);
-                            format!("{} files, complexity: {:.1}", files, complexity)
+                            let lines = data.get("total_lines").and_then(|l| l.as_u64()).unwrap_or(0);
+                            let avg_lines = data.get("average_lines_per_file").and_then(|a| a.as_f64()).unwrap_or(0.0);
+                            let total_complexity = data.get("total_complexity").and_then(|c| c.as_f64()).unwrap_or(0.0);
+
+                            // Calculate average complexity and risk assessment
+                            let avg_complexity = if files > 0 { total_complexity / files as f64 } else { 0.0 };
+                            let complexity_risk = if avg_complexity <= 10.0 {
+                                "Low"
+                            } else if avg_complexity <= 20.0 {
+                                "Moderate"
+                            } else if avg_complexity <= 50.0 {
+                                "High"
+                            } else {
+                                "Very High"
+                            };
+
+                            format!("Source Code Files: {} | Lines: {} | Lines(avg)/File: ({:.1}) | Avg Cyclomatic Complexity: {} ({:.1})",
+                                    files, lines, avg_lines, complexity_risk, avg_complexity)
                         }
                         _ => format!("{} function", function),
                     };
@@ -502,42 +517,7 @@ impl CompactFormat for ExecutionMetadata {
     }
 }
 
-// CompactFormat implementations for plugin output
-impl CompactFormat for ExecutionMetadata {
-    fn to_compact_format(&self) -> String {
-        // Extract metrics from the plugin data if available
-        // This is a simplified implementation - in practice, we'd need to parse the JSON data
-        let files = self.entries_processed;
-        let lines = 0; // Would need to extract from plugin data
-        let avg_per_file = if files > 0 { lines as f64 / files as f64 } else { 0.0 };
-        let complexity = 0.0; // Would need to extract from plugin data
 
-        format!("Files: {} | Lines: {} | Avg/File: {:.1} | Complexity: {:.1}",
-                files, lines, avg_per_file, complexity)
-    }
-}
-
-impl CompactFormat for PluginResponse {
-    fn to_compact_format(&self) -> String {
-        match self {
-            PluginResponse::Execute { data, metadata, .. } => {
-                // Try to extract metrics from the JSON data
-                if let Some(total_files) = data.get("total_files").and_then(|v| v.as_u64()) {
-                    let total_lines = data.get("total_lines").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let avg_complexity = data.get("average_complexity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let avg_lines = data.get("average_lines_per_file").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-                    format!("Files: {} | Lines: {} | Avg/File: {:.1} | Complexity: {:.1}",
-                            total_files, total_lines, avg_lines, avg_complexity)
-                } else {
-                    // Fallback to metadata-based format
-                    metadata.to_compact_format()
-                }
-            }
-            _ => "Plugin execution result".to_string(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -552,7 +532,6 @@ mod tests {
         
         let context = PluginContext::new(
             scanner_config,
-            Arc::new(repo),
             query_params,
         );
         
@@ -572,7 +551,6 @@ mod tests {
         
         let context = PluginContext::new(
             scanner_config,
-            Arc::new(repo),
             query_params,
         ).with_plugin_config(config);
         
@@ -661,7 +639,6 @@ mod tests {
         
         let context = PluginContext::new(
             scanner_config,
-            Arc::new(repo),
             query_params,
         ).with_capabilities(vec!["async".to_string(), "streaming".to_string()]);
         

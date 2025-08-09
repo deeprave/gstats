@@ -162,6 +162,11 @@ impl Plugin for MockScannerPlugin {
     fn plugin_state(&self) -> PluginState {
         self.base.plugin_state()
     }
+
+    /// Override to provide ScannerPlugin access
+    fn as_scanner_plugin(&self) -> Option<&dyn ScannerPlugin> {
+        Some(self)
+    }
 }
 
 #[async_trait]
@@ -355,7 +360,7 @@ pub fn create_test_context() -> PluginContext {
     let scanner_config = Arc::new(ScannerConfig::default());
     let query_params = Arc::new(QueryParams::default());
 
-    PluginContext::new(scanner_config, Arc::new(repo), query_params)
+    PluginContext::new(scanner_config, query_params)
 }
 
 /// Helper function to create a test plugin request
