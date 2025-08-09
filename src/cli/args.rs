@@ -26,11 +26,13 @@ COMMANDS:
   metrics             Generate code complexity metrics
                       Example: gstats metrics --include-path src/
   
-  export              Export analysis in various formats
-                      Example: gstats export --format json > report.json
+  export              Export analysis with auto-format detection
+                      Example: gstats export data.json (auto-detects JSON)
+                      Example: gstats export --format csv > report.csv
 
 For command-specific help: gstats <command> --help
-For plugin discovery: gstats --plugins")]
+For plugin discovery: gstats --plugins
+For export formats: gstats --list-formats")]
 #[command(version)]
 pub struct Args {
     /// Path to git repository (defaults to current directory)
@@ -201,6 +203,10 @@ pub struct Args {
     #[arg(long = "plugin-exclude", value_name = "LIST", help = "Comma-separated list of plugins to exclude")]
     pub plugin_exclude: Option<String>,
     
+    /// List all supported export formats with their extensions
+    #[arg(long = "list-formats", help = "List all supported export formats and their file extensions")]
+    pub list_formats: bool,
+    
     /// Export complete configuration to TOML file
     /// Example: --export-config gstats-config.toml
     #[arg(long = "export-config", value_name = "FILE", help = "Export complete configuration to specified TOML file")]
@@ -338,6 +344,7 @@ mod tests {
             plugins_dir: Vec::new(),
             plugin_load: None,
             plugin_exclude: None,
+            list_formats: false,
             export_config: None,
         }
     }

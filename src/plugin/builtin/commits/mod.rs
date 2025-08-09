@@ -85,25 +85,29 @@ impl CommitsPlugin {
     
     /// Execute commits analysis function
     async fn execute_commits_analysis(&self) -> PluginResult<PluginResponse> {
+        let start_time = std::time::Instant::now();
+
         let data = json!({
             "total_commits": self.commit_count,
             "unique_authors": self.author_stats.len(),
-            "avg_commits_per_author": if self.author_stats.is_empty() { 
-                0.0 
-            } else { 
-                self.commit_count as f64 / self.author_stats.len() as f64 
+            "avg_commits_per_author": if self.author_stats.is_empty() {
+                0.0
+            } else {
+                self.commit_count as f64 / self.author_stats.len() as f64
             },
             "function": "commits"
         });
-        
+
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "commits_analysis".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: self.commit_count as u64,
+                entries_processed: self.commit_count as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -113,9 +117,11 @@ impl CommitsPlugin {
     
     /// Execute author analysis function  
     async fn execute_author_analysis(&self) -> PluginResult<PluginResponse> {
+        let start_time = std::time::Instant::now();
+
         let mut authors: Vec<_> = self.author_stats.iter().collect();
         authors.sort_by(|a, b| b.1.cmp(a.1)); // Sort by commit count descending
-        
+
         let data = json!({
             "total_authors": self.author_stats.len(),
             "top_authors": authors.iter().take(10).map(|(name, count)| {
@@ -124,15 +130,17 @@ impl CommitsPlugin {
             "author_stats": self.author_stats,
             "function": "authors"
         });
-        
+
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "author_analysis".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: self.author_stats.len() as u64,
+                entries_processed: self.author_stats.len() as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },

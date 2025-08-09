@@ -313,7 +313,7 @@ impl NotificationPlugin for MockNotificationPlugin {
         }
 
         self.notifications_received.lock().unwrap().push(
-            format!("scan_progress:{}:{}", progress.scan_id, progress.items_processed)
+            format!("scan_progress:{}:{}", progress.scan_id, progress.entries_processed)
         );
         Ok(())
     }

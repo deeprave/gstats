@@ -233,7 +233,7 @@ impl HelpFormatter {
         let plugins = vec![
             ("commits", "authors, contributors, committers, commits, history"),
             ("metrics", "metrics, complexity, quality"),
-            ("export", "export, json, csv, xml"),
+            ("export", "export with auto-format detection (json, csv, xml, yaml, html, markdown)"),
         ];
         
         // Calculate column widths based on content

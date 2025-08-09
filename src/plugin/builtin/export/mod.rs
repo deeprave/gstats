@@ -334,60 +334,68 @@ impl Plugin for ExportPlugin {
     async fn execute(&self, request: PluginRequest) -> PluginResult<PluginResponse> {
         match request {
             PluginRequest::Execute { request_id, .. } => {
+                // Measure execution time
+                let start_time = std::time::Instant::now();
+
                 // Perform the actual export
                 let exported_data_str = self.export_data().await?;
-                
+
+                let duration_us = start_time.elapsed().as_micros() as u64;
+
                 // Parse the exported data as JSON so it's not double-encoded
                 let exported_data: serde_json::Value = serde_json::from_str(&exported_data_str)
                     .unwrap_or_else(|_| serde_json::json!(exported_data_str));
-                
+
                 let metadata = crate::plugin::context::ExecutionMetadata {
-                    duration_ms: 0,
+                    duration_us,
                     memory_used: 0,
-                    items_processed: self.collected_data.len() as u64,
+                    entries_processed: self.collected_data.len() as u64,
                     plugin_version: "1.0.0".to_string(),
                     extra: std::collections::HashMap::new(),
                 };
-                
+
                 // Return the exported data as JSON
                 let result_data = serde_json::json!({
                     "exported_data": exported_data,
-                    "format": format!("{:?}", self.export_config.output_format),
-                    "items_processed": self.collected_data.len()
+                    "entries_processed": self.collected_data.len()
                 });
-                
+
                 Ok(PluginResponse::success(request_id, result_data, metadata))
             }
             PluginRequest::Export => {
+                // Measure execution time
+                let start_time = std::time::Instant::now();
+
                 // Handle direct export request
                 let exported_data_str = self.export_data().await?;
-                
+
+                let duration_us = start_time.elapsed().as_micros() as u64;
+
                 // Parse the exported data as JSON so it's not double-encoded
                 let exported_data: serde_json::Value = serde_json::from_str(&exported_data_str)
                     .unwrap_or_else(|_| serde_json::json!(exported_data_str));
-                
+
                 let metadata = crate::plugin::context::ExecutionMetadata {
-                    duration_ms: 0,
+                    duration_us,
                     memory_used: 0,
-                    items_processed: self.collected_data.len() as u64,
+                    entries_processed: self.collected_data.len() as u64,
                     plugin_version: "1.0.0".to_string(),
                     extra: std::collections::HashMap::new(),
                 };
-                
+
                 // For Export requests, return the raw exported data
                 let result_data = serde_json::json!({
                     "exported_data": exported_data,
-                    "format": format!("{:?}", self.export_config.output_format),
-                    "items_processed": self.collected_data.len()
+                    "entries_processed": self.collected_data.len()
                 });
-                
+
                 Ok(PluginResponse::success("export".to_string(), result_data, metadata))
             }
             _ => {
                 let _metadata = crate::plugin::context::ExecutionMetadata {
-                    duration_ms: 0,
+                    duration_us: 0,
                     memory_used: 0,
-                    items_processed: 0,
+                    entries_processed: 0,
                     plugin_version: "1.0.0".to_string(),
                     extra: std::collections::HashMap::new(),
                 };
@@ -617,3 +625,5 @@ impl PluginArgumentParser for ExportPlugin {
         Ok(())
     }
 }
+
+

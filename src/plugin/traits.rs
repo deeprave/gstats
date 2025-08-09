@@ -284,8 +284,8 @@ pub struct ScanProgress {
     /// Scan mode
     pub scan_mode: ScanMode,
     
-    /// Items processed
-    pub items_processed: u64,
+    /// Entries processed
+    pub entries_processed: u64,
     
     /// Total items (if known)
     pub total_items: Option<u64>,
@@ -466,11 +466,11 @@ impl QueueUpdate {
 
 impl ScanProgress {
     /// Create a new scan progress notification
-    pub fn new(scan_id: String, scan_mode: ScanMode, items_processed: u64, current_phase: String) -> Self {
+    pub fn new(scan_id: String, scan_mode: ScanMode, entries_processed: u64, current_phase: String) -> Self {
         Self {
             scan_id,
             scan_mode,
-            items_processed,
+            entries_processed,
             total_items: None,
             progress_percentage: 0.0,
             estimated_remaining: None,
@@ -482,7 +482,7 @@ impl ScanProgress {
     pub fn with_total_items(mut self, total_items: u64) -> Self {
         self.total_items = Some(total_items);
         if total_items > 0 {
-            self.progress_percentage = self.items_processed as f64 / total_items as f64;
+            self.progress_percentage = self.entries_processed as f64 / total_items as f64;
         }
         self
     }

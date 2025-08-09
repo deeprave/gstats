@@ -866,7 +866,7 @@ impl NotificationPlugin for MyNotificationPlugin {
     }
     
     async fn on_scan_progress(&self, progress: ScanProgress) -> PluginResult<()> {
-        println!("Scan {} processed {} items", progress.scan_id, progress.items_processed);
+        println!("Scan {} processed {} entries", progress.scan_id, progress.entries_processed);
         Ok(())
     }
     

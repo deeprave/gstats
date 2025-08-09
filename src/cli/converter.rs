@@ -327,6 +327,7 @@ mod tests {
             show_plugins: false,
             plugins_help: false,
             export_config: None,
+            list_formats: false,
         }
     }
 
@@ -475,6 +476,7 @@ mod tests {
             show_plugins: false,
             plugins_help: false,
             export_config: None,
+            list_formats: false,
         };
         
         let result = args_to_query_params(&args).unwrap();
@@ -596,7 +598,7 @@ mod tests {
                 plugin_args: Vec::new(),
                 list_plugins: false,
                 plugin_info: None,
-                    list_by_type: None,
+                list_by_type: None,
                 plugin_dir: None,
                 plugins_dir: Vec::new(),
                 plugin_load: None,
@@ -604,6 +606,7 @@ mod tests {
                 show_plugins: false,
                 plugins_help: false,
                 export_config: None,
+                list_formats: false,
             };
             
             let result = args_to_scanner_config(&args, None).unwrap();
@@ -737,6 +740,7 @@ mod tests {
             show_plugins: false,
             plugins_help: false,
             export_config: None,
+            list_formats: false,
         };
         
         let result = args_to_scanner_config(&args, None);
@@ -788,6 +792,7 @@ mod tests {
             show_plugins: false,
             plugins_help: false,
             export_config: None,
+            list_formats: false,
         };
         
         let result = args_to_scanner_config(&args, None);

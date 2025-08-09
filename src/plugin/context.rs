@@ -152,14 +152,14 @@ pub enum ExecutionStatus {
 /// Execution metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionMetadata {
-    /// Execution duration in milliseconds
-    pub duration_ms: u64,
+    /// Execution duration in microseconds
+    pub duration_us: u64,
     
     /// Memory usage in bytes
     pub memory_used: u64,
     
-    /// Number of items processed
-    pub items_processed: u64,
+    /// Number of entries processed
+    pub entries_processed: u64,
     
     /// Plugin version that executed the request
     pub plugin_version: String,
@@ -375,11 +375,11 @@ impl Default for RequestPriority {
 
 impl ExecutionMetadata {
     /// Create new execution metadata
-    pub fn new(duration_ms: u64, memory_used: u64, items_processed: u64, plugin_version: String) -> Self {
+    pub fn new(duration_us: u64, memory_used: u64, entries_processed: u64, plugin_version: String) -> Self {
         Self {
-            duration_ms,
+            duration_us,
             memory_used,
-            items_processed,
+            entries_processed,
             plugin_version,
             extra: HashMap::new(),
         }
@@ -470,21 +470,72 @@ impl CompactFormat for PluginResponse {
 
 impl CompactFormat for ExecutionMetadata {
     fn to_compact_format(&self) -> String {
-        let duration = if self.duration_ms < 1000 {
-            format!("{}ms", self.duration_ms)
+        let duration = if self.duration_us == 0 {
+            // If duration is exactly 0, it means timing wasn't measured properly
+            "~0μs".to_string()
+        } else if self.duration_us < 1000 {
+            format!("{:.0}μs", self.duration_us)
+        } else if self.duration_us < 1_000_000 {
+            let ms_value = self.duration_us as f64 / 1000.0;
+            // Ensure we don't show 0.000ms for very small values
+            if ms_value < 0.001 {
+                format!("<0.001ms")
+            } else {
+                format!("{:.3}ms", ms_value)
+            }
         } else {
-            format!("{:.1}s", self.duration_ms as f64 / 1000.0)
+            format!("{:.3}s", self.duration_us as f64 / 1_000_000.0)
         };
-        
-        let memory = if self.memory_used < 1024 {
-            format!("{}B", self.memory_used)
+
+        let memory = if self.memory_used == 0 {
+            // Don't show memory if it's not measured
+            String::new()
+        } else if self.memory_used < 1024 {
+            format!(" ({}B)", self.memory_used)
         } else if self.memory_used < 1024 * 1024 {
-            format!("{:.1}KB", self.memory_used as f64 / 1024.0)
+            format!(" ({:.1}KB)", self.memory_used as f64 / 1024.0)
         } else {
-            format!("{:.1}MB", self.memory_used as f64 / (1024.0 * 1024.0))
+            format!(" ({:.1}MB)", self.memory_used as f64 / (1024.0 * 1024.0))
         };
-        
-        format!("{} items in {} ({})", self.items_processed, duration, memory)
+
+        format!("{} entries in {}{}", self.entries_processed, duration, memory)
+    }
+}
+
+// CompactFormat implementations for plugin output
+impl CompactFormat for ExecutionMetadata {
+    fn to_compact_format(&self) -> String {
+        // Extract metrics from the plugin data if available
+        // This is a simplified implementation - in practice, we'd need to parse the JSON data
+        let files = self.entries_processed;
+        let lines = 0; // Would need to extract from plugin data
+        let avg_per_file = if files > 0 { lines as f64 / files as f64 } else { 0.0 };
+        let complexity = 0.0; // Would need to extract from plugin data
+
+        format!("Files: {} | Lines: {} | Avg/File: {:.1} | Complexity: {:.1}",
+                files, lines, avg_per_file, complexity)
+    }
+}
+
+impl CompactFormat for PluginResponse {
+    fn to_compact_format(&self) -> String {
+        match self {
+            PluginResponse::Execute { data, metadata, .. } => {
+                // Try to extract metrics from the JSON data
+                if let Some(total_files) = data.get("total_files").and_then(|v| v.as_u64()) {
+                    let total_lines = data.get("total_lines").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let avg_complexity = data.get("average_complexity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let avg_lines = data.get("average_lines_per_file").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                    format!("Files: {} | Lines: {} | Avg/File: {:.1} | Complexity: {:.1}",
+                            total_files, total_lines, avg_lines, avg_complexity)
+                } else {
+                    // Fallback to metadata-based format
+                    metadata.to_compact_format()
+                }
+            }
+            _ => "Plugin execution result".to_string(),
+        }
     }
 }
 
@@ -584,9 +635,9 @@ mod tests {
         let mut metadata = ExecutionMetadata::new(150, 2048, 10, "1.1.0".to_string());
         metadata = metadata.with_extra("custom_field".to_string(), serde_json::Value::Bool(true));
         
-        assert_eq!(metadata.duration_ms, 150);
+        assert_eq!(metadata.duration_us, 150);
         assert_eq!(metadata.memory_used, 2048);
-        assert_eq!(metadata.items_processed, 10);
+        assert_eq!(metadata.entries_processed, 10);
         assert_eq!(metadata.plugin_version, "1.1.0");
         assert_eq!(metadata.extra.get("custom_field"), Some(&serde_json::Value::Bool(true)));
     }

@@ -168,7 +168,11 @@ impl Plugin for MetricsPlugin {
     }
 
     async fn execute(&self, request: PluginRequest) -> PluginResult<PluginResponse> {
+        // Add debug output to see if this method is being called at all
+        eprintln!("DEBUG: MetricsPlugin::execute called with request: {:?}", std::mem::discriminant(&request));
+
         if !self.initialized {
+            eprintln!("DEBUG: Plugin not initialized!");
             return Err(PluginError::invalid_state("Plugin not initialized"));
         }
 
@@ -180,10 +184,13 @@ impl Plugin for MetricsPlugin {
                     crate::plugin::InvocationType::Direct => self.default_function().unwrap_or("metrics"),
                     crate::plugin::InvocationType::Default => "metrics",
                 };
-                
+
+                eprintln!("DEBUG: Executing function: {}", function_name);
+
                 // Route to appropriate function
                 match function_name {
                     "metrics" | "code" | "quality" => {
+                        eprintln!("DEBUG: Calling execute_code_metrics");
                         self.execute_code_metrics().await
                     }
                     "complexity" | "cyclomatic" => {
@@ -284,25 +291,53 @@ impl ScannerPlugin for MetricsPlugin {
             return Err(PluginError::invalid_state("Plugin not initialized"));
         }
 
-        // Create a mutable copy for processing
-        let mut processor = self.clone_for_processing();
-        
-        let mut results = vec![data.clone()];
+        // Process file data and extract metrics
+        if let MessageData::FileInfo { path, content, metadata, .. } = &data.data {
+            // Calculate metrics for this file
+            if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+                if is_source_file_extension(extension) {
+                    let lines = content.as_ref()
+                        .map(|c| c.lines().count())
+                        .unwrap_or(0);
 
-        // Process file data if available
-        if matches!(data.data, MessageData::FileInfo { .. }) {
-            processor.process_file(data)?;
-            
-            // Generate file-specific metrics
-            if let MessageData::FileInfo { path, .. } = &data.data {
-                if let Some(metrics) = processor.file_metrics.get(path) {
-                    let metrics_message = processor.generate_file_metrics_message(path, metrics)?;
-                    results.push(metrics_message);
+                    if lines > 0 {
+                        let file_size = metadata.as_ref()
+                            .and_then(|m| m.get("size"))
+                            .and_then(|s| s.as_u64())
+                            .unwrap_or(0) as usize;
+
+                        let complexity = self.complexity_calculator
+                            .calculate_complexity(&path.to_string_lossy())
+                            .unwrap_or(1);
+
+                        // Create a metrics message with the calculated data
+                        let metrics_data = json!({
+                            "path": path.to_string_lossy(),
+                            "lines_of_code": lines,
+                            "file_size_bytes": file_size,
+                            "cyclomatic_complexity": complexity,
+                            "file_extension": extension
+                        });
+
+                        let metrics_message = ScanMessage {
+                            id: format!("metrics_{}", data.id),
+                            timestamp: data.timestamp,
+                            data: MessageData::Custom {
+                                plugin_name: "metrics".to_string(),
+                                data_type: "file_metrics".to_string(),
+                                payload: metrics_data,
+                            },
+                            metadata: data.metadata.clone(),
+                        };
+
+                        return Ok(vec![metrics_message]);
+                    }
                 }
             }
         }
 
-        Ok(results)
+        // If not a file we can process, return empty
+        Ok(vec![])
     }
 
     async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage> {
@@ -310,17 +345,64 @@ impl ScannerPlugin for MetricsPlugin {
             return Err(PluginError::invalid_state("Plugin not initialized"));
         }
 
-        // Aggregate metrics from multiple scan messages
-        let mut aggregated = MetricsPlugin::new();
-        aggregated.initialized = true;
+        // Aggregate metrics from all processed files
+        let mut total_files = 0;
+        let mut total_lines = 0;
+        let mut total_complexity = 0;
+        let mut total_file_size = 0;
+        let mut file_extensions: HashMap<String, usize> = HashMap::new();
 
         for message in &results {
-            if matches!(message.data, MessageData::FileInfo { .. }) {
-                aggregated.process_file(message)?;
+            if let MessageData::Custom { data_type, payload, .. } = &message.data {
+                if data_type == "file_metrics" {
+                    if let (
+                        Some(lines),
+                        Some(complexity),
+                        Some(file_size),
+                        Some(extension)
+                    ) = (
+                        payload.get("lines_of_code").and_then(|v| v.as_u64()),
+                        payload.get("cyclomatic_complexity").and_then(|v| v.as_u64()),
+                        payload.get("file_size_bytes").and_then(|v| v.as_u64()),
+                        payload.get("file_extension").and_then(|v| v.as_str())
+                    ) {
+                        total_files += 1;
+                        total_lines += lines as usize;
+                        total_complexity += complexity as usize;
+                        total_file_size += file_size as usize;
+                        *file_extensions.entry(extension.to_string()).or_insert(0) += 1;
+                    }
+                }
             }
         }
 
-        aggregated.generate_metrics_summary()
+        // Create aggregated metrics data
+        let aggregated_data = json!({
+            "total_files": total_files,
+            "total_lines": total_lines,
+            "total_comment_lines": 0, // TODO: implement comment counting
+            "total_blank_lines": 0,   // TODO: implement blank line counting
+            "average_lines_per_file": if total_files > 0 { total_lines as f64 / total_files as f64 } else { 0.0 },
+            "total_complexity": total_complexity,
+            "average_complexity": if total_files > 0 { total_complexity as f64 / total_files as f64 } else { 0.0 },
+            "total_file_size": total_file_size,
+            "file_extensions": file_extensions,
+            "function": "metrics"
+        });
+
+        // Create the aggregated message
+        let aggregated_message = ScanMessage {
+            id: "metrics_aggregated".to_string(),
+            timestamp: std::time::SystemTime::now(),
+            data: MessageData::Custom {
+                plugin_name: "metrics".to_string(),
+                data_type: "aggregated_metrics".to_string(),
+                payload: aggregated_data,
+            },
+            metadata: HashMap::new(),
+        };
+
+        Ok(aggregated_message)
     }
 
     fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<std::time::Duration> {
@@ -407,10 +489,13 @@ impl MetricsPlugin {
     
     /// Execute code metrics analysis function
     async fn execute_code_metrics(&self) -> PluginResult<PluginResponse> {
+        // Measure execution time
+        let start_time = std::time::Instant::now();
+
         let total_complexity: usize = self.file_metrics.values().map(|m| m.cyclomatic_complexity).sum();
         let total_comment_lines: usize = self.file_metrics.values().map(|m| m.comment_lines).sum();
         let total_blank_lines: usize = self.file_metrics.values().map(|m| m.blank_lines).sum();
-        
+
         let data = json!({
             "total_files": self.total_files,
             "total_lines": self.total_lines,
@@ -421,15 +506,17 @@ impl MetricsPlugin {
             "average_complexity": if self.total_files > 0 { total_complexity as f64 / self.total_files as f64 } else { 0.0 },
             "function": "metrics"
         });
-        
+
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "code_metrics".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: self.total_files as u64,
+                entries_processed: self.total_files as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -439,13 +526,16 @@ impl MetricsPlugin {
     
     /// Execute complexity analysis function
     async fn execute_complexity_analysis(&self) -> PluginResult<PluginResponse> {
+        // Measure execution time
+        let start_time = std::time::Instant::now();
+
         let mut complexity_distribution = HashMap::new();
         let mut high_complexity_files = Vec::new();
-        
+
         for (path, metrics) in &self.file_metrics {
             let complexity = metrics.cyclomatic_complexity;
             *complexity_distribution.entry(complexity).or_insert(0) += 1;
-            
+
             if complexity > 10 {
                 high_complexity_files.push(json!({
                     "file": path,
@@ -454,22 +544,24 @@ impl MetricsPlugin {
                 }));
             }
         }
-        
+
         let data = json!({
             "complexity_distribution": complexity_distribution,
             "high_complexity_files": high_complexity_files,
             "files_analyzed": self.total_files,
             "function": "complexity"
         });
-        
+
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "complexity_analysis".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: self.total_files as u64,
+                entries_processed: self.total_files as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -479,16 +571,19 @@ impl MetricsPlugin {
     
     /// Execute file statistics function
     async fn execute_file_statistics(&self) -> PluginResult<PluginResponse> {
+        // Measure execution time
+        let start_time = std::time::Instant::now();
+
         let mut extension_stats = HashMap::new();
         let mut size_distribution = HashMap::new();
-        
+
         for metrics in self.file_metrics.values() {
             let ext_stat = extension_stats.entry(metrics.file_extension.clone()).or_insert(json!({
                 "count": 0,
                 "total_lines": 0,
                 "total_size": 0
             }));
-            
+
             ext_stat["count"] = serde_json::Value::Number(serde_json::Number::from(
                 ext_stat["count"].as_u64().unwrap_or(0) + 1
             ));
@@ -498,7 +593,7 @@ impl MetricsPlugin {
             ext_stat["total_size"] = serde_json::Value::Number(serde_json::Number::from(
                 ext_stat["total_size"].as_u64().unwrap_or(0) + metrics.file_size_bytes as u64
             ));
-            
+
             let size_bucket = match metrics.file_size_bytes {
                 0..=1024 => "small",
                 1025..=10240 => "medium",
@@ -507,22 +602,24 @@ impl MetricsPlugin {
             };
             *size_distribution.entry(size_bucket.to_string()).or_insert(0) += 1;
         }
-        
+
         let data = json!({
             "extension_statistics": extension_stats,
             "size_distribution": size_distribution,
             "total_files": self.total_files,
             "function": "files"
         });
-        
+
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "file_statistics".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: self.total_files as u64,
+                entries_processed: self.total_files as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -532,6 +629,9 @@ impl MetricsPlugin {
     
     /// Execute hotspot analysis function combining complexity and change frequency
     async fn execute_hotspot_analysis(&self) -> PluginResult<PluginResponse> {
+        // Measure execution time
+        let start_time = std::time::Instant::now();
+
         // Require repository for change frequency analysis
         let repository = self.repository.as_ref()
             .ok_or_else(|| PluginError::invalid_state("Repository not available for hotspot analysis"))?;
@@ -611,14 +711,16 @@ impl MetricsPlugin {
             "function": "hotspots"
         });
         
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "hotspot_analysis".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: hotspots.len() as u64,
+                entries_processed: hotspots.len() as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -628,6 +730,8 @@ impl MetricsPlugin {
     
     /// Execute duplication analysis function
     async fn execute_duplication_analysis(&self) -> PluginResult<PluginResponse> {
+        // Measure execution time
+        let start_time = std::time::Instant::now();
         // Collect file contents for analysis
         let mut file_contents = HashMap::new();
         
@@ -684,14 +788,16 @@ impl MetricsPlugin {
             "function": "duplicates"
         });
         
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "duplication_analysis".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: duplicate_groups.len() as u64,
+                entries_processed: duplicate_groups.len() as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -740,6 +846,9 @@ impl MetricsPlugin {
     
     /// Execute comprehensive technical debt assessment
     async fn execute_debt_assessment(&self) -> PluginResult<PluginResponse> {
+        // Measure execution time
+        let start_time = std::time::Instant::now();
+
         if !self.initialized {
             return Err(PluginError::invalid_state("Plugin not initialized"));
         }
@@ -836,20 +945,42 @@ impl MetricsPlugin {
             "function": "debt"
         });
         
+        let duration_us = start_time.elapsed().as_micros() as u64;
+
         Ok(PluginResponse::Execute {
             request_id: "debt_assessment".to_string(),
             status: crate::plugin::context::ExecutionStatus::Success,
             data,
             metadata: crate::plugin::context::ExecutionMetadata {
-                duration_ms: 0,
+                duration_us,
                 memory_used: 0,
-                items_processed: assessments.len() as u64,
+                entries_processed: assessments.len() as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
             errors: vec![],
         })
     }
+}
+
+/// Helper function to determine if a file extension represents a source code file
+fn is_source_file_extension(extension: &str) -> bool {
+    matches!(extension.to_lowercase().as_str(),
+        // Common programming languages
+        "rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp" |
+        "cs" | "php" | "rb" | "go" | "kt" | "swift" | "scala" | "clj" | "hs" | "ml" |
+        "fs" | "vb" | "pas" | "pl" | "pm" | "r" | "m" | "mm" | "dart" | "lua" | "sh" |
+        "bash" | "zsh" | "fish" | "ps1" | "psm1" | "psd1" | "bat" | "cmd" | "asm" | "s" |
+        // Web technologies
+        "html" | "htm" | "css" | "scss" | "sass" | "less" | "jsx" | "tsx" | "vue" |
+        "svelte" | "php" | "asp" | "aspx" | "jsp" | "erb" | "ejs" | "hbs" | "mustache" |
+        // Configuration and data
+        "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "properties" |
+        // Database
+        "sql" | "plsql" | "psql" |
+        // Other
+        "dockerfile" | "makefile" | "cmake" | "gradle" | "sbt" | "build"
+    )
 }
 
 #[cfg(test)]

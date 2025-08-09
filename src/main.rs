@@ -102,7 +102,7 @@ fn run() -> Result<()> {
         .build()?;
     
     // Handle plugin management commands
-    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.list_by_type.is_some() {
+    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.list_by_type.is_some() || args.list_formats {
         return runtime.block_on(async {
             let config_manager = load_configuration(&args)?;
             handle_plugin_commands(&args, &config_manager).await
@@ -543,6 +543,50 @@ async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigManager
         return Ok(());
     }
     
+    if args.list_formats {
+        use crate::plugin::builtin::utils::format_detection::FormatDetector;
+        use crate::plugin::builtin::export::config::ExportFormat;
+        
+        let colour_manager = create_colour_manager(args, config);
+        
+        println!("{}", colour_manager.highlight("Supported Export Formats:"));
+        println!("{}", colour_manager.highlight("========================="));
+        println!();
+        
+        let detector = FormatDetector::new();
+        let formats = [
+            (ExportFormat::Json, "JSON data format"),
+            (ExportFormat::Csv, "Comma-separated values"),
+            (ExportFormat::Xml, "XML markup format"),
+            (ExportFormat::Yaml, "YAML data format"),
+            (ExportFormat::Html, "HTML web format"),
+            (ExportFormat::Markdown, "Markdown documentation format"),
+        ];
+        
+        for (format, description) in formats {
+            let extensions = detector.get_extensions_for_format(&format);
+            let extensions_str = extensions.join(", ");
+            println!("  {:<12} {} ({})", 
+                colour_manager.success(&format!("{:?}", format).to_lowercase()),
+                description,
+                colour_manager.info(&format!("extensions: {}", extensions_str))
+            );
+        }
+        
+        println!();
+        println!("{}:", colour_manager.highlight("Format Auto-Detection"));
+        println!("  • File extensions automatically determine output format");
+        println!("  • Use --format to override auto-detection");
+        println!("  • Templates can generate any supported format");
+        println!();
+        println!("{}:", colour_manager.highlight("Examples"));
+        println!("  gstats export data.json     # Auto-detects JSON format");
+        println!("  gstats export data.csv      # Auto-detects CSV format");
+        println!("  gstats export --format yaml # Force YAML format");
+        
+        return Ok(());
+    }
+    
     if let Some(plugin_name) = &args.plugin_info {
         if let Some(info) = handler.get_plugin_info(plugin_name).await? {
             println!("Plugin: {}", info.name);
@@ -609,7 +653,11 @@ async fn run_scanner(
     let original_commands = vec![command.to_string()];
     
     debug!("Active plugins: {:?}", plugin_names);
-    debug!("Plugin arguments: {:?}", args.plugin_args);
+    debug!("Plugin arguments (original): {:?}", args.plugin_args);
+
+    // Filter out global flags from plugin arguments to improve UX
+    let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
+    debug!("Plugin arguments (filtered): {:?}", filtered_plugin_args);
     
     // Create callback-based message producer (queue bypassed via plugin callbacks)
     let message_producer = Arc::new(scanner::CallbackMessageProducer::new(
@@ -1092,7 +1140,7 @@ async fn execute_plugins_analysis(
         let processed_stats = match command.as_str() {
             "authors" | "contributors" | "committers" | "commits" | "commit" | "history" => {
                 ProcessedStatistics {
-                    files_processed: 0, // No file analysis for commit-based commands
+                    files_processed: repo_stats.total_files as usize, // Commits do include file data
                     commits_processed: repo_stats.total_commits as usize,
                     authors_processed: repo_stats.total_authors as usize,
                 }
@@ -1142,7 +1190,7 @@ async fn display_plugin_reports(
         let processed_stats = match command.as_str() {
             "authors" | "contributors" | "committers" | "commits" | "commit" | "history" => {
                 ProcessedStatistics {
-                    files_processed: 0,
+                    files_processed: repo_stats.total_files as usize,
                     commits_processed: repo_stats.total_commits as usize,
                     authors_processed: repo_stats.total_authors as usize,
                 }
@@ -1155,7 +1203,7 @@ async fn display_plugin_reports(
                 }
             }
             _ => ProcessedStatistics {
-                files_processed: 0,
+                files_processed: repo_stats.total_files as usize,
                 commits_processed: repo_stats.total_commits as usize,
                 authors_processed: repo_stats.total_authors as usize,
             }
@@ -1222,6 +1270,9 @@ async fn execute_plugin_function_with_data(
     use scanner::ScanMode;
     use std::sync::Arc;
     
+    // Filter out global flags from plugin arguments to improve UX
+    let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
+
     debug!("Executing plugin '{}' function '{}' with {} scan messages", plugin_name, function_name, scan_data.len());
     
     // Get plugin from registry
@@ -1246,7 +1297,7 @@ async fn execute_plugin_function_with_data(
     };
     
     // Check if template arguments are present - if so, route to export plugin
-    let has_template_args = args.plugin_args.iter().any(|arg| 
+    let has_template_args = filtered_plugin_args.iter().any(|arg|
         arg.starts_with("--template") || arg == "--output" || arg == "-o"
     );
     
@@ -1268,8 +1319,11 @@ async fn execute_plugin_function_with_data(
         
         export_instance.initialize(&plugin_context).await?;
         
+        // Filter out global flags from plugin arguments to improve UX
+        let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
+
         // Parse template-specific arguments using the export plugin's argument parser
-        if let Err(e) = export_instance.parse_plugin_args(&args.plugin_args).await {
+        if let Err(e) = export_instance.parse_plugin_args(&filtered_plugin_args).await {
             error!("Failed to parse export plugin arguments: {}", e);
             return Err(e.into());
         }
@@ -1284,7 +1338,7 @@ async fn execute_plugin_function_with_data(
         debug!("Export plugin response: {:?}", export_response);
         
         // If output file is specified, don't display console output
-        if args.plugin_args.iter().any(|arg| arg == "--output" || arg == "-o") {
+        if filtered_plugin_args.iter().any(|arg| arg == "--output" || arg == "-o") {
             info!("Export completed successfully");
             return Ok(());
         }
@@ -1295,21 +1349,24 @@ async fn execute_plugin_function_with_data(
     // For the commits plugin specifically, create a new instance and process the scan data
     if plugin_name == "commits" && !scan_data.is_empty() {
         
+        // Filter out global flags from plugin arguments to improve UX
+        let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
+
         // Parse plugin-specific arguments for commits plugin
         let mut output_all = false;
         let mut output_limit: Option<usize> = None;
         
         // Simple argument parsing for commits plugin arguments
         let mut i = 0;
-        while i < args.plugin_args.len() {
-            match args.plugin_args[i].as_str() {
+        while i < filtered_plugin_args.len() {
+            match filtered_plugin_args[i].as_str() {
                 "--all" => {
                     output_all = true;
                     i += 1;
                 }
                 "--output-limit" | "--limit" => {
-                    if i + 1 < args.plugin_args.len() {
-                        if let Ok(limit) = args.plugin_args[i + 1].parse::<usize>() {
+                    if i + 1 < filtered_plugin_args.len() {
+                        if let Ok(limit) = filtered_plugin_args[i + 1].parse::<usize>() {
                             output_limit = Some(limit);
                             output_all = false; // --output-limit/--limit overrides --all
                         }
