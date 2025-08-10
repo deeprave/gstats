@@ -535,8 +535,8 @@ mod tests {
             },
         };
 
-        let messages = coordinator.process_event(&event).await.unwrap();
-        let final_messages = coordinator.finalize().await.unwrap();
+        let _messages = coordinator.process_event(&event).await.unwrap();
+        let _final_messages = coordinator.finalize().await.unwrap();
 
         let stats = coordinator.get_processing_stats();
         assert_eq!(stats.total_events_processed, 1);

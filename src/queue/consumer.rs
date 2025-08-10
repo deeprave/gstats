@@ -4,8 +4,8 @@
 //! without direct queue access. This module prototypes both polling and
 //! event-driven consumer APIs to determine the best approach.
 
-use crate::queue::error::{QueueError, QueueResult};
-use crate::queue::notifications::{QueueEvent, QueueEventNotifier};
+use crate::queue::error::QueueResult;
+use crate::queue::notifications::QueueEvent;
 use crate::queue::shared_queue::SharedMessageQueue;
 use crate::scanner::messages::ScanMessage;
 use async_trait::async_trait;

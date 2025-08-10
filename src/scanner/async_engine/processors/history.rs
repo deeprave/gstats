@@ -46,7 +46,7 @@ impl HistoryEventProcessor {
     }
 
     /// Convert CommitInfo to ScanMessage
-    fn create_commit_message(&self, commit: &CommitInfo, index: usize) -> ScanMessage {
+    fn create_commit_message(&self, commit: &CommitInfo, _index: usize) -> ScanMessage {
         let header = MessageHeader::new(
             ScanMode::HISTORY,
             commit.timestamp

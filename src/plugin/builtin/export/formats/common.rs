@@ -9,46 +9,7 @@ pub fn is_commit_data(data: &[&ScanMessage]) -> bool {
         .any(|msg| matches!(msg.data, MessageData::CommitInfo { .. }))
 }
 
-/// Escape HTML characters
-pub fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#x27;")
-}
-
-/// Escape XML characters
-pub fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-/// Format timestamp as human-readable date
-pub fn format_timestamp(timestamp: u64) -> String {
-    use std::time::{UNIX_EPOCH, Duration};
-    
-    if let Some(datetime) = UNIX_EPOCH.checked_add(Duration::from_secs(timestamp)) {
-        // Format as YYYY-MM-DD HH:MM
-        let since_epoch = datetime.duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let days = since_epoch / 86400;
-        let hours = (since_epoch % 86400) / 3600;
-        let minutes = (since_epoch % 3600) / 60;
-        
-        // Simple date calculation (approximate)
-        let year = 1970 + (days / 365);
-        let day_of_year = days % 365;
-        let month = (day_of_year / 30) + 1;
-        let day = (day_of_year % 30) + 1;
-        
-        format!("{:04}-{:02}-{:02} {:02}:{:02}", year, month.min(12), day.min(31), hours, minutes)
-    } else {
-        format!("{}", timestamp)
-    }
-}
+// Removed unused utility functions: escape_html, escape_xml, format_timestamp - no current usage found
 
 /// Generate authors summary data structure
 pub fn generate_authors_summary(collected_data: &[ScanMessage]) -> Vec<(String, (u32, u32, u32, Vec<(String, String, u64, u32)>))> {

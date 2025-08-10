@@ -631,17 +631,16 @@ mod tests {
 
     #[test]
     fn test_filter_from_query_params() {
-        use crate::scanner::query::QueryParams;
+        use crate::scanner::query::{QueryParams, DateRange};
+        use std::path::PathBuf;
         
-        let query = QueryParams::builder()
-            .date_range(
-                Some(UNIX_EPOCH + Duration::from_secs(1000)),
-                Some(UNIX_EPOCH + Duration::from_secs(2000))
-            )
-            .include_author("alice")
-            .include_path("src/")
-            .build()
-            .unwrap();
+        let mut query = QueryParams::default();
+        query.date_range = Some(DateRange {
+            start: Some(UNIX_EPOCH + Duration::from_secs(1000)),
+            end: Some(UNIX_EPOCH + Duration::from_secs(2000)),
+        });
+        query.authors.include.push("alice".to_string());
+        query.file_paths.include.push(PathBuf::from("src/"));
             
         let filter = FilterExecutor::filter_from_query(&query);
         

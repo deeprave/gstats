@@ -1,6 +1,6 @@
 use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileChangeData};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
-use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
+use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::scanner::modes::ScanMode;
 use crate::plugin::builtin::utils::change_frequency::{FileChangeStats, TimeWindow};
@@ -47,7 +47,7 @@ impl ChangeFrequencyEventProcessor {
     }
 
     /// Process a file change and update statistics
-    fn process_file_change(&mut self, file_path: &str, change_data: &FileChangeData, commit: &CommitInfo) {
+    fn process_file_change(&mut self, file_path: &str, _change_data: &FileChangeData, commit: &CommitInfo) {
         let stats = self.change_stats
             .entry(file_path.to_string())
             .or_insert_with(|| FileChangeStats::new(file_path.to_string()));
@@ -161,7 +161,7 @@ impl EventProcessor for ChangeFrequencyEventProcessor {
             RepositoryEvent::RepositoryStarted { .. } => {
                 info!("Starting change frequency analysis with time window: {:?}", self.time_window);
             }
-            RepositoryEvent::RepositoryCompleted { stats } => {
+            RepositoryEvent::RepositoryCompleted { stats: _ } => {
                 info!(
                     "Change frequency analysis completed: {} changes processed across {} files",
                     self.total_changes, self.change_stats.len()

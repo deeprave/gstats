@@ -48,6 +48,106 @@ impl CommitsPlugin {
             author_stats: HashMap::new(),
         }
     }
+    
+    /// Handle ScanDataReady event to fetch and process queued commit data
+    pub async fn handle_scan_data_ready(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+        use crate::notifications::ScanEvent;
+        
+        match event {
+            ScanEvent::ScanDataReady { scan_id, data_type, message_count } => {
+                log::info!("CommitsPlugin received ScanDataReady event: {} messages of type '{}' for scan {}", 
+                          message_count, data_type, scan_id);
+                
+                // For now, just log that we received the event
+                // In future iterations, we'll implement actual data fetching from the queue
+                // TODO: Fetch commit data from the scanner queue
+                // TODO: Process commit messages and update internal statistics
+                // TODO: Emit DataReady event when processing is complete
+                
+                Ok(())
+            }
+            _ => {
+                Err(PluginError::ExecutionFailed { 
+                    message: "CommitsPlugin::handle_scan_data_ready received non-ScanDataReady event".to_string() 
+                })
+            }
+        }
+    }
+    
+    /// Handle ScanWarning event - log warnings and continue processing
+    pub async fn handle_scan_warning(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+        use crate::notifications::ScanEvent;
+        
+        match event {
+            ScanEvent::ScanWarning { scan_id, warning, recoverable } => {
+                if recoverable {
+                    log::warn!("CommitsPlugin received recoverable warning for scan {}: {}", scan_id, warning);
+                    // Continue processing with degraded data quality
+                } else {
+                    log::error!("CommitsPlugin received non-recoverable warning for scan {}: {}", scan_id, warning);
+                    // May need to adjust processing strategy
+                }
+                Ok(())
+            }
+            _ => {
+                Err(PluginError::ExecutionFailed { 
+                    message: "CommitsPlugin::handle_scan_warning received non-ScanWarning event".to_string() 
+                })
+            }
+        }
+    }
+    
+    /// Handle ScanError event - abort processing and cleanup resources if fatal
+    pub async fn handle_scan_error(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+        use crate::notifications::ScanEvent;
+        
+        match event {
+            ScanEvent::ScanError { scan_id, error, fatal } => {
+                if fatal {
+                    log::error!("CommitsPlugin received fatal error for scan {}: {}", scan_id, error);
+                    // Fatal errors require cleanup and abort processing
+                    self.commit_count = 0;
+                    self.author_stats.clear();
+                    log::info!("CommitsPlugin cleaned up partial data for scan {}", scan_id);
+                } else {
+                    log::warn!("CommitsPlugin received non-fatal error for scan {}: {}", scan_id, error);
+                    // Non-fatal errors allow graceful degradation
+                }
+                Ok(())
+            }
+            _ => {
+                Err(PluginError::ExecutionFailed { 
+                    message: "CommitsPlugin::handle_scan_error received non-ScanError event".to_string() 
+                })
+            }
+        }
+    }
+    
+    /// Handle ScanCompleted event - finalize processing and prepare results
+    pub async fn handle_scan_completed(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+        use crate::notifications::ScanEvent;
+        
+        match event {
+            ScanEvent::ScanCompleted { scan_id, duration, warnings } => {
+                log::info!("CommitsPlugin received ScanCompleted event for scan {} (duration: {:?}, warnings: {})", 
+                          scan_id, duration, warnings.len());
+                
+                // Finalize commit analysis processing
+                log::info!("CommitsPlugin processed {} commits from {} authors for scan {}", 
+                          self.commit_count, self.author_stats.len(), scan_id);
+                
+                // TODO: Emit DataReady event to signal export plugins that commit analysis is complete
+                // TODO: Prepare final commit statistics and metrics
+                
+                Ok(())
+            }
+            _ => {
+                Err(PluginError::ExecutionFailed { 
+                    message: "CommitsPlugin::handle_scan_completed received non-ScanCompleted event".to_string() 
+                })
+            }
+        }
+    }
 
     /// Process a commit message and extract statistics
     fn process_commit(&mut self, message: &ScanMessage) -> PluginResult<()> {
@@ -409,7 +509,6 @@ mod tests {
     }
 
     fn create_test_context() -> PluginContext {
-        let repo = crate::git::resolve_repository_handle(None).unwrap();
         let scanner_config = std::sync::Arc::new(crate::scanner::ScannerConfig::default());
         let query_params = std::sync::Arc::new(crate::scanner::QueryParams::default());
         
@@ -550,5 +649,84 @@ mod tests {
         assert!(schema.get("properties").is_some());
         assert!(schema["properties"].get("max_authors").is_some());
         assert!(schema["properties"].get("include_merge_commits").is_some());
+    }
+    
+    #[tokio::test]
+    async fn test_commits_plugin_handles_scan_data_ready() {
+        use crate::notifications::ScanEvent;
+        // Removed unused import: crate::scanner::ScanMode
+        
+        let mut plugin = CommitsPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Create ScanDataReady event
+        let event = ScanEvent::ScanDataReady {
+            scan_id: "test_scan".to_string(),
+            data_type: "commits".to_string(),
+            message_count: 1,
+        };
+        
+        // This should fail because handle_scan_data_ready is not implemented yet
+        let result = plugin.handle_scan_data_ready(event).await;
+        assert!(result.is_ok());
+        
+        // Verify that the plugin processed the commit data
+        // For now, just verify the method exists and returns Ok
+    }
+    
+    #[tokio::test]
+    async fn test_commits_plugin_handles_scan_warning() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = CommitsPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        let event = ScanEvent::ScanWarning {
+            scan_id: "test_scan".to_string(),
+            warning: "Test warning message".to_string(),
+            recoverable: true,
+        };
+        
+        let result = plugin.handle_scan_warning(event).await;
+        assert!(result.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_commits_plugin_handles_scan_error() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = CommitsPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        let event = ScanEvent::ScanError {
+            scan_id: "test_scan".to_string(),
+            error: "Test error message".to_string(),
+            fatal: false,
+        };
+        
+        let result = plugin.handle_scan_error(event).await;
+        assert!(result.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_commits_plugin_handles_scan_completed() {
+        use crate::notifications::ScanEvent;
+        use std::time::Duration;
+        
+        let mut plugin = CommitsPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        let event = ScanEvent::ScanCompleted {
+            scan_id: "test_scan".to_string(),
+            duration: Duration::from_secs(10),
+            warnings: vec!["Warning 1".to_string()],
+        };
+        
+        let result = plugin.handle_scan_completed(event).await;
+        assert!(result.is_ok());
     }
 }

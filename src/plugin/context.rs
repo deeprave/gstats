@@ -522,11 +522,10 @@ impl CompactFormat for ExecutionMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git;
+    // Removed unused import: crate::git
     
     #[tokio::test]
     async fn test_plugin_context_creation() {
-        let repo = git::resolve_repository_handle(None).unwrap();
         let scanner_config = Arc::new(ScannerConfig::default());
         let query_params = Arc::new(QueryParams::default());
         
@@ -542,7 +541,6 @@ mod tests {
     
     #[tokio::test]
     async fn test_plugin_context_with_config() {
-        let repo = git::resolve_repository_handle(None).unwrap();
         let scanner_config = Arc::new(ScannerConfig::default());
         let query_params = Arc::new(QueryParams::default());
         
@@ -633,7 +631,6 @@ mod tests {
     
     #[tokio::test]
     async fn test_context_capabilities() {
-        let repo = git::resolve_repository_handle(None).unwrap();
         let scanner_config = Arc::new(ScannerConfig::default());
         let query_params = Arc::new(QueryParams::default());
         

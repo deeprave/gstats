@@ -7,7 +7,7 @@
 //! 
 //! ```no_run
 //! use gstats::scanner::{ScannerConfig, get_api_version};
-//! use gstats::scanner::query::QueryBuilder;
+//! use gstats::scanner::query::{QueryParams, DateRange, FilePathFilter, AuthorFilter};
 //! use std::time::{SystemTime, Duration};
 //! 
 //! // Check API compatibility
@@ -22,13 +22,12 @@
 //!     .unwrap();
 //! 
 //! // Build query parameters
-//! let query = QueryBuilder::new()
-//!     .since(SystemTime::now() - Duration::from_secs(86400 * 7))
-//!     .include_path("src/")
-//!     .author("developer@example.com")
-//!     .limit(100)
-//!     .build()
-//!     .unwrap();
+//! let query = QueryParams {
+//!     date_range: Some(DateRange::from(SystemTime::now() - Duration::from_secs(86400 * 7))),
+//!     file_paths: FilePathFilter::default(),
+//!     limit: Some(100),
+//!     authors: AuthorFilter::default(),
+//! };
 //! ```
 
 pub mod version;
@@ -42,6 +41,7 @@ pub mod async_engine;
 pub mod async_traits;
 pub mod plugin_scanner;
 pub mod statistics;
+pub mod publisher;
 
 // Re-export core types for easier access
 pub use config::ScannerConfig;
@@ -51,6 +51,7 @@ pub use version::{get_api_version, is_api_compatible};
 pub use query::QueryParams;
 pub use async_engine::AsyncScannerEngineBuilder;
 pub use plugin_scanner::PluginScannerBuilder;
+pub use publisher::ScannerPublisher;
 
 use anyhow::Result;
 

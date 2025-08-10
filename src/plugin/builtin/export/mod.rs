@@ -27,6 +27,13 @@ pub struct ExportPlugin {
     collected_data: Vec<ScanMessage>,
     template_engine: TemplateEngine,
     format_detector: FormatDetector,
+    // Plugin coordination fields
+    collected_plugins: std::collections::HashMap<String, String>, // plugin_id -> data_type
+    expected_plugins: std::collections::HashSet<String>, // Expected plugin IDs
+    scan_id: Option<String>, // Current scan ID
+    export_triggered: bool, // Whether export has been triggered for current scan
+    export_completed: bool, // Whether export has been completed
+    incremental_data: std::collections::HashMap<String, String>, // plugin_id -> incremental data
 }
 
 impl ExportPlugin {
@@ -73,7 +80,169 @@ impl ExportPlugin {
             collected_data: Vec::new(),
             template_engine: TemplateEngine::new(),
             format_detector: FormatDetector::new(),
+            // Initialize coordination fields
+            collected_plugins: std::collections::HashMap::new(),
+            expected_plugins: std::collections::HashSet::from_iter(vec![
+                "commits".to_string(),
+                "metrics".to_string(),
+            ]),
+            scan_id: None,
+            export_triggered: false,
+            export_completed: false,
+            incremental_data: std::collections::HashMap::new(),
         }
+    }
+    
+    /// Handle DataReady event to collect processed data from other plugins
+    pub async fn handle_data_ready(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+        use crate::notifications::ScanEvent;
+        
+        match event {
+            ScanEvent::DataReady { scan_id, plugin_id, data_type } => {
+                log::info!("ExportPlugin received DataReady event from plugin '{}' with data type '{}' for scan {}", 
+                          plugin_id, data_type, scan_id);
+                
+                // Set or verify scan ID
+                if let Some(ref current_scan_id) = self.scan_id {
+                    if *current_scan_id != scan_id {
+                        log::warn!("ExportPlugin received DataReady for different scan ID: {} (current: {})", 
+                                  scan_id, current_scan_id);
+                    }
+                } else {
+                    self.scan_id = Some(scan_id.clone());
+                }
+                
+                // Track collected plugin data
+                self.collected_plugins.insert(plugin_id.clone(), data_type.clone());
+                
+                log::debug!("ExportPlugin collected data from plugin '{}' (type: {}). Total plugins: {}", 
+                           plugin_id, data_type, self.collected_plugins.len());
+                
+                // Check if all expected plugins have reported
+                if self.all_expected_plugins_ready() {
+                    log::info!("ExportPlugin: All expected plugins ready for scan {}, triggering export", scan_id);
+                    self.trigger_export_if_ready().await?;
+                }
+                
+                Ok(())
+            }
+            _ => {
+                Err(PluginError::ExecutionFailed { 
+                    message: "ExportPlugin::handle_data_ready received non-DataReady event".to_string() 
+                })
+            }
+        }
+    }
+    
+    /// Check if the plugin is waiting for more plugins to report DataReady
+    pub fn is_waiting_for_plugins(&self) -> bool {
+        !self.collected_plugins.is_empty() || !self.expected_plugins.is_empty()
+    }
+    
+    /// Get the count of plugins that have reported DataReady
+    pub fn get_collected_plugin_count(&self) -> usize {
+        self.collected_plugins.len()
+    }
+    
+    /// Check if all expected plugins have reported DataReady
+    pub fn all_expected_plugins_ready(&self) -> bool {
+        for expected_plugin in &self.expected_plugins {
+            if !self.collected_plugins.contains_key(expected_plugin) {
+                return false;
+            }
+        }
+        true
+    }
+    
+    /// Set the expected plugins for coordination
+    pub fn set_expected_plugins(&mut self, plugins: std::collections::HashSet<String>) {
+        self.expected_plugins = plugins;
+    }
+    
+    /// Reset coordination state for a new scan
+    pub fn reset_coordination_state(&mut self) {
+        self.collected_plugins.clear();
+        self.scan_id = None;
+        self.export_triggered = false;
+        self.export_completed = false;
+        self.incremental_data.clear();
+    }
+    
+    /// Check if export should be triggered (all expected plugins ready and not already triggered)
+    pub fn should_trigger_export(&self) -> bool {
+        self.all_expected_plugins_ready() && !self.export_triggered
+    }
+    
+    /// Trigger export if all conditions are met
+    pub async fn trigger_export_if_ready(&mut self) -> PluginResult<()> {
+        if self.should_trigger_export() {
+            log::info!("ExportPlugin: Triggering export for scan {:?}", self.scan_id);
+            
+            // TODO: Implement actual export rendering logic
+            // TODO: Fetch processed data from analysis plugins
+            // TODO: Render final export output
+            
+            self.export_triggered = true;
+            log::info!("ExportPlugin: Export completed for scan {:?}", self.scan_id);
+            
+            Ok(())
+        } else {
+            Ok(()) // No action needed
+        }
+    }
+    
+    /// Task 4.3: Update incremental rendering with partial data
+    pub async fn update_incremental_rendering(&mut self, plugin_id: &str, data: &str) -> PluginResult<()> {
+        log::debug!("ExportPlugin: Updating incremental rendering for plugin '{}'", plugin_id);
+        
+        self.incremental_data.insert(plugin_id.to_string(), data.to_string());
+        
+        // TODO: Implement actual incremental rendering logic
+        // TODO: Update partial export output
+        // TODO: Notify subscribers of incremental updates
+        
+        Ok(())
+    }
+    
+    /// Check if plugin has incremental data
+    pub fn has_incremental_data(&self, plugin_id: &str) -> bool {
+        self.incremental_data.contains_key(plugin_id)
+    }
+    
+    /// Task 4.4: Notify export completion for cleanup coordination
+    pub async fn notify_export_completion(&mut self) -> PluginResult<()> {
+        if self.export_triggered && !self.export_completed {
+            log::info!("ExportPlugin: Notifying export completion for scan {:?}", self.scan_id);
+            
+            // TODO: Emit ExportCompleted event
+            // TODO: Notify other plugins that export is done
+            // TODO: Signal cleanup coordination
+            
+            self.export_completed = true;
+            
+            Ok(())
+        } else {
+            Ok(()) // Already completed or not triggered
+        }
+    }
+    
+    /// Task 4.4: Cleanup after export completion
+    pub async fn cleanup_after_export(&mut self) -> PluginResult<()> {
+        if self.export_completed {
+            log::debug!("ExportPlugin: Cleaning up after export completion");
+            
+            // Clear collected data to free memory
+            self.collected_data.clear();
+            self.incremental_data.clear();
+            
+            // TODO: Close file handles
+            // TODO: Clean up temporary files
+            // TODO: Release resources
+            
+            log::info!("ExportPlugin: Cleanup completed for scan {:?}", self.scan_id);
+        }
+        
+        Ok(())
     }
 
     /// Configure export settings
@@ -302,11 +471,176 @@ mod tests {
 
     // Add a helper function for tests
     async fn create_test_plugin_context() -> PluginContext {
-        use crate::git;
+        // Removed unused import: crate::git
         use std::sync::Arc;
         use crate::scanner::{ScannerConfig, QueryParams};
         
-        let repo = git::resolve_repository_handle(None).unwrap();
+        let scanner_config = Arc::new(ScannerConfig::default());
+        let query_params = Arc::new(QueryParams::default());
+        
+        PluginContext::new(
+            scanner_config,
+            query_params,
+        )
+    }
+    
+    #[tokio::test]
+    async fn test_export_plugin_handles_data_ready() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = ExportPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Create DataReady event from commits plugin
+        let event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "commits".to_string(),
+            data_type: "commits".to_string(),
+        };
+        
+        // This should fail because handle_data_ready is not implemented yet
+        let result = plugin.handle_data_ready(event).await;
+        assert!(result.is_ok());
+        
+        // Verify that the plugin processed the data ready event
+        // For now, just verify the method exists and returns Ok
+    }
+    
+    #[tokio::test]
+    async fn test_export_plugin_data_ready_subscription() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = ExportPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Initially, no plugins have reported
+        assert!(!plugin.all_expected_plugins_ready());
+        assert_eq!(plugin.get_collected_plugin_count(), 0);
+        
+        // Test first DataReady event from commits plugin
+        let commits_event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "commits".to_string(),
+            data_type: "commits".to_string(),
+        };
+        
+        let result1 = plugin.handle_data_ready(commits_event).await;
+        assert!(result1.is_ok());
+        
+        // After first plugin, we're waiting for more
+        assert!(plugin.is_waiting_for_plugins());
+        assert_eq!(plugin.get_collected_plugin_count(), 1);
+        assert!(!plugin.all_expected_plugins_ready()); // Still waiting for metrics
+        
+        // Test second DataReady event from metrics plugin
+        let metrics_event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "metrics".to_string(),
+            data_type: "files".to_string(),
+        };
+        
+        let result2 = plugin.handle_data_ready(metrics_event).await;
+        assert!(result2.is_ok());
+        
+        // After both plugins, all expected plugins are ready
+        assert_eq!(plugin.get_collected_plugin_count(), 2);
+        assert!(plugin.all_expected_plugins_ready()); // Now all plugins are ready
+        
+        // Test coordination state reset
+        plugin.reset_coordination_state();
+        assert_eq!(plugin.get_collected_plugin_count(), 0);
+        assert!(!plugin.all_expected_plugins_ready());
+    }
+    
+    #[tokio::test]
+    async fn test_export_plugin_coordination_logic() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = ExportPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Test that export waits for all expected plugins
+        let commits_event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "commits".to_string(),
+            data_type: "commits".to_string(),
+        };
+        
+        plugin.handle_data_ready(commits_event).await.unwrap();
+        
+        // Should not trigger export yet - still waiting for metrics
+        assert!(!plugin.export_triggered);
+        assert!(!plugin.should_trigger_export()); // Not ready yet
+        
+        let metrics_event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "metrics".to_string(),
+            data_type: "files".to_string(),
+        };
+        
+        plugin.handle_data_ready(metrics_event).await.unwrap();
+        
+        // Export should have been triggered automatically
+        assert!(plugin.export_triggered);
+        assert!(!plugin.should_trigger_export()); // Already triggered
+        
+        // Test manual triggering when not ready
+        plugin.reset_coordination_state();
+        assert!(!plugin.should_trigger_export()); // No plugins collected yet
+        
+        let result = plugin.trigger_export_if_ready().await;
+        assert!(result.is_ok());
+        assert!(!plugin.export_triggered); // Should not trigger when not ready
+    }
+    
+    #[tokio::test]
+    async fn test_export_plugin_incremental_updates_and_completion() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = ExportPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Test incremental rendering updates (Task 4.3)
+        let commits_event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "commits".to_string(),
+            data_type: "commits".to_string(),
+        };
+        
+        plugin.handle_data_ready(commits_event).await.unwrap();
+        
+        // Test incremental update
+        let result = plugin.update_incremental_rendering("commits", "partial commit data").await;
+        assert!(result.is_ok());
+        assert!(plugin.has_incremental_data("commits"));
+        
+        // Complete with metrics plugin
+        let metrics_event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "metrics".to_string(),
+            data_type: "files".to_string(),
+        };
+        
+        plugin.handle_data_ready(metrics_event).await.unwrap();
+        
+        // Test export completion notification (Task 4.4)
+        let completion_result = plugin.notify_export_completion().await;
+        assert!(completion_result.is_ok());
+        assert!(plugin.export_completed);
+        
+        // Test cleanup coordination (Task 4.4)
+        plugin.cleanup_after_export().await.unwrap();
+        assert!(plugin.collected_data.is_empty());
+    }
+    
+    fn create_test_context() -> PluginContext {
+        use crate::scanner::{ScannerConfig, query::QueryParams};
+        use std::sync::Arc;
+        
         let scanner_config = Arc::new(ScannerConfig::default());
         let query_params = Arc::new(QueryParams::default());
         

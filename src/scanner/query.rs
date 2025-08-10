@@ -98,15 +98,6 @@ pub enum QueryValidationError {
     EmptyAuthor,
 }
 
-/// Builder for constructing query parameters
-#[derive(Debug, Default)]
-pub struct QueryBuilder {
-    date_range: Option<DateRange>,
-    file_paths: FilePathFilter,
-    limit: Option<usize>,
-    authors: AuthorFilter,
-}
-
 impl Default for QueryParams {
     fn default() -> Self {
         Self {
@@ -202,89 +193,6 @@ impl QueryParams {
         Ok(())
     }
 
-    /// Create a new builder for query parameters
-    pub fn builder() -> QueryBuilder {
-        QueryBuilder::default()
-    }
-}
-
-impl QueryBuilder {
-    /// Create a new query builder
-    pub fn new() -> Self {
-        Self::default()
-    }
-    
-    /// Set date range filter
-    pub fn date_range(mut self, start: Option<SystemTime>, end: Option<SystemTime>) -> Self {
-        self.date_range = Some(DateRange { start, end });
-        self
-    }
-    
-    /// Set start date filter
-    pub fn since(mut self, start: SystemTime) -> Self {
-        let range = self.date_range.get_or_insert(DateRange { start: None, end: None });
-        range.start = Some(start);
-        self
-    }
-    
-    /// Set end date filter
-    pub fn until(mut self, end: SystemTime) -> Self {
-        let range = self.date_range.get_or_insert(DateRange { start: None, end: None });
-        range.end = Some(end);
-        self
-    }
-
-    /// Add file path to include
-    pub fn include_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        let path_buf = path.into();
-        self.file_paths.include.push(path_buf);
-        self
-    }
-
-    /// Add file path to exclude
-    pub fn exclude_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        let path_buf = path.into();
-        self.file_paths.exclude.push(path_buf);
-        self
-    }
-
-    /// Set maximum number of records
-    pub fn limit(mut self, limit: usize) -> Self {
-        self.limit = Some(limit);
-        self
-    }
-
-    /// Add author to include
-    pub fn include_author<S: Into<String>>(mut self, author: S) -> Self {
-        let author_string = author.into();
-        self.authors.include.push(author_string);
-        self
-    }
-    
-    /// Add author to include (convenience alias)
-    pub fn author<S: Into<String>>(self, author: S) -> Self {
-        self.include_author(author)
-    }
-
-    /// Add author to exclude
-    pub fn exclude_author<S: Into<String>>(mut self, author: S) -> Self {
-        let author_string = author.into();
-        self.authors.exclude.push(author_string);
-        self
-    }
-
-    /// Build and validate query parameters
-    pub fn build(self) -> Result<QueryParams, QueryValidationError> {
-        let params = QueryParams {
-            date_range: self.date_range,
-            file_paths: self.file_paths,
-            limit: self.limit,
-            authors: self.authors,
-        };
-        
-        params.validate()?;
-        Ok(params)
-    }
 }
 
 #[cfg(test)]
@@ -301,188 +209,6 @@ mod tests {
         assert!(params.limit.is_none());
         assert!(params.authors.include.is_empty());
         assert!(params.authors.exclude.is_empty());
-    }
-
-    #[test]
-    fn test_query_builder_pattern() {
-        let start_time = UNIX_EPOCH + Duration::from_secs(1000);
-        let end_time = UNIX_EPOCH + Duration::from_secs(2000);
-        
-        let result = QueryParams::builder()
-            .date_range(Some(start_time), Some(end_time))
-            .include_path("src/")
-            .exclude_path("target/")
-            .limit(100)
-            .include_author("alice")
-            .exclude_author("bot")
-            .build();
-            
-        assert!(result.is_ok(), "Builder should succeed with valid parameters");
-        let params = result.unwrap();
-        
-        // Test date range
-        assert!(params.date_range.is_some());
-        let date_range = params.date_range.unwrap();
-        assert_eq!(date_range.start, Some(start_time));
-        assert_eq!(date_range.end, Some(end_time));
-        
-        // Test file paths
-        assert_eq!(params.file_paths.include.len(), 1);
-        assert_eq!(params.file_paths.include[0], PathBuf::from("src/"));
-        assert_eq!(params.file_paths.exclude.len(), 1);
-        assert_eq!(params.file_paths.exclude[0], PathBuf::from("target/"));
-        
-        // Test limit
-        assert_eq!(params.limit, Some(100));
-        
-        // Test authors
-        assert_eq!(params.authors.include.len(), 1);
-        assert_eq!(params.authors.include[0], "alice");
-        assert_eq!(params.authors.exclude.len(), 1);
-        assert_eq!(params.authors.exclude[0], "bot");
-    }
-
-    #[test]
-    fn test_query_validation_invalid_date_range() {
-        let start_time = UNIX_EPOCH + Duration::from_secs(2000);
-        let end_time = UNIX_EPOCH + Duration::from_secs(1000);
-        
-        let result = QueryParams::builder()
-            .date_range(Some(start_time), Some(end_time))
-            .build();
-            
-        assert!(result.is_err(), "Builder should fail with invalid date range");
-        let error = result.unwrap_err();
-        match error {
-            QueryValidationError::InvalidDateRange { start, end } => {
-                assert_eq!(start, start_time);
-                assert_eq!(end, end_time);
-            }
-            _ => panic!("Expected InvalidDateRange error"),
-        }
-    }
-
-    #[test]
-    fn test_query_validation_invalid_limit() {
-        let result = QueryParams::builder()
-            .limit(0)
-            .build();
-            
-        assert!(result.is_err(), "Builder should fail with zero limit");
-        let error = result.unwrap_err();
-        match error {
-            QueryValidationError::InvalidLimit { limit } => {
-                assert_eq!(limit, 0);
-            }
-            _ => panic!("Expected InvalidLimit error"),
-        }
-    }
-
-    #[test]
-    fn test_query_validation_empty_file_path() {
-        let result = QueryParams::builder()
-            .include_path("")
-            .build();
-            
-        assert!(result.is_err(), "Builder should fail with empty file path");
-        assert_eq!(result.unwrap_err(), QueryValidationError::EmptyFilePath);
-    }
-
-    #[test]
-    fn test_query_validation_empty_author() {
-        let result = QueryParams::builder()
-            .include_author("")
-            .build();
-            
-        assert!(result.is_err(), "Builder should fail with empty author");
-        assert_eq!(result.unwrap_err(), QueryValidationError::EmptyAuthor);
-    }
-
-    #[test]
-    fn test_query_serialization() {
-        let start_time = UNIX_EPOCH + Duration::from_secs(1000);
-        let end_time = UNIX_EPOCH + Duration::from_secs(2000);
-        
-        let params = QueryParams::builder()
-            .date_range(Some(start_time), Some(end_time))
-            .include_path("src/")
-            .limit(50)
-            .include_author("alice")
-            .build()
-            .expect("Valid query params");
-            
-        // Test serialization round-trip
-        let serialized = bincode::serialize(&params).expect("Serialization should succeed");
-        let deserialized: QueryParams = bincode::deserialize(&serialized).expect("Deserialization should succeed");
-        
-        assert_eq!(params, deserialized);
-    }
-
-    #[test]
-    fn test_multiple_file_paths() {
-        let result = QueryParams::builder()
-            .include_path("src/")
-            .include_path("tests/")
-            .exclude_path("target/")
-            .exclude_path("build/")
-            .build();
-            
-        assert!(result.is_ok());
-        let params = result.unwrap();
-        
-        assert_eq!(params.file_paths.include.len(), 2);
-        assert!(params.file_paths.include.contains(&PathBuf::from("src/")));
-        assert!(params.file_paths.include.contains(&PathBuf::from("tests/")));
-        
-        assert_eq!(params.file_paths.exclude.len(), 2);
-        assert!(params.file_paths.exclude.contains(&PathBuf::from("target/")));
-        assert!(params.file_paths.exclude.contains(&PathBuf::from("build/")));
-    }
-
-    #[test]
-    fn test_multiple_authors() {
-        let result = QueryParams::builder()
-            .include_author("alice")
-            .include_author("bob")
-            .exclude_author("bot1")
-            .exclude_author("bot2")
-            .build();
-            
-        assert!(result.is_ok());
-        let params = result.unwrap();
-        
-        assert_eq!(params.authors.include.len(), 2);
-        assert!(params.authors.include.contains(&"alice".to_string()));
-        assert!(params.authors.include.contains(&"bob".to_string()));
-        
-        assert_eq!(params.authors.exclude.len(), 2);
-        assert!(params.authors.exclude.contains(&"bot1".to_string()));
-        assert!(params.authors.exclude.contains(&"bot2".to_string()));
-    }
-
-    #[test]
-    fn test_partial_date_range() {
-        let start_time = UNIX_EPOCH + Duration::from_secs(1000);
-        
-        // Test with only start date
-        let result1 = QueryParams::builder()
-            .date_range(Some(start_time), None)
-            .build();
-        assert!(result1.is_ok());
-        let params1 = result1.unwrap();
-        let date_range1 = params1.date_range.as_ref().unwrap();
-        assert_eq!(date_range1.start, Some(start_time));
-        assert_eq!(date_range1.end, None);
-        
-        // Test with only end date
-        let result2 = QueryParams::builder()
-            .date_range(None, Some(start_time))
-            .build();
-        assert!(result2.is_ok());
-        let params2 = result2.unwrap();
-        let date_range2 = params2.date_range.as_ref().unwrap();
-        assert_eq!(date_range2.start, None);
-        assert_eq!(date_range2.end, Some(start_time));
     }
 
     #[test]
@@ -505,26 +231,6 @@ mod tests {
     }
 
     #[test]
-    fn test_query_params_convenience_methods() {
-        let params = QueryParams::builder()
-            .date_range(Some(UNIX_EPOCH), Some(UNIX_EPOCH + Duration::from_secs(1000)))
-            .include_path("src/")
-            .include_author("alice")
-            .limit(100)
-            .build()
-            .unwrap();
-            
-        assert!(params.has_date_filter());
-        assert!(params.has_limit());
-        assert_eq!(params.effective_limit(), Some(100));
-        
-        let empty_params = QueryParams::new();
-        assert!(!empty_params.has_date_filter());
-        assert!(!empty_params.has_limit());
-        assert_eq!(empty_params.effective_limit(), None);
-    }
-
-    #[test]
     fn test_date_range_convenience_methods() {
         let start_time = UNIX_EPOCH + Duration::from_secs(1000);
         let end_time = UNIX_EPOCH + Duration::from_secs(2000);
@@ -541,22 +247,20 @@ mod tests {
         assert!(!bounded_range.contains(before_time));
         assert!(!bounded_range.contains(after_time));
         
-        // Test from range (start only)
-        let from_range = DateRange::from(start_time);
-        assert!(!from_range.is_bounded());
-        assert!(from_range.contains(start_time));
-        assert!(from_range.contains(middle_time));
-        assert!(from_range.contains(end_time));
-        assert!(from_range.contains(after_time));
-        assert!(!from_range.contains(before_time));
+        // Test unbounded start
+        let unbounded_start = DateRange::until(end_time);
+        assert!(!unbounded_start.is_bounded());
+        assert!(unbounded_start.contains(before_time));
+        assert!(unbounded_start.contains(start_time));
+        assert!(unbounded_start.contains(end_time));
+        assert!(!unbounded_start.contains(after_time));
         
-        // Test until range (end only)
-        let until_range = DateRange::until(end_time);
-        assert!(!until_range.is_bounded());
-        assert!(until_range.contains(start_time));
-        assert!(until_range.contains(middle_time));
-        assert!(until_range.contains(end_time));
-        assert!(until_range.contains(before_time));
-        assert!(!until_range.contains(after_time));
+        // Test unbounded end
+        let unbounded_end = DateRange::from(start_time);
+        assert!(!unbounded_end.is_bounded());
+        assert!(!unbounded_end.contains(before_time));
+        assert!(unbounded_end.contains(start_time));
+        assert!(unbounded_end.contains(middle_time));
+        assert!(unbounded_end.contains(after_time));
     }
 }

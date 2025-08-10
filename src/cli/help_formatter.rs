@@ -2,7 +2,7 @@
 //!
 //! Provides better formatted help text with color coding and plugin/function tables.
 
-use crate::display::{ColourManager, ColourConfig};
+use crate::display::ColourManager;
 use std::fmt::Write;
 
 /// Enhanced help formatter for CLI output
@@ -11,23 +11,6 @@ pub struct HelpFormatter {
 }
 
 impl HelpFormatter {
-    /// Create a new help formatter with the given color configuration
-    pub fn new(color_config: Option<ColourConfig>) -> Self {
-        let colour_manager = if let Some(config) = color_config {
-            ColourManager::with_config(config)
-        } else {
-            ColourManager::new()
-        };
-        
-        Self { colour_manager }
-    }
-    
-    /// Create a help formatter that respects the --no-color flag
-    pub fn from_no_color_flag(no_color: bool) -> Self {
-        let colour_manager = ColourManager::from_args_and_config(no_color, None);
-        Self { colour_manager }
-    }
-    
     /// Create a help formatter that respects both --color and --no-color flags
     pub fn from_color_flags(no_color: bool, color: bool) -> Self {
         let colour_manager = ColourManager::from_color_args(no_color, color, None);
@@ -447,36 +430,9 @@ impl HelpFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display::ColourConfig;
-    
-    #[test]
-    fn test_help_formatter_creation() {
-        // Use explicit config to ensure predictable behavior in tests
-        let mut enabled_config = ColourConfig::new();
-        enabled_config.set_enabled(true);
-        enabled_config.set_color_forced(true); // Force enable to avoid environment detection
-        let formatter = HelpFormatter::new(Some(enabled_config));
-        assert!(formatter.colour_manager.colours_enabled());
-        
-        let disabled_config = ColourConfig::disabled();
-        let formatter_disabled = HelpFormatter::new(Some(disabled_config));
-        assert!(!formatter_disabled.colour_manager.colours_enabled());
-    }
-    
-    #[test]
-    fn test_help_formatter_from_no_color_flag() {
-        let formatter = HelpFormatter::from_no_color_flag(true);
-        assert!(!formatter.colour_manager.colours_enabled());
-        
-        // For the false case, we can't reliably assert colors are enabled
-        // since it depends on terminal detection, so just verify creation works
-        let _formatter = HelpFormatter::from_no_color_flag(false);
-        // Don't assert enabled state - depends on test environment
-    }
-    
     #[test]
     fn test_format_main_help() {
-        let formatter = HelpFormatter::from_no_color_flag(true); // Disable colors for predictable testing
+        let formatter = HelpFormatter::from_color_flags(true, false); // Disable colors for predictable testing
         let help = formatter.format_main_help();
         
         assert!(help.contains("gstats - Fast, local-first git analytics tool"));
@@ -491,7 +447,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_format_invalid_command() {
-        let formatter = HelpFormatter::from_no_color_flag(true); // Disable colors for predictable testing
+        let formatter = HelpFormatter::from_color_flags(true, false); // Disable colors for predictable testing
         let suggestions = vec!["commits".to_string(), "metrics".to_string()];
         let error = formatter.format_invalid_command("comits", &suggestions).await;
         

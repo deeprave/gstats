@@ -249,19 +249,6 @@ impl HotspotDetector {
         hotspots
     }
     
-    /// Get hotspots by priority level
-    pub fn get_hotspots_by_priority(
-        &self,
-        complexity_metrics: &HashMap<String, FileComplexityMetrics>,
-        change_stats: &HashMap<String, FileChangeStats>,
-        min_priority: HotspotPriority,
-    ) -> Vec<CodeHotspot> {
-        let hotspots = self.detect_hotspots(complexity_metrics, change_stats);
-        hotspots.into_iter()
-            .filter(|h| h.priority >= min_priority)
-            .collect()
-    }
-    
     /// Generate a summary report of hotspot analysis
     pub fn generate_summary(
         &self,
@@ -431,7 +418,7 @@ mod tests {
         let summary = detector.generate_summary(&complexity_metrics, &change_stats);
         
         assert!(summary.files_analyzed > 0);
-        assert!(summary.total_hotspots >= 0);
+        // total_hotspots is always non-negative (usize type)
         assert_eq!(summary.time_window, TimeWindow::All);
     }
     

@@ -5,9 +5,8 @@
 //! broadcast channel for efficient async coordination.
 
 use crate::scanner::modes::ScanMode;
-use crate::queue::error::{QueueError, QueueResult};
+use crate::queue::error::QueueResult;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// Events emitted by the queue system for coordination

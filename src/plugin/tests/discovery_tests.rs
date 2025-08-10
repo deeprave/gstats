@@ -6,6 +6,7 @@ use crate::plugin::discovery::{PluginDiscovery, FileBasedDiscovery, MultiDirecto
 use crate::plugin::traits::{PluginDescriptor, PluginInfo, PluginType};
 use crate::plugin::error::PluginError;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tokio::fs;
 
 #[tokio::test]
@@ -335,7 +336,6 @@ fn create_test_descriptor_with_api(name: &str, version: &str, api_version: u32) 
 
 #[tokio::test]
 async fn test_multi_directory_discovery_creation() {
-    use std::path::PathBuf;
     
     let directories = vec![
         PathBuf::from("plugins1"),
@@ -356,7 +356,6 @@ async fn test_multi_directory_discovery_creation() {
 
 #[tokio::test]
 async fn test_multi_directory_discovery_multiple_dirs() {
-    use std::path::PathBuf;
     use tempfile::tempdir;
     
     let temp_dir1 = tempdir().unwrap();
@@ -393,7 +392,6 @@ async fn test_multi_directory_discovery_multiple_dirs() {
 
 #[tokio::test]
 async fn test_multi_directory_discovery_explicit_loading() {
-    use std::path::PathBuf;
     use tempfile::tempdir;
     
     let temp_dir = tempdir().unwrap();
@@ -423,7 +421,6 @@ async fn test_multi_directory_discovery_explicit_loading() {
 
 #[tokio::test]
 async fn test_multi_directory_discovery_exclusion() {
-    use std::path::PathBuf;
     use tempfile::tempdir;
     
     let temp_dir = tempdir().unwrap();
@@ -453,7 +450,6 @@ async fn test_multi_directory_discovery_exclusion() {
 
 #[tokio::test]
 async fn test_multi_directory_discovery_deduplication() {
-    use std::path::PathBuf;
     use tempfile::tempdir;
     
     let temp_dir1 = tempdir().unwrap();
@@ -486,7 +482,6 @@ async fn test_multi_directory_discovery_deduplication() {
 
 #[tokio::test]
 async fn test_multi_directory_discovery_explicit_by_path() {
-    use std::path::PathBuf;
     use tempfile::tempdir;
     
     let temp_dir = tempdir().unwrap();

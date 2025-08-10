@@ -469,7 +469,7 @@ mod tests {
         
         // Initial memory usage should be minimal
         let initial_usage = state.estimate_memory_usage().unwrap();
-        assert!(initial_usage >= 0);
+        // Memory usage is always non-negative (usize type)
 
         // Add some data and check usage increases
         let commit = CommitInfo {

@@ -82,7 +82,7 @@ fn test_validate_dependencies_no_deps() {
 fn test_validate_dependencies_satisfied() {
     let checker = VersionCompatibilityChecker::new(20250727);
     
-    let mut plugin_info = PluginInfo::new(
+    let plugin_info = PluginInfo::new(
         "test-plugin".to_string(),
         "1.0.0".to_string(),
         20250727,

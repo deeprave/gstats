@@ -5,7 +5,7 @@ use crate::scanner::async_engine::repository::AsyncRepositoryHandle;
 use crate::scanner::async_engine::error::{ScanResult, ScanError};
 use crate::scanner::query::QueryParams;
 use crate::scanner::modes::ScanMode;
-use futures::stream::{Stream, StreamExt};
+use futures::stream::Stream;
 use futures::stream;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};

@@ -1,6 +1,6 @@
 //! Plugin Registry
 //! 
-//! Manages plugin registration, lifecycle, and lookups.
+//! Manages plugin registration, lifecycle, and lookups with notification subscription support.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,14 +8,23 @@ use tokio::sync::RwLock;
 use crate::plugin::traits::{Plugin, PluginType};
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::PluginContext;
+use crate::plugin::subscriber::PluginSubscriber;
+use crate::notifications::{AsyncNotificationManager, ScanEvent};
+use crate::notifications::traits::{NotificationManager, Subscriber};
 
-/// Registry for managing plugin instances
+/// Registry for managing plugin instances with notification support
 pub struct PluginRegistry {
     /// Registered plugins by name
     plugins: HashMap<String, Box<dyn Plugin>>,
     
     /// Plugin initialization status
     initialized: HashMap<String, bool>,
+    
+    /// Plugin subscribers for notification management
+    subscribers: HashMap<String, Arc<PluginSubscriber>>,
+    
+    /// Optional notification manager for automatic subscription
+    notification_manager: Option<AsyncNotificationManager<ScanEvent>>,
 }
 
 impl PluginRegistry {
@@ -24,11 +33,65 @@ impl PluginRegistry {
         Self {
             plugins: HashMap::new(),
             initialized: HashMap::new(),
+            subscribers: HashMap::new(),
+            notification_manager: None,
         }
     }
     
-    /// Register a plugin
+    /// Create a new plugin registry with notification manager
+    pub fn with_notification_manager(
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>
+    ) -> Self {
+        Self {
+            plugins: HashMap::new(),
+            initialized: HashMap::new(),
+            subscribers: HashMap::new(),
+            notification_manager: Some((*notification_manager).clone()),
+        }
+    }
+    
+    /// Set the notification manager for automatic subscription
+    pub fn set_notification_manager(
+        &mut self, 
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>
+    ) {
+        self.notification_manager = Some((*notification_manager).clone());
+    }
+    
+    /// Register a plugin with automatic notification subscription
     pub async fn register_plugin(&mut self, plugin: Box<dyn Plugin>) -> PluginResult<()> {
+        let name = plugin.plugin_info().name.clone();
+        
+        if self.plugins.contains_key(&name) {
+            return Err(PluginError::plugin_already_registered(&name));
+        }
+        
+        // Store plugin first
+        self.plugins.insert(name.clone(), plugin);
+        self.initialized.insert(name.clone(), false);
+        
+        // Create plugin subscriber for notification handling
+        // We'll create a simple subscriber that references the plugin by name
+        let subscriber = Arc::new(PluginSubscriber::new_with_name(name.clone()));
+        
+        // Subscribe to notifications if manager is available
+        if let Some(ref mut notification_manager) = self.notification_manager {
+            notification_manager.subscribe(subscriber.clone()).await
+                .map_err(|e| PluginError::NotificationFailed { 
+                    message: format!("Failed to subscribe plugin '{}' to notifications: {}", name, e) 
+                })?;
+            
+            log::debug!("Plugin '{}' subscribed to scanner events", name);
+        }
+        
+        // Store subscriber
+        self.subscribers.insert(name, subscriber);
+        
+        Ok(())
+    }
+    
+    /// Register a plugin without automatic notification subscription
+    pub async fn register_plugin_without_notifications(&mut self, plugin: Box<dyn Plugin>) -> PluginResult<()> {
         let name = plugin.plugin_info().name.clone();
         
         if self.plugins.contains_key(&name) {
@@ -41,10 +104,22 @@ impl PluginRegistry {
         Ok(())
     }
     
-    /// Unregister a plugin
+    /// Unregister a plugin with notification cleanup
     pub async fn unregister_plugin(&mut self, name: &str) -> PluginResult<()> {
         if !self.plugins.contains_key(name) {
             return Err(PluginError::plugin_not_found(name));
+        }
+        
+        // Unsubscribe from notifications if manager is available
+        if let Some(ref mut notification_manager) = self.notification_manager {
+            if let Some(subscriber) = self.subscribers.get(name) {
+                notification_manager.unsubscribe(subscriber.subscriber_id()).await
+                    .map_err(|e| PluginError::NotificationFailed { 
+                        message: format!("Failed to unsubscribe plugin '{}' from notifications: {}", name, e) 
+                    })?;
+                
+                log::debug!("Plugin '{}' unsubscribed from scanner events", name);
+            }
         }
         
         // Cleanup plugin before removing
@@ -52,6 +127,7 @@ impl PluginRegistry {
             plugin.cleanup().await?;
         }
         
+        self.subscribers.remove(name);
         self.initialized.remove(name);
         Ok(())
     }
@@ -87,6 +163,47 @@ impl PluginRegistry {
             .filter(|(_, plugin)| plugin.supports_capability(capability))
             .map(|(name, _)| name.clone())
             .collect()
+    }
+    
+    /// Get a plugin subscriber by name
+    pub fn get_subscriber(&self, name: &str) -> Option<&Arc<PluginSubscriber>> {
+        self.subscribers.get(name)
+    }
+    
+    /// List all plugin subscribers
+    pub fn list_subscribers(&self) -> Vec<Arc<PluginSubscriber>> {
+        self.subscribers.values().cloned().collect()
+    }
+    
+    /// Check if notifications are enabled
+    pub fn has_notification_manager(&self) -> bool {
+        self.notification_manager.is_some()
+    }
+    
+    /// Get the number of subscribed plugins
+    pub fn subscriber_count(&self) -> usize {
+        self.subscribers.len()
+    }
+    
+    /// Subscribe all existing plugins to notifications (if manager is set)
+    pub async fn subscribe_all_plugins(&mut self) -> PluginResult<()> {
+        if let Some(ref mut notification_manager) = self.notification_manager {
+            for (name, _plugin) in &self.plugins {
+                if !self.subscribers.contains_key(name) {
+                    // Create subscriber for plugins that don't have one
+                    let subscriber = Arc::new(PluginSubscriber::new_with_name(name.clone()));
+                    
+                    notification_manager.subscribe(subscriber.clone()).await
+                        .map_err(|e| PluginError::NotificationFailed { 
+                            message: format!("Failed to subscribe plugin '{}' to notifications: {}", name, e) 
+                        })?;
+                    
+                    self.subscribers.insert(name.clone(), subscriber);
+                    log::debug!("Plugin '{}' subscribed to scanner events", name);
+                }
+            }
+        }
+        Ok(())
     }
     
     /// Initialize all plugins
@@ -177,6 +294,42 @@ impl SharedPluginRegistry {
         Self {
             inner: Arc::new(RwLock::new(PluginRegistry::new())),
         }
+    }
+    
+    /// Create a new shared plugin registry with notification manager
+    pub fn with_notification_manager(
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>
+    ) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(PluginRegistry::with_notification_manager(notification_manager))),
+        }
+    }
+    
+    /// Set the notification manager for automatic subscription
+    pub async fn set_notification_manager(
+        &self, 
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>
+    ) {
+        let mut registry = self.inner.write().await;
+        registry.set_notification_manager(notification_manager);
+    }
+    
+    /// Register a plugin with automatic notification subscription
+    pub async fn register_plugin(&self, plugin: Box<dyn Plugin>) -> PluginResult<()> {
+        let mut registry = self.inner.write().await;
+        registry.register_plugin(plugin).await
+    }
+    
+    /// Register a plugin without automatic notification subscription
+    pub async fn register_plugin_without_notifications(&self, plugin: Box<dyn Plugin>) -> PluginResult<()> {
+        let mut registry = self.inner.write().await;
+        registry.register_plugin_without_notifications(plugin).await
+    }
+    
+    /// Subscribe all existing plugins to notifications
+    pub async fn subscribe_all_plugins(&self) -> PluginResult<()> {
+        let mut registry = self.inner.write().await;
+        registry.subscribe_all_plugins().await
     }
     
     /// Get the inner registry for direct access
@@ -289,5 +442,119 @@ mod tests {
             let reg = registry.read().await;
             assert!(reg.get_plugin("shared-test").is_some());
         }
+    }
+    
+    #[tokio::test]
+    async fn test_registry_notification_subscription() {
+        use crate::notifications::AsyncNotificationManager;
+        use std::sync::Arc;
+        
+        // Create notification manager
+        let notification_manager = Arc::new(AsyncNotificationManager::new());
+        
+        // Create registry with notification manager
+        let mut registry = PluginRegistry::with_notification_manager(notification_manager.clone());
+        
+        // Create mock plugin
+        let mock_plugin = Box::new(MockPlugin::new("test-plugin", false));
+        
+        // Register plugin - should automatically subscribe to notifications
+        let result = registry.register_plugin(mock_plugin).await;
+        assert!(result.is_ok());
+        
+        // Verify plugin is registered
+        assert!(registry.get_plugin("test-plugin").is_some());
+        
+        // Verify subscriber is created
+        assert!(registry.get_subscriber("test-plugin").is_some());
+        assert_eq!(registry.subscriber_count(), 1);
+        
+        // Verify notification manager has the subscriber
+        assert_eq!(notification_manager.subscriber_count().await, 1);
+        assert!(notification_manager.has_subscriber("plugin_test-plugin").await);
+        
+        // Test unregistration - should unsubscribe from notifications
+        let result = registry.unregister_plugin("test-plugin").await;
+        assert!(result.is_ok());
+        
+        // Verify plugin is unregistered
+        assert!(registry.get_plugin("test-plugin").is_none());
+        
+        // Verify subscriber is removed
+        assert!(registry.get_subscriber("test-plugin").is_none());
+        assert_eq!(registry.subscriber_count(), 0);
+        
+        // Verify notification manager no longer has the subscriber
+        assert_eq!(notification_manager.subscriber_count().await, 0);
+        assert!(!notification_manager.has_subscriber("plugin_test-plugin").await);
+    }
+    
+    #[tokio::test]
+    async fn test_registry_subscribe_all_plugins() {
+        use crate::notifications::AsyncNotificationManager;
+        use std::sync::Arc;
+        
+        // Create registry without notification manager
+        let mut registry = PluginRegistry::new();
+        
+        // Register plugins without notifications
+        let mock_plugin1 = Box::new(MockPlugin::new("plugin1", false));
+        let mock_plugin2 = Box::new(MockPlugin::new("plugin2", false));
+        
+        let result1 = registry.register_plugin_without_notifications(mock_plugin1).await;
+        let result2 = registry.register_plugin_without_notifications(mock_plugin2).await;
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+        
+        // Verify no subscribers initially
+        assert_eq!(registry.subscriber_count(), 0);
+        
+        // Set notification manager
+        let notification_manager = Arc::new(AsyncNotificationManager::new());
+        registry.set_notification_manager(notification_manager.clone());
+        
+        // Subscribe all existing plugins
+        let result = registry.subscribe_all_plugins().await;
+        assert!(result.is_ok());
+        
+        // Verify all plugins are now subscribed
+        assert_eq!(registry.subscriber_count(), 2);
+        assert!(registry.get_subscriber("plugin1").is_some());
+        assert!(registry.get_subscriber("plugin2").is_some());
+        
+        // Verify notification manager has all subscribers
+        assert_eq!(notification_manager.subscriber_count().await, 2);
+        assert!(notification_manager.has_subscriber("plugin_plugin1").await);
+        assert!(notification_manager.has_subscriber("plugin_plugin2").await);
+    }
+    
+    #[tokio::test]
+    async fn test_shared_registry_notification_subscription() {
+        use crate::notifications::AsyncNotificationManager;
+        use std::sync::Arc;
+        
+        // Create notification manager
+        let notification_manager = Arc::new(AsyncNotificationManager::new());
+        
+        // Create shared registry with notification manager
+        let shared_registry = SharedPluginRegistry::with_notification_manager(notification_manager.clone());
+        
+        // Create mock plugin
+        let mock_plugin = Box::new(MockPlugin::new("shared-test-plugin", false));
+        
+        // Register plugin - should automatically subscribe to notifications
+        let result = shared_registry.register_plugin(mock_plugin).await;
+        assert!(result.is_ok());
+        
+        // Verify notification manager has the subscriber
+        assert_eq!(notification_manager.subscriber_count().await, 1);
+        assert!(notification_manager.has_subscriber("plugin_shared-test-plugin").await);
+        
+        // Test subscribe all plugins functionality
+        let result = shared_registry.subscribe_all_plugins().await;
+        assert!(result.is_ok());
+        
+        // Should still have the same subscriber (no duplicates)
+        assert_eq!(notification_manager.subscriber_count().await, 1);
     }
 }

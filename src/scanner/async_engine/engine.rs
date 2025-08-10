@@ -61,7 +61,7 @@ impl AsyncScannerEngine {
         repository: RepositoryHandle,
         config: ScannerConfig,
         message_producer: Arc<dyn MessageProducer + Send + Sync>,
-        runtime: Arc<tokio::runtime::Runtime>,
+        _runtime: Arc<tokio::runtime::Runtime>,
     ) -> ScanResult<Self> {
         // Create task manager with concurrency limit
         let max_concurrent = config.max_threads.unwrap_or_else(num_cpus::get);
@@ -69,7 +69,7 @@ impl AsyncScannerEngine {
         
         Ok(Self {
             #[cfg(not(test))]
-            runtime,
+            runtime: _runtime,
             repository: Arc::new(repository),
             config,
             task_manager,

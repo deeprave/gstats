@@ -103,11 +103,6 @@ impl LogConfig {
         self.enable_colours = true;
         self
     }
-    
-    /// Create a LogConfig that respects the no-color flag
-    pub fn from_args(no_color: bool) -> Self {
-        Self::default().with_colors(!no_color)
-    }
 }
 
 /// Custom logger implementation

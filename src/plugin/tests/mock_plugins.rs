@@ -353,10 +353,9 @@ impl NotificationPlugin for MockNotificationPlugin {
 /// Helper function to create a test plugin context
 pub fn create_test_context() -> PluginContext {
     use crate::scanner::{ScannerConfig, QueryParams};
-    use crate::git;
+    // Removed unused import: crate::git
     use std::sync::Arc;
 
-    let repo = git::resolve_repository_handle(None).unwrap();
     let scanner_config = Arc::new(ScannerConfig::default());
     let query_params = Arc::new(QueryParams::default());
 

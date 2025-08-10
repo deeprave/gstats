@@ -1,7 +1,6 @@
 use crate::scanner::query::QueryParams;
 use crate::scanner::modes::ScanMode;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 

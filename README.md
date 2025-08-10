@@ -223,5 +223,5 @@ Plugin Executor → Message Queue → Consumer → Plugin Processing
 - **Output** - Handle result formatting and export
 - **Notification** - Respond to system events and updates
 
-For detailed information about the plugin system, see [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md).
-For complete architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For detailed information about the plugin system, see [PLUGIN_GUIDE.md](docs/PLUGIN_GUIDE.md).
+For complete architecture documentation, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).

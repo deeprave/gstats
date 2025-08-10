@@ -3,6 +3,7 @@ mod config;
 mod display;
 mod git;
 mod logging;
+mod notifications;
 mod scanner;
 mod plugin;
 mod stats;
@@ -15,6 +16,7 @@ use std::time::SystemTime;
 use log::{info, error, debug, warn};
 use crate::stats::RepositoryFileStats;
 use crate::scanner::async_engine::repository::AsyncRepositoryHandle;
+use gstats::notifications::traits::Publisher;
 
 use crate::display::CompactFormat;
 
@@ -641,6 +643,12 @@ async fn run_scanner(
     // Create plugin registry and initialize plugins
     let plugin_registry = plugin::SharedPluginRegistry::new();
     
+    // Create notification manager and scanner publisher for event coordination
+    let notification_manager = Arc::new(gstats::notifications::AsyncNotificationManager::<gstats::notifications::ScanEvent>::new());
+    let scanner_publisher = gstats::scanner::ScannerPublisher::new(notification_manager.clone());
+    
+    debug!("Notification system initialized for scanner-plugin coordination");
+    
     // Initialize built-in plugins (respecting exclusion configuration)
     initialize_builtin_plugins(&plugin_registry, repo.clone(), &plugin_config).await?;
     
@@ -723,13 +731,74 @@ async fn run_scanner(
     // Start scanning with progress feedback and spinner
     let scan_spinner = progress.start_spinner("Scanning repository...");
     
+    // Generate unique scan ID for event coordination
+    let scan_id = format!("scan_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
+    
+    // Emit scan started event
+    let scan_start_time = std::time::Instant::now();
+    if let Err(e) = scanner_publisher.publish(gstats::notifications::ScanEvent::started(
+        scan_id.clone(),
+        gstats::scanner::ScanMode::from_bits_truncate(scan_modes.bits()),
+    )).await {
+        warn!("Failed to publish scan started event: {}", e);
+    }
+    
+    // Phase 1: Repository initialization progress
+    if let Err(e) = scanner_publisher.publish(gstats::notifications::ScanEvent::progress(
+        scan_id.clone(),
+        0.1,
+        "Repository initialization".to_string(),
+    )).await {
+        warn!("Failed to publish repository initialization progress: {}", e);
+    }
+    
+    // Phase 2: File discovery progress
+    if let Err(e) = scanner_publisher.publish(gstats::notifications::ScanEvent::progress(
+        scan_id.clone(),
+        0.3,
+        "File discovery".to_string(),
+    )).await {
+        warn!("Failed to publish file discovery progress: {}", e);
+    }
+    
+    // Phase 3: History analysis progress
+    if let Err(e) = scanner_publisher.publish(gstats::notifications::ScanEvent::progress(
+        scan_id.clone(),
+        0.6,
+        "History analysis".to_string(),
+    )).await {
+        warn!("Failed to publish history analysis progress: {}", e);
+    }
+    
     // Note: Consumer disabled to prevent runtime drop issues
     // For GS-30 we'll implement proper async consumer integration
+    
+    // Phase 4: Data processing progress (before actual scan)
+    if let Err(e) = scanner_publisher.publish(gstats::notifications::ScanEvent::progress(
+        scan_id.clone(),
+        0.9,
+        "Data processing".to_string(),
+    )).await {
+        warn!("Failed to publish data processing progress: {}", e);
+    }
     
     // Run the scan
     match engine.scan(scan_modes).await {
         Ok(()) => {
-            debug!("Scan completed successfully");
+            let scan_duration = scan_start_time.elapsed();
+            debug!("Scan completed successfully in {:?}", scan_duration);
+            
+            // Emit scan completed event
+            if let Err(e) = scanner_publisher.publish(gstats::notifications::ScanEvent::completed(
+                scan_id.clone(),
+                scan_duration,
+                vec![], // TODO: Collect actual warnings from scan process
+            )).await {
+                warn!("Failed to publish scan completed event: {}", e);
+            }
             
             // Stop spinner and show success
             scan_spinner.complete(display::StatusType::Success, "Repository scan complete").await;
@@ -765,7 +834,18 @@ async fn run_scanner(
             // Note: Analysis Summary is now displayed before the plugin reports in execute_plugins_and_display_reports
         }
         Err(e) => {
-            error!("Scan failed: {}", e);
+            let scan_duration = scan_start_time.elapsed();
+            error!("Scan failed after {:?}: {}", scan_duration, e);
+            
+            // Emit scan error event
+            if let Err(publish_err) = scanner_publisher.publish(gstats::notifications::ScanEvent::error(
+                scan_id.clone(),
+                e.to_string(),
+                true,
+            )).await {
+                warn!("Failed to publish scan error event: {}", publish_err);
+            }
+            
             scan_spinner.complete(display::StatusType::Error, &format!("Repository scan failed: {}", e)).await;
             return Err(e.into());
         }
@@ -836,7 +916,7 @@ async fn initialize_builtin_plugins(
 }
 
 /// Create a plugin context for plugin operations
-fn create_plugin_context(repo_handle: git::RepositoryHandle) -> Result<plugin::PluginContext> {
+fn create_plugin_context(_repo_handle: git::RepositoryHandle) -> Result<plugin::PluginContext> {
     use plugin::context::RuntimeInfo;
     use scanner::{ScannerConfig, QueryParams};
     use std::collections::HashMap;
@@ -926,7 +1006,7 @@ async fn resolve_single_plugin_command(
 async fn collect_scan_data_with_event_processing(
     plugin_name: &str, 
     repo: git::RepositoryHandle,
-    query_params: &scanner::QueryParams,
+    _query_params: &scanner::QueryParams,
 ) -> Result<Vec<scanner::messages::ScanMessage>> {
     use scanner::messages::{ScanMessage, MessageHeader, MessageData};
     use scanner::modes::ScanMode;
@@ -2286,6 +2366,93 @@ async fn display_path_analysis_report(file_stats: &serde_json::Value, colour_man
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_scan_progress_events_emission() {
+        use std::sync::Arc;
+        use gstats::notifications::{AsyncNotificationManager, ScanEvent, NotificationManager};
+        use gstats::scanner::ScannerPublisher;
+        
+        // Create notification manager
+        let mut notification_manager = AsyncNotificationManager::<ScanEvent>::new();
+        
+        // Mock subscriber to capture events
+        let events = Arc::new(tokio::sync::Mutex::new(Vec::<ScanEvent>::new()));
+        let events_clone = events.clone();
+        
+        // Create a mock subscriber
+        struct MockSubscriber {
+            events: Arc<tokio::sync::Mutex<Vec<ScanEvent>>>,
+        }
+        
+        #[async_trait::async_trait]
+        impl gstats::notifications::traits::Subscriber<ScanEvent> for MockSubscriber {
+            async fn handle_event(&self, event: ScanEvent) -> gstats::notifications::NotificationResult<()> {
+                self.events.lock().await.push(event);
+                Ok(())
+            }
+            
+            fn subscriber_id(&self) -> &str {
+                "test_subscriber"
+            }
+        }
+        
+        let subscriber = Arc::new(MockSubscriber { events: events_clone });
+        
+        // Subscribe to events
+        notification_manager.subscribe(subscriber).await.expect("Failed to subscribe");
+        
+        // Create scanner publisher
+        let scanner_publisher = ScannerPublisher::new(Arc::new(notification_manager));
+        
+        // Test progress events (existing functionality)
+        let scan_id = "test_scan_123".to_string();
+        
+        // Emit progress events
+        scanner_publisher.publish(ScanEvent::progress(
+            scan_id.clone(),
+            0.1,
+            "Repository initialization".to_string(),
+        )).await.expect("Failed to publish progress event");
+        
+        scanner_publisher.publish(ScanEvent::progress(
+            scan_id.clone(),
+            0.3,
+            "File discovery".to_string(),
+        )).await.expect("Failed to publish progress event");
+        
+        scanner_publisher.publish(ScanEvent::progress(
+            scan_id.clone(),
+            0.6,
+            "History analysis".to_string(),
+        )).await.expect("Failed to publish progress event");
+        
+        scanner_publisher.publish(ScanEvent::progress(
+            scan_id.clone(),
+            0.9,
+            "Data processing".to_string(),
+        )).await.expect("Failed to publish progress event");
+        
+        // Verify progress events were captured
+        let captured_events = events.lock().await;
+        assert_eq!(captured_events.len(), 4, "Should have captured 4 progress events");
+        
+        // Verify progress values and phases
+        let progress_events: Vec<_> = captured_events.iter()
+            .filter_map(|e| match e {
+                ScanEvent::ScanProgress { progress, phase, .. } => Some((progress, phase)),
+                _ => None,
+            })
+            .collect();
+        
+        assert_eq!(progress_events.len(), 4);
+        assert_eq!(progress_events[0], (&0.1, &"Repository initialization".to_string()));
+        assert_eq!(progress_events[1], (&0.3, &"File discovery".to_string()));
+        assert_eq!(progress_events[2], (&0.6, &"History analysis".to_string()));
+        assert_eq!(progress_events[3], (&0.9, &"Data processing".to_string()));
+    }
+
+
 
     #[test]
     fn test_processed_statistics_compact_format() {

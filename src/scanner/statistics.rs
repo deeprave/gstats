@@ -188,11 +188,11 @@ mod tests {
     
     #[test]
     fn test_stats_collector_creation() {
-        let collector = RepositoryStatsCollector::new();
-        assert!(std::mem::size_of_val(&collector) >= 0); // Basic sanity check
+        let _collector = RepositoryStatsCollector::new();
+        // Size is always non-negative (usize type)
         
-        let collector2 = RepositoryStatsCollector::default();
-        assert!(std::mem::size_of_val(&collector2) >= 0);
+        let _collector2 = RepositoryStatsCollector::default();
+        // Size is always non-negative (usize type)
     }
     
     #[test]

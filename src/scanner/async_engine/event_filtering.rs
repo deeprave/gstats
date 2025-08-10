@@ -1,9 +1,8 @@
-use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileInfo, FileChangeData};
+use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::modes::ScanMode;
 use crate::scanner::query::QueryParams;
 use std::collections::HashSet;
-use std::time::SystemTime;
-use log::{debug, info, warn};
+use log::{debug, info};
 
 /// Advanced event filtering system for optimizing event processing
 #[derive(Debug, Clone)]
@@ -420,8 +419,8 @@ impl Default for MemoryPressureActions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::async_engine::events::RepositoryStats;
-    use std::time::{SystemTime, Duration};
+    use crate::scanner::async_engine::events::{CommitInfo, FileInfo};
+    use std::time::SystemTime;
 
     fn create_test_commit() -> CommitInfo {
         CommitInfo {

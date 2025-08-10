@@ -11,19 +11,12 @@
 //! different types of repository events in a coordinated manner.
 
 use std::sync::Arc;
-use tokio_stream::{Stream, StreamExt};
 use futures::stream;
 use crate::scanner::modes::ScanMode;
-use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::async_traits::AsyncScanner;
-use crate::scanner::query::QueryParams;
 use super::error::{ScanError, ScanResult};
 use super::repository::AsyncRepositoryHandle;
 use super::stream::ScanMessageStream;
-use super::event_engine::RepositoryEventEngine;
-use super::events::RepositoryEvent;
-use super::processors::{ProcessorFactory, EventProcessingCoordinator};
-use log::{debug, info, warn};
 
 /*
 /// Event-driven scanner that provides single-pass repository traversal

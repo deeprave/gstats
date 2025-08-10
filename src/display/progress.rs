@@ -90,14 +90,6 @@ impl SpinnerFrames {
             interval: Duration::from_millis(150),
         }
     }
-    
-    /// Dots spinner
-    pub fn dots() -> Self {
-        Self {
-            frames: vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-            interval: Duration::from_millis(80),
-        }
-    }
 }
 
 /// Progress indicator manager
@@ -191,16 +183,7 @@ impl ProgressIndicator {
         result
     }
     
-    /// Display a progress bar with message
-    pub fn progress(&self, message: &str, current: usize, total: usize) {
-        let bar = self.progress_bar(current, total);
-        print!("\r{}: {} ", self.colour_manager.info(message), bar);
-        std::io::Write::flush(&mut std::io::stdout()).ok();
-        
-        if current >= total {
-            println!(); // Move to next line when complete
-        }
-    }
+    // Removed unused progress method - no current usage found
     
     /// Start a spinner animation
     pub fn start_spinner(&self, message: &str) -> SpinnerHandle {
@@ -324,24 +307,7 @@ impl OperationTracker {
         self.indicator.status(StatusType::Success, &message);
     }
     
-    /// Complete the operation with error status
-    pub fn error(self, error_msg: &str) {
-        let duration = self.start_time.elapsed();
-        let message = format!("{} failed after {:.1}s: {}", self.message, duration.as_secs_f64(), error_msg);
-        self.indicator.status(StatusType::Error, &message);
-    }
-    
-    /// Complete the operation with warning status
-    pub fn warning(self, warning_msg: &str) {
-        let duration = self.start_time.elapsed();
-        let message = format!("{} completed with warnings after {:.1}s: {}", self.message, duration.as_secs_f64(), warning_msg);
-        self.indicator.status(StatusType::Warning, &message);
-    }
-    
-    /// Update progress if this is a multi-step operation
-    pub fn progress(&self, current: usize, total: usize) {
-        self.indicator.progress(&self.message, current, total);
-    }
+    // Removed unused methods: error, warning, progress - no current usage found
 }
 
 #[cfg(test)]

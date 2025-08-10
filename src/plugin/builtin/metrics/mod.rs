@@ -6,10 +6,7 @@ use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
-use crate::plugin::builtin::utils::change_frequency::{ChangeFrequencyAnalyzer, TimeWindow};
-use crate::plugin::builtin::utils::hotspot_detector::{HotspotDetector, FileComplexityMetrics};
 use crate::plugin::builtin::utils::duplication_detector::DuplicationDetector;
-use crate::plugin::builtin::utils::debt_assessor::DebtAssessor;
 use crate::plugin::builtin::utils::complexity_calculator::ComplexityCalculator;
 use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
 use async_trait::async_trait;
@@ -71,6 +68,41 @@ impl MetricsPlugin {
             total_lines: 0,
             total_files: 0,
             complexity_calculator: ComplexityCalculator::new(),
+        }
+    }
+    
+    /// Handle ScanDataReady event to fetch and process queued file data
+    pub async fn handle_scan_data_ready(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+        use crate::notifications::ScanEvent;
+        
+        match event {
+            ScanEvent::ScanDataReady { scan_id, data_type, message_count } => {
+                log::info!("MetricsPlugin received ScanDataReady event: {} messages of type '{}' for scan {}", 
+                          message_count, data_type, scan_id);
+                
+                // MetricsPlugin handles files, metrics, and change_frequency data types
+                match data_type.as_str() {
+                    "files" | "metrics" | "change_frequency" => {
+                        // For now, just log that we received the event
+                        // In future iterations, we'll implement actual data fetching from the queue
+                        // TODO: Fetch file data from the scanner queue
+                        // TODO: Process file messages and calculate metrics
+                        // TODO: Emit DataReady event when processing is complete
+                        
+                        log::debug!("MetricsPlugin will process {} {} messages", message_count, data_type);
+                        Ok(())
+                    }
+                    _ => {
+                        log::trace!("MetricsPlugin ignoring data type '{}'", data_type);
+                        Ok(())
+                    }
+                }
+            }
+            _ => {
+                Err(PluginError::ExecutionFailed { 
+                    message: "MetricsPlugin::handle_scan_data_ready received non-ScanDataReady event".to_string() 
+                })
+            }
         }
     }
 
@@ -1046,7 +1078,6 @@ mod tests {
     }
 
     fn create_test_context() -> PluginContext {
-        let repo = crate::git::resolve_repository_handle(None).unwrap();
         let scanner_config = std::sync::Arc::new(crate::scanner::ScannerConfig::default());
         let query_params = std::sync::Arc::new(crate::scanner::QueryParams::default());
         
@@ -1121,6 +1152,29 @@ mod tests {
         } else {
             panic!("Expected MetricInfo data");
         }
+    }
+    
+    #[tokio::test]
+    async fn test_metrics_plugin_handles_scan_data_ready() {
+        use crate::notifications::ScanEvent;
+        
+        let mut plugin = MetricsPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Create ScanDataReady event for files data
+        let event = ScanEvent::ScanDataReady {
+            scan_id: "test_scan".to_string(),
+            data_type: "files".to_string(),
+            message_count: 5,
+        };
+        
+        // This should fail because handle_scan_data_ready is not implemented yet
+        let result = plugin.handle_scan_data_ready(event).await;
+        assert!(result.is_ok());
+        
+        // Verify that the plugin processed the file data
+        // For now, just verify the method exists and returns Ok
     }
 
 }

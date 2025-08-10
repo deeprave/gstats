@@ -13,4 +13,4 @@ pub mod help_formatter;
 pub mod global_flags;
 
 pub use args::Args;
-pub use global_flags::{filter_global_flags, get_global_flags};
+pub use global_flags::filter_global_flags;

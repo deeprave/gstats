@@ -323,7 +323,7 @@ fn test() {
         let calculator = ComplexityCalculator::new();
         
         // Create a temporary Rust file
-        let mut temp_file = NamedTempFile::new()?;
+        let temp_file = NamedTempFile::new()?;
         let content = r#"
 fn main() {
     let x = 5;
@@ -359,7 +359,7 @@ fn main() {
         let calculator = ComplexityCalculator::new();
         
         // Create a temporary file with unsupported extension
-        let mut temp_file = NamedTempFile::new()?;
+        let temp_file = NamedTempFile::new()?;
         let content = "Some content with if statements that shouldn't be counted";
         fs::write(temp_file.path(), content)?;
         

@@ -923,7 +923,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_task_priority() {
-        let manager = TaskManager::new(2);
+        let _manager = TaskManager::new(2);
         
         // Test default priority assignment
         assert_eq!(TaskPriority::for_mode(ScanMode::FILES), TaskPriority::Normal);
