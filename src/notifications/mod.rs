@@ -13,7 +13,8 @@
 //! # Example Usage
 //! 
 //! ```no_run
-//! use gstats::notifications::{NotificationManager, AsyncNotificationManager, ScanEvent};
+//! use gstats::notifications::{AsyncNotificationManager, ScanEvent};
+//! use gstats::notifications::traits::NotificationManager;
 //! use gstats::scanner::modes::ScanMode;
 //! use std::sync::Arc;
 //! 
@@ -38,10 +39,9 @@ pub mod error;
 mod tests;
 
 // Re-export core types for convenience
-pub use traits::{Publisher, Subscriber, NotificationManager};
 pub use manager::AsyncNotificationManager;
-pub use events::{ScanEvent, QueueEvent, PluginEvent};
-pub use error::{NotificationError, NotificationResult};
+pub use events::ScanEvent;
+pub use error::NotificationResult;
 
 /// Module metadata
 pub const MODULE_NAME: &str = "Generic Notification System";

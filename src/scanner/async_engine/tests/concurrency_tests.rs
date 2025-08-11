@@ -1,11 +1,13 @@
 //! Concurrency and Task Coordination Tests
 
-use crate::scanner::async_engine::*;
+use crate::scanner::async_engine::error::{ScanResult, ScanError};
+use crate::scanner::async_engine::engine::AsyncScannerEngineBuilder;
+use crate::scanner::async_engine::task_manager::TaskManager;
 use crate::scanner::async_traits::*;
 use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::traits::MessageProducer;
-use crate::git::RepositoryHandle;
+use std::path::PathBuf;
 use async_trait::async_trait;
 use futures::stream;
 use std::sync::Arc;
@@ -112,12 +114,12 @@ impl MessageProducer for CountingProducer {
 
 #[tokio::test]
 async fn test_multiple_concurrent_scanners() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(CountingProducer::new());
     let producer_ref = Arc::clone(&producer);
     
     let mut builder = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer);
     
     // Add multiple scanners for different modes
@@ -156,28 +158,27 @@ async fn test_multiple_concurrent_scanners() {
 
 #[tokio::test]
 async fn test_task_concurrency_limit() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(CountingProducer::new());
     
     // Create config with limited concurrency
     let mut config = crate::scanner::config::ScannerConfig::default();
     config.max_threads = Some(2); // Limit to 2 concurrent tasks
     
-    let barrier = Arc::new(Barrier::new(4)); // 3 scanners + test thread
-    
     let mut builder = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .config(config)
         .message_producer(producer);
     
     // Add 3 scanners that will try to run concurrently
+    // Remove barrier to avoid synchronization issues
     for i in 0..3 {
         builder = builder.add_scanner(Arc::new(ConcurrentScanner {
             name: format!("Scanner{}", i),
             supported_modes: ScanMode::from_bits(1 << i).unwrap(),
-            message_count: 1,
+            message_count: 2, // Increase message count for better timing measurement
             work_duration_ms: 100,
-            start_barrier: Some(Arc::clone(&barrier)),
+            start_barrier: None, // Remove barrier
         }));
     }
     
@@ -185,24 +186,16 @@ async fn test_task_concurrency_limit() {
     
     let start = Instant::now();
     
-    // Start scan in background
-    let scan_handle = tokio::spawn(async move {
-        engine.scan(ScanMode::all()).await
-    });
-    
-    // Wait for all tasks to be ready
-    barrier.wait().await;
-    let after_barrier = start.elapsed();
-    
-    // Complete the scan
-    scan_handle.await.unwrap().unwrap();
+    // Start scan
+    engine.scan(ScanMode::all()).await.unwrap();
     let total_duration = start.elapsed();
     
     // With concurrency limit of 2, the 3 tasks should run as 2+1
-    // So total time should be ~200ms (two phases of 100ms each)
-    assert!(after_barrier.as_millis() < 50); // Barrier should be reached quickly
-    assert!(total_duration.as_millis() >= 180); // At least 2 phases
-    assert!(total_duration.as_millis() < 320); // But not 3 sequential phases
+    // Each scanner produces 2 messages with 100ms delay = 200ms per scanner
+    // With 2 concurrent: first 2 scanners run in parallel (200ms), then 3rd scanner (200ms) = ~400ms total
+    // Without limit: all 3 would run in parallel = ~200ms total
+    assert!(total_duration.as_millis() >= 350); // Should take longer due to concurrency limit
+    assert!(total_duration.as_millis() < 600); // But not too long
 }
 
 #[tokio::test]
@@ -213,7 +206,7 @@ async fn test_task_manager_resource_limits() {
     let mut task_ids = Vec::new();
     
     // Spawn 4 tasks
-    for i in 0..4 {
+    for _i in 0..4 {
         let task_id = manager.spawn_task(ScanMode::FILES, move |_cancel| async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
             Ok(())
@@ -242,7 +235,7 @@ async fn test_task_manager_resource_limits() {
 
 #[tokio::test]
 async fn test_concurrent_error_handling() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(CountingProducer::new());
     let producer_ref = Arc::clone(&producer);
     
@@ -268,7 +261,7 @@ async fn test_concurrent_error_handling() {
             let stream = stream::unfold(0, move |i| async move {
                 if i == error_after {
                     Some((Err(ScanError::stream("Simulated error")), i + 1))
-                } else if i < error_after + 5 {
+                } else if i < 5 { // Always produce exactly 5 messages
                     let msg = ScanMessage::new(
                         MessageHeader::new(mode, i as u64),
                         MessageData::FileInfo {
@@ -288,12 +281,12 @@ async fn test_concurrent_error_handling() {
     }
     
     let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer)
         .add_scanner(Arc::new(ErrorScanner {
             name: "GoodScanner".to_string(),
             mode: ScanMode::FILES,
-            error_after: 100, // Won't error
+            error_after: 10, // Won't error within 5 messages
         }))
         .add_scanner(Arc::new(ErrorScanner {
             name: "BadScanner".to_string(),

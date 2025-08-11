@@ -200,6 +200,40 @@ impl DataTransformer {
                 })
             }
             
+            MessageData::RepositoryStatistics { 
+                total_commits, 
+                total_files, 
+                total_authors, 
+                repository_size, 
+                age_days, 
+                avg_commits_per_day 
+            } => {
+                let mut fields = HashMap::new();
+                fields.insert("total_commits".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from(*total_commits)
+                ));
+                fields.insert("total_files".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from(*total_files)
+                ));
+                fields.insert("total_authors".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from(*total_authors)
+                ));
+                fields.insert("repository_size".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from(*repository_size)
+                ));
+                fields.insert("age_days".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from(*age_days)
+                ));
+                fields.insert("avg_commits_per_day".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from_f64(*avg_commits_per_day).unwrap_or_else(|| serde_json::Number::from(0))
+                ));
+                
+                Some(IntermediateData::GenericData {
+                    data_type: "repository_statistics".to_string(),
+                    fields,
+                })
+            }
+            
             MessageData::None => None,
         }
     }

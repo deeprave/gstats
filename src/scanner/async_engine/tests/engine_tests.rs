@@ -1,16 +1,17 @@
 //! Engine Integration Tests
 
-use crate::scanner::async_engine::*;
+use crate::scanner::async_engine::error::{ScanResult, ScanError};
+use crate::scanner::async_engine::engine::AsyncScannerEngineBuilder;
 use crate::scanner::async_traits::*;
 use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::traits::MessageProducer;
-use crate::git::RepositoryHandle;
 use async_trait::async_trait;
 use futures::stream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use std::path::PathBuf;
 
 struct TestMessageProducer {
     messages: Arc<tokio::sync::Mutex<Vec<ScanMessage>>>,
@@ -81,8 +82,8 @@ impl AsyncScanner for DelayedScanner {
                 MessageHeader::new(mode, 1000 + i as u64),
                 MessageData::FileInfo {
                     path: format!("delayed_file_{}.rs", i),
-                    size: 1024 * (i + 1),
-                    lines: 50 * (i + 1),
+                    size: (1024 * (i + 1)) as u64,
+                    lines: (50 * (i + 1)) as u32,
                 },
             );
             
@@ -95,11 +96,11 @@ impl AsyncScanner for DelayedScanner {
 
 #[tokio::test]
 async fn test_engine_builder() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     
     let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer)
         .build();
     
@@ -108,11 +109,11 @@ async fn test_engine_builder() {
 
 #[tokio::test]
 async fn test_engine_without_scanners() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     
     let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer)
         .build()
         .unwrap();
@@ -123,7 +124,7 @@ async fn test_engine_without_scanners() {
 
 #[tokio::test]
 async fn test_single_scanner_operation() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     let producer_ref = Arc::clone(&producer);
     
@@ -133,7 +134,7 @@ async fn test_single_scanner_operation() {
     });
     
     let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer)
         .add_scanner(scanner)
         .build()
@@ -153,7 +154,7 @@ async fn test_single_scanner_operation() {
 
 #[tokio::test]
 async fn test_unsupported_mode() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     
     let scanner = Arc::new(DelayedScanner {
@@ -162,7 +163,7 @@ async fn test_unsupported_mode() {
     });
     
     let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer)
         .add_scanner(scanner)
         .build()
@@ -174,7 +175,7 @@ async fn test_unsupported_mode() {
 
 #[tokio::test]
 async fn test_cancellation() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     let producer_ref = Arc::clone(&producer);
     
@@ -183,17 +184,17 @@ async fn test_cancellation() {
         message_count: 10,
     });
     
-    let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+    let engine = Arc::new(AsyncScannerEngineBuilder::new()
+        .repository_path(repo_path)
         .message_producer(producer)
         .add_scanner(scanner)
         .build()
-        .unwrap();
+        .unwrap());
     
     // Start scan in background
-    let engine_ref = &engine;
+    let engine_clone = engine.clone();
     let scan_handle = tokio::spawn(async move {
-        engine_ref.scan(ScanMode::FILES).await
+        engine_clone.scan(ScanMode::FILES).await
     });
     
     // Cancel after a short delay
@@ -201,7 +202,7 @@ async fn test_cancellation() {
     engine.cancel().await;
     
     let result = scan_handle.await.unwrap();
-    assert!(matches!(result, Err(ScanError::Task(_))));
+    assert!(matches!(result, Err(ScanError::Cancelled)));
     
     // Should have produced fewer than 10 messages
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -210,7 +211,7 @@ async fn test_cancellation() {
 
 #[tokio::test]
 async fn test_engine_stats() {
-    let repo = RepositoryHandle::open(".").unwrap();
+    let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     
     let scanner = Arc::new(DelayedScanner {
@@ -219,7 +220,7 @@ async fn test_engine_stats() {
     });
     
     let engine = AsyncScannerEngineBuilder::new()
-        .repository(repo)
+        .repository_path(repo_path)
         .message_producer(producer)
         .add_scanner(scanner)
         .build()

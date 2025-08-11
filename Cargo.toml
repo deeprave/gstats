@@ -39,7 +39,7 @@ panic = "abort"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
-git2 = "0.18"
+gix = "0.73.0"  # Latest gitoxide version for repository-owning scanner pattern
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"

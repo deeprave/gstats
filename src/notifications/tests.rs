@@ -5,9 +5,11 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::notifications::{
-    AsyncNotificationManager, NotificationManager, Publisher, Subscriber,
-    ScanEvent, QueueEvent, PluginEvent, NotificationResult, NotificationError
+    AsyncNotificationManager, ScanEvent, NotificationResult
 };
+use crate::notifications::traits::{NotificationManager, Publisher, Subscriber};
+use crate::notifications::events::{QueueEvent, PluginEvent};
+use crate::notifications::error::NotificationError;
 // Removed unused imports: EventFilter, RateLimit, OverflowAction
 use crate::scanner::modes::ScanMode;
 
@@ -314,4 +316,152 @@ async fn test_multiple_event_types() {
     assert_eq!(scan_manager.subscriber_count().await, 0);
     assert_eq!(queue_manager.subscriber_count().await, 0);
     assert_eq!(plugin_manager.subscriber_count().await, 0);
+}
+
+#[tokio::test]
+async fn test_unsubscription_during_active_publishing() {
+    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    
+    // Create subscribers
+    let subscriber1 = Arc::new(MockSubscriber::new("sub1"));
+    let subscriber2 = Arc::new(MockSubscriber::new("sub2"));
+    let subscriber3 = Arc::new(MockSubscriber::new("sub3"));
+    
+    // Subscribe all
+    manager.subscribe(subscriber1.clone()).await.unwrap();
+    manager.subscribe(subscriber2.clone()).await.unwrap();
+    manager.subscribe(subscriber3.clone()).await.unwrap();
+    
+    assert_eq!(manager.subscriber_count().await, 3);
+    
+    // Create event
+    let event = ScanEvent::ScanStarted {
+        scan_id: "test_scan".to_string(),
+        modes: ScanMode::HISTORY,
+    };
+    
+    // Start publishing (this will take some time due to async processing)
+    let manager_clone = manager.clone();
+    let event_clone = event.clone();
+    let publish_task = tokio::spawn(async move {
+        manager_clone.publish(event_clone).await
+    });
+    
+    // Immediately try to unsubscribe during publishing
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    let unsubscribe_result = manager.unsubscribe("sub2").await;
+    
+    // Both operations should succeed
+    assert!(unsubscribe_result.is_ok());
+    assert!(publish_task.await.unwrap().is_ok());
+    
+    // Verify subscriber count
+    assert_eq!(manager.subscriber_count().await, 2);
+    
+    // Verify remaining subscribers received the event
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(subscriber1.get_received_events().await.len(), 1);
+    assert_eq!(subscriber3.get_received_events().await.len(), 1);
+    
+    // Unsubscribed subscriber should have received the event too (since unsubscription happened after publishing started)
+    // This is expected behavior - events in flight will still be delivered
+    assert_eq!(subscriber2.get_received_events().await.len(), 1);
+}
+
+#[tokio::test]
+async fn test_subscriber_cleanup_during_shutdown() {
+    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    
+    // Create multiple subscribers
+    let subscribers: Vec<Arc<MockSubscriber>> = (0..5)
+        .map(|i| Arc::new(MockSubscriber::new(&format!("sub{}", i))))
+        .collect();
+    
+    // Subscribe all
+    for subscriber in &subscribers {
+        manager.subscribe(subscriber.clone()).await.unwrap();
+    }
+    
+    assert_eq!(manager.subscriber_count().await, 5);
+    
+    // Simulate shutdown by unsubscribing all
+    for i in 0..5 {
+        let result = manager.unsubscribe(&format!("sub{}", i)).await;
+        assert!(result.is_ok());
+    }
+    
+    assert_eq!(manager.subscriber_count().await, 0);
+    
+    // Verify no subscribers remain
+    for i in 0..5 {
+        assert!(!manager.has_subscriber(&format!("sub{}", i)).await);
+    }
+}
+
+#[tokio::test]
+async fn test_notification_manager_shutdown_with_pending_events() {
+    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    
+    // Create a slow subscriber that takes time to process events
+    struct SlowSubscriber {
+        id: String,
+        processing_time: Duration,
+    }
+    
+    #[async_trait::async_trait]
+    impl Subscriber<ScanEvent> for SlowSubscriber {
+        async fn handle_event(&self, _event: ScanEvent) -> NotificationResult<()> {
+            tokio::time::sleep(self.processing_time).await;
+            Ok(())
+        }
+        
+        fn subscriber_id(&self) -> &str {
+            &self.id
+        }
+    }
+    
+    let slow_subscriber = Arc::new(SlowSubscriber {
+        id: "slow_sub".to_string(),
+        processing_time: Duration::from_millis(100),
+    });
+    
+    manager.subscribe(slow_subscriber.clone()).await.unwrap();
+    
+    // Start publishing multiple events
+    let events = vec![
+        ScanEvent::ScanStarted {
+            scan_id: "scan1".to_string(),
+            modes: ScanMode::HISTORY,
+        },
+        ScanEvent::ScanStarted {
+            scan_id: "scan2".to_string(),
+            modes: ScanMode::FILES,
+        },
+        ScanEvent::ScanStarted {
+            scan_id: "scan3".to_string(),
+            modes: ScanMode::METRICS,
+        },
+    ];
+    
+    let manager_clone = manager.clone();
+    let publish_tasks: Vec<_> = events.into_iter().map(|event| {
+        let manager = manager_clone.clone();
+        tokio::spawn(async move {
+            manager.publish(event).await
+        })
+    }).collect();
+    
+    // Immediately unsubscribe (simulating shutdown)
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let unsubscribe_result = manager.unsubscribe("slow_sub").await;
+    assert!(unsubscribe_result.is_ok());
+    
+    // Wait for all publish tasks to complete
+    for task in publish_tasks {
+        let result = task.await.unwrap();
+        // Publishing should still succeed even after unsubscription
+        assert!(result.is_ok());
+    }
+    
+    assert_eq!(manager.subscriber_count().await, 0);
 }

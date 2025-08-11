@@ -83,6 +83,15 @@ pub enum MessageData {
         execution_time: f64,
         memory_usage: u64,
     },
+    /// Repository statistics data
+    RepositoryStatistics {
+        total_commits: u64,
+        total_files: u64,
+        total_authors: u64,
+        repository_size: u64,
+        age_days: u64,
+        avg_commits_per_day: f64,
+    },
     /// Empty data placeholder
     None,
 }
@@ -149,6 +158,7 @@ impl ScanMessage {
             },
             MessageData::PerformanceInfo { function, .. } => function.len(),
             MessageData::MetricInfo { .. } => 0, // No string fields in MetricInfo
+            MessageData::RepositoryStatistics { .. } => 0, // No string fields in RepositoryStatistics
             MessageData::None => 0,
         };
         base_size + data_size

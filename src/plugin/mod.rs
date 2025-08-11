@@ -27,6 +27,7 @@ pub mod discovery;
 pub mod executor;
 pub mod subscriber;
 pub mod builtin;
+pub mod processors;
 
 #[cfg(test)]
 pub mod tests;

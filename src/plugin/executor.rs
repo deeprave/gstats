@@ -244,6 +244,7 @@ impl PluginExecutor {
             MessageData::DependencyInfo { .. } => "dependencies".to_string(),
             MessageData::SecurityInfo { .. } => "security".to_string(),
             MessageData::PerformanceInfo { .. } => "performance".to_string(),
+            MessageData::RepositoryStatistics { .. } => "repository_statistics".to_string(),
             MessageData::None => "unknown".to_string(),
         }
     }

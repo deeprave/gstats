@@ -271,6 +271,25 @@ impl PluginRegistry {
         self.plugins.len()
     }
     
+    /// Wait for the registry to become empty (all plugins unregistered)
+    /// Returns true if registry becomes empty within timeout, false if timeout occurs
+    pub async fn wait_for_empty_registry(&self, timeout: std::time::Duration) -> bool {
+        use tokio::time::{sleep, Duration, Instant};
+        
+        let start = Instant::now();
+        let poll_interval = Duration::from_millis(10);
+        
+        while start.elapsed() < timeout {
+            if self.plugin_count() == 0 {
+                return true;
+            }
+            
+            sleep(poll_interval).await;
+        }
+        
+        false
+    }
+    
     /// Get the count of initialized plugins
     pub fn initialized_count(&self) -> usize {
         self.initialized.values().filter(|&&v| v).count()
@@ -330,6 +349,40 @@ impl SharedPluginRegistry {
     pub async fn subscribe_all_plugins(&self) -> PluginResult<()> {
         let mut registry = self.inner.write().await;
         registry.subscribe_all_plugins().await
+    }
+    
+    /// Unregister a plugin with notification cleanup
+    pub async fn unregister_plugin(&self, name: &str) -> PluginResult<()> {
+        let mut registry = self.inner.write().await;
+        registry.unregister_plugin(name).await
+    }
+    
+    /// Get the count of registered plugins
+    pub async fn get_plugin_count(&self) -> usize {
+        let registry = self.inner.read().await;
+        registry.plugin_count()
+    }
+    
+    /// Wait for the registry to become empty (all plugins unregistered)
+    /// Returns true if registry becomes empty within timeout, false if timeout occurs
+    pub async fn wait_for_empty_registry(&self, timeout: std::time::Duration) -> bool {
+        use tokio::time::{sleep, Duration, Instant};
+        
+        let start = Instant::now();
+        let poll_interval = Duration::from_millis(10);
+        
+        while start.elapsed() < timeout {
+            {
+                let registry = self.inner.read().await;
+                if registry.plugin_count() == 0 {
+                    return true;
+                }
+            }
+            
+            sleep(poll_interval).await;
+        }
+        
+        false
     }
     
     /// Get the inner registry for direct access
@@ -556,5 +609,99 @@ mod tests {
         
         // Should still have the same subscriber (no duplicates)
         assert_eq!(notification_manager.subscriber_count().await, 1);
+    }
+    
+    #[tokio::test]
+    async fn test_registry_wait_for_empty_registry() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+        
+        let mut registry = PluginRegistry::new();
+        
+        // Test empty registry - should return immediately
+        let start = std::time::Instant::now();
+        let result = registry.wait_for_empty_registry(Duration::from_secs(1)).await;
+        let elapsed = start.elapsed();
+        
+        assert!(result); // Should succeed immediately
+        assert!(elapsed < Duration::from_millis(100)); // Should be very fast
+        
+        // Register a plugin
+        let plugin = Box::new(MockPlugin::new("test", false));
+        registry.register_plugin(plugin).await.unwrap();
+        assert_eq!(registry.plugin_count(), 1);
+        
+        // Test timeout when registry is not empty
+        let start = std::time::Instant::now();
+        let result = registry.wait_for_empty_registry(Duration::from_millis(100)).await;
+        let elapsed = start.elapsed();
+        
+        assert!(!result); // Should timeout
+        assert!(elapsed >= Duration::from_millis(90)); // Should wait for timeout
+        assert!(elapsed < Duration::from_millis(200)); // But not too long
+        
+        // Test successful wait when plugin is unregistered concurrently
+        let mut registry = PluginRegistry::new();
+        let plugin = Box::new(MockPlugin::new("test", false));
+        registry.register_plugin(plugin).await.unwrap();
+        
+        let registry_arc = Arc::new(tokio::sync::Mutex::new(registry));
+        let registry_for_task = Arc::clone(&registry_arc);
+        
+        // Start waiting for empty registry
+        let wait_task = tokio::spawn(async move {
+            // We need to clone the registry state for the wait operation
+            // Since wait_for_empty_registry needs to poll the state
+            let start = std::time::Instant::now();
+            let timeout_duration = Duration::from_secs(2);
+            
+            while start.elapsed() < timeout_duration {
+                {
+                    let registry = registry_for_task.lock().await;
+                    if registry.plugin_count() == 0 {
+                        return true;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        
+        // Unregister plugin after a short delay
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        {
+            let mut registry = registry_arc.lock().await;
+            registry.unregister_plugin("test").await.unwrap();
+        }
+        
+        // Wait should complete successfully
+        let result = timeout(Duration::from_secs(3), wait_task).await.unwrap().unwrap();
+        assert!(result);
+    }
+    
+    #[tokio::test]
+    async fn test_shared_registry_wait_for_empty_registry() {
+        use std::time::Duration;
+        
+        let shared_registry = SharedPluginRegistry::new();
+        
+        // Test empty registry
+        let result = shared_registry.wait_for_empty_registry(Duration::from_secs(1)).await;
+        assert!(result);
+        
+        // Register a plugin
+        let plugin = Box::new(MockPlugin::new("test", false));
+        shared_registry.register_plugin(plugin).await.unwrap();
+        
+        // Test timeout
+        let result = shared_registry.wait_for_empty_registry(Duration::from_millis(100)).await;
+        assert!(!result);
+        
+        // Unregister plugin
+        shared_registry.unregister_plugin("test").await.unwrap();
+        
+        // Should now be empty
+        let result = shared_registry.wait_for_empty_registry(Duration::from_secs(1)).await;
+        assert!(result);
     }
 }

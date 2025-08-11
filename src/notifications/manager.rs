@@ -203,6 +203,18 @@ where
             subscriber_info.stats = SubscriberStats::default();
         }
     }
+    
+    /// Unsubscribe a subscriber by ID (public method that works with &self)
+    pub async fn unsubscribe_by_id(&self, subscriber_id: &str) -> NotificationResult<()> {
+        let mut subscribers = self.subscribers.write().await;
+        
+        if subscribers.remove(subscriber_id).is_some() {
+            debug!("Unsubscribed '{}' from notifications", subscriber_id);
+            Ok(())
+        } else {
+            Err(NotificationError::subscriber_not_found(subscriber_id))
+        }
+    }
 }
 
 #[async_trait::async_trait]

@@ -8,13 +8,15 @@ pub mod task_manager;
 pub mod engine;
 pub mod stream;
 pub mod streaming_producer;
-pub mod repository;
 pub mod scanners;
 pub mod events;
-pub mod event_engine;
+// pub mod event_engine; // Temporarily disabled during AsyncRepositoryHandler removal
 pub mod processors;
 pub mod shared_state;
 pub mod event_filtering;
+
+#[cfg(test)]
+mod tests;
 
 // Re-export core types
 // pub use error::ScanResult;
