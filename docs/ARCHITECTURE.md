@@ -16,13 +16,13 @@ gstats is a high-performance Git repository analytics tool built with Rust, desi
 - **Real-time Monitoring**: Continuous memory usage tracking with leak detection
 - **Adaptive Backoff**: Pressure-responsive queue management
 - **Resource Constraints**: Configurable limits with graceful degradation
-- **Zero-Copy Processing**: Efficient data structures minimizing allocations
+- **Zero-Copy Processing**: Efficient data structures minimising allocations
 
 ### Plugin Extensibility
 - **Trait-Based Architecture**: Clean interfaces enabling external plugins
 - **Version Compatibility**: API safety with semantic versioning
 - **Async Notifications**: Real-time event broadcasting to plugins
-- **Lifecycle Management**: Automatic registration, initialization, and cleanup
+- **Lifecycle Management**: Automatic registration, initialisation, and cleanup
 
 ## System Components
 
@@ -52,20 +52,23 @@ The command-line interface provides user interaction and system configuration.
 
 ### 2. Scanner Engine (`src/scanner/`)
 
-High-performance async scanning system for repository analysis.
+High-performance async scanning system for repository analysis using event-driven single-pass architecture.
 
 #### Async Engine (`async_engine/`):
-- **Engine** (`engine.rs`): Orchestrates scanning operations
-- **Task Manager** (`task_manager.rs`): Concurrent task execution with constraints
-- **Scanners** (`scanners.rs`): Mode-specific scanning implementations
-- **Repository** (`repository.rs`): Async Git operations interface
-- **Streaming** (`stream.rs`, `streaming_producer.rs`): Memory-efficient data flow
+- **Engine** (`engine.rs`): Orchestrates scanning operations with plugin integration
+- **EventDrivenScanner** (`scanners.rs`): Single-pass repository traversal with gitoxide
+- **Processors** (`processors/`): Event-driven data processing components
+- **Messages** (`../messages.rs`): Structured data flow with scan mode support
+
+#### Plugin Integration:
+- **PluginScanner** (`plugin_scanner.rs`): Wraps scanners with plugin processing capabilities
+- **PluginScannerBuilder**: Creates plugin-enabled scanners with registry integration
 
 #### Core Features:
-- **Multi-mode Scanning**: FILES, HISTORY, METRICS, SECURITY, DEPENDENCIES
-- **Resource Management**: Memory limits, thread pools, task prioritisation
-- **Stream Processing**: Lazy evaluation with configurable batch sizes
-- **Error Isolation**: Graceful handling of Git operation failures
+- **Repository-Owning Pattern**: Each scanner creates its own repository access using spawn_blocking
+- **Single-Pass Scanning**: EventDrivenScanner processes all scan modes in one repository traversal
+- **Event-Driven Processing**: Streaming data processing through EventProcessor trait
+- **Gitoxide Integration**: Uses latest gitoxide (0.73) for Git operations without Send/Sync issues
 
 ```rust
 // Scanner modes (bitflags for combinations)
@@ -76,6 +79,12 @@ ScanMode::SECURITY         // Security vulnerability scanning
 ScanMode::DEPENDENCIES     // Dependency analysis
 ScanMode::PERFORMANCE      // Performance bottleneck detection
 ScanMode::CHANGE_FREQUENCY // File change frequency analysis
+```
+
+#### Architecture Flow:
+```
+Repository Path → EventDrivenScanner → spawn_blocking(gitoxide) → 
+Event Stream → EventProcessor → ScanMessage → PluginScanner → Plugins
 ```
 
 ### 3. Message Queue System (`src/queue/`)
@@ -129,9 +138,17 @@ Extensible plugin architecture with async communication and lifecycle management
 - **SharedPluginRegistry**: Thread-safe plugin registry wrapper with Arc<RwLock<>>
 
 #### Built-in Plugins (`builtin/`):
-- **CommitsPlugin** (`commits.rs`): Git history analysis with statistics
-- **MetricsPlugin** (`metrics.rs`): Code quality and complexity metrics
-- **ExportPlugin** (`export.rs`): Multi-format output (JSON, CSV, XML, YAML, HTML)
+- **CommitsPlugin** (`commits/`): Git history analysis with statistics
+- **MetricsPlugin** (`metrics/`): Code quality and complexity metrics with comprehensive processors
+- **ExportPlugin** (`export/`): Multi-format output (JSON, CSV, XML, YAML, HTML)
+
+#### Comprehensive Processors (`processors/`):
+- **ChangeFrequencyProcessor**: File change frequency analysis with time windows
+- **ComplexityProcessor**: Language-specific complexity metrics (cyclomatic, cognitive, structural)
+- **HotspotProcessor**: Risk assessment combining complexity and change frequency
+- **DebtAssessmentProcessor**: Technical debt scoring with configurable factors
+- **FormatDetectionProcessor**: File format classification with confidence scoring
+- **DuplicationDetectorProcessor**: Code similarity analysis with impact assessment
 
 ```rust
 // Plugin communication
@@ -152,33 +169,24 @@ pub enum PluginResponse {
 }
 ```
 
-### 5. Git Integration (`src/git.rs`)
-
-Git repository operations with validation and error handling.
-
-#### Features:
-- **Repository Detection**: Automatic Git repository validation
-- **Path Resolution**: Current directory and explicit path handling
-- **Error Handling**: Comprehensive Git operation error reporting
-- **Repository Handle**: Async-safe Git repository wrapper
-
 ## Data Flow Architecture
 
-### 1. Initialization Flow
+### 1. Initialisation Flow
 ```
-CLI Args → Configuration → Repository Validation → Plugin Discovery → Scanner Setup
+CLI Args → Configuration → Repository Validation → Plugin Discovery → EventDrivenScanner Setup
 ```
 
-### 2. Scanning Pipeline (Integrated)
+### 2. Event-Driven Scanning Pipeline
 ```
-Repository → Scanner Engine → Plugin-Wrapped Scanners → Plugin Executor → 
-Message Queue → Consumer → Plugin Processing → Output
+Repository Path → EventDrivenScanner → spawn_blocking(gitoxide) → 
+Event Stream → EventProcessor → ScanMessage → PluginScanner → 
+Comprehensive Processors → Plugin Processing → Output
 ```
 
 ### 3. Plugin Integration Flow
 ```
-CLI Args → Plugin Registry → Scanner Engine → Plugin Scanners → 
-Plugin Executor → Message Queue → Consumer → Plugin Processing
+CLI Args → Plugin Registry → Scanner Engine → EventDrivenScanner → 
+PluginScanner → Event Processing → Comprehensive Processors → Results
 ```
 
 ### 4. Plugin Communication
@@ -265,7 +273,7 @@ pub trait NotificationPlugin: Plugin {
 
 1. **Discovery**: Automatic detection in plugin directories
 2. **Registration**: Version compatibility validation
-3. **Initialization**: Context setup and configuration
+3. **Initialisation**: Context setup and configuration
 4. **Execution**: Async processing with error handling
 5. **Notification**: Event delivery and response
 6. **Cleanup**: Resource deallocation and state reset
@@ -325,11 +333,12 @@ pub struct PluginScanner {
 - **Message Buffering**: Efficient handling of plugin-generated messages
 
 #### Integration Flow
-1. **Scanner Creation**: Base scanners (File, History, Combined) are created
-2. **Plugin Wrapping**: PluginScannerBuilder wraps scanners with plugin processing
-3. **Engine Integration**: Plugin-wrapped scanners added to AsyncScannerEngine
-4. **Stream Processing**: Plugin execution happens during scanning via PluginStream
-5. **Message Flow**: Plugin-processed messages flow through the queue system
+1. **Scanner Creation**: EventDrivenScanner created with repository-owning pattern
+2. **Plugin Wrapping**: PluginScannerBuilder wraps scanner with plugin processing
+3. **Engine Integration**: Plugin-wrapped scanner added to AsyncScannerEngine
+4. **Stream Processing**: Plugin execution happens during scanning via PluginProcessingStream
+5. **Event Processing**: Comprehensive processors handle specialised analysis
+6. **Message Flow**: Plugin-processed messages flow through the queue system
 
 ## Memory Management
 
@@ -364,8 +373,8 @@ pub struct MemoryTracker {
 - **Queue Throughput**: 50k+ messages/second with backpressure
 - **Plugin Overhead**: < 5% execution time impact
 
-### Optimization Strategies
-- **Zero-Copy Operations**: Minimize memory allocations
+### Optimisation Strategies
+- **Zero-Copy Operations**: Minimise memory allocations
 - **Batch Processing**: Efficient I/O operations
 - **Async Coordination**: Non-blocking task execution
 - **Resource Pooling**: Reuse expensive resources
@@ -373,7 +382,7 @@ pub struct MemoryTracker {
 ### Scalability Targets
 - **Large Repositories**: 100k+ files, 100k+ commits
 - **Memory Constraints**: Configurable 32MB-2GB limits
-- **Concurrent Processing**: Multi-core utilization
+- **Concurrent Processing**: Multi-core utilisation
 - **Plugin Scaling**: 10+ active plugins simultaneously
 
 ## Error Handling
@@ -480,7 +489,7 @@ output-path = "./output"
 - **Metrics Collection**: Performance and usage statistics
 - **Log Aggregation**: Structured logging with correlation
 - **Health Monitoring**: Component status and alerts
-- **Resource Tracking**: Memory and CPU utilization
+- **Resource Tracking**: Memory and CPU utilisation
 
 ## Future Architecture Evolution
 

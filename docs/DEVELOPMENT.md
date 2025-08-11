@@ -118,28 +118,28 @@ A comprehensive export plugin was created supporting multiple output formats (JS
 
 ## CLI Colors and Visual Enhancements (GS-40)
 
-The sixth major development phase focused on enhancing the user experience through comprehensive visual feedback and color coding.
+The sixth major development phase focused on enhancing the user experience through comprehensive visual feedback and colour coding.
 
 ### Color System Architecture
 
-A complete color management system was built using the `colored` crate with full NO_COLOR compliance. The implementation includes:
+A complete colour management system was built using the `colored` crate with full NO_COLOR compliance. The implementation includes:
 
 **Core Infrastructure**:
-- `src/display/colours.rs` - Central color management with 6-color palette (red, yellow, blue, green, cyan, bright_black)
+- `src/display/colours.rs` - Central colour management with 6-colour palette (red, yellow, blue, green, cyan, bright_black)
 - `src/display/config.rs` - Color configuration with theme support (auto, light, dark, custom)
 - `src/display/progress.rs` - Progress indicators with spinner animations
-- `src/display/themes.rs` - Predefined color themes and palette definitions
+- `src/display/themes.rs` - Predefined colour themes and palette definitions
 
 **Key Features**:
-- **Console-only colors** - Colors only appear in console output, not when redirected to files
+- **Console-only colours** - Colours only appear in console output, not when redirected to files
 - **Automatic detection** - Terminal capability detection with graceful fallback to plain text
 - **NO_COLOR compliance** - Both NO_COLOR environment variable and --no-color CLI flag support
-- **Custom themes** - Configurable color palettes via TOML configuration files
-- **Performance optimized** - Color rendering adds less than 5ms overhead
+- **Custom themes** - Configurable colour palettes via TOML configuration files
+- **Performance optimised** - Colour rendering adds less than 5ms overhead
 
 ### Enhanced Logging
 
-Log output was enhanced with color-coded severity levels:
+Log output was enhanced with colour-coded severity levels:
 - **INFO** messages in blue with ℹ️ icons  
 - **ERROR** messages in red with ❌ icons
 - **WARN** messages in yellow with ⚠️ icons
@@ -147,11 +147,11 @@ Log output was enhanced with color-coded severity levels:
 
 ### Plugin Output Enhancement
 
-All plugin output received comprehensive color coding:
+All plugin output received comprehensive colour coding:
 - **Report headers** in cyan for clear section separation
 - **Data labels** in blue with **values** in green for easy scanning
-- **Tables** with proper alignment accounting for ANSI color codes
-- **Status indicators** with appropriate colors (success=green, error=red)
+- **Tables** with proper alignment accounting for ANSI colour codes
+- **Status indicators** with appropriate colours (success=green, error=red)
 
 ### Progress Indicators
 
@@ -164,17 +164,17 @@ Visual progress feedback was implemented with:
 
 The configuration system was extended with:
 - **Root-level configuration** - Simplified TOML structure without nested [base] sections
-- **Inline color tables** - Colors configured as `colors = { error = "red", warning = "yellow" }`
+- **Inline colour tables** - Colours configured as `colors = { error = "red", warning = "yellow" }`
 - **Configuration export** - `--export-config` command generates complete TOML files
-- **Theme validation** - Automatic validation of custom color values
+- **Theme validation** - Automatic validation of custom colour values
 
 ### Help System Enhancement
 
 The help system received comprehensive visual improvements:
-- **Color-coded help text** with different colors for options, arguments, and descriptions
+- **Colour-coded help text** with different colours for options, arguments, and descriptions
 - **Dynamic plugin tables** in error messages showing available functions
-- **Proper alignment** accounting for ANSI color codes in table formatting
-- **Contextual suggestions** with color-highlighted alternatives
+- **Proper alignment** accounting for ANSI colour codes in table formatting
+- **Contextual suggestions** with colour-highlighted alternatives
 
 This phase was implemented following Test-Driven Development with 34 configuration tests and comprehensive validation across different terminal types.
 
@@ -225,6 +225,19 @@ The development followed a clear progression from foundation to specialisation:
 5. **Reference Implementations** - Built-in plugins demonstrating capabilities
 6. **CLI Colors and Visual Enhancements** - Enhanced user experience with visual feedback
 7. **System Integration** - Connecting all components into unified application
+8. **Architecture Transformation (GS-66)** - Event-driven single-pass scanning with comprehensive processors
+
+### Architecture Transformation (GS-66)
+
+A major architectural transformation addressed Send/Sync issues with Git operations and established proper event-driven scanning. The changes included:
+
+- **EventDrivenScanner Implementation**: Single-pass repository traversal using gitoxide with spawn_blocking pattern
+- **Repository-Owning Pattern**: Each scanner creates its own repository access, eliminating Send/Sync constraints
+- **Comprehensive Processors**: Six specialised processors for advanced analysis (complexity, debt assessment, hotspot detection, etc.)
+- **Legacy Code Elimination**: Removed 740+ lines of manual data collection workarounds
+- **Plugin Integration**: Seamless data flow from EventDrivenScanner through PluginScanner to comprehensive processors
+
+This transformation established the current event-driven architecture where repository data flows through a single-pass scanner to specialised processors, providing both performance and extensibility.
 
 Each phase built upon previous work while maintaining architectural consistency. The async-first design established early enabled high performance throughout. The plugin system provides extensibility while maintaining system stability through proper error isolation.
 
