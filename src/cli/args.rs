@@ -203,6 +203,11 @@ pub struct Args {
     #[arg(long = "plugin-exclude", value_name = "LIST", help = "Comma-separated list of plugins to exclude")]
     pub plugin_exclude: Option<String>,
     
+    /// Plugin directory path for external plugin discovery
+    /// Example: --plugin-directory ~/.config/gstats/plugins
+    #[arg(long = "plugin-directory", value_name = "DIR", help = "Plugin directory path for external plugin discovery")]
+    pub plugin_directory: Option<String>,
+    
     /// List all supported export formats with their extensions
     #[arg(long = "list-formats", help = "List all supported export formats and their file extensions")]
     pub list_formats: bool,
@@ -346,6 +351,7 @@ mod tests {
             plugin_exclude: None,
             list_formats: false,
             export_config: None,
+            plugin_directory: None,
         }
     }
 
@@ -593,5 +599,22 @@ mod tests {
             ..create_test_args()
         };
         assert!(validate_args(&args).is_ok(), "Compact flag should pass validation");
+    }
+
+    #[test]
+    fn test_plugin_directory_option() {
+        // Test that plugin_directory field exists and can be set
+        let args = Args {
+            plugin_directory: Some("/custom/plugin/path".to_string()),
+            ..create_test_args()
+        };
+        assert_eq!(args.plugin_directory, Some("/custom/plugin/path".to_string()));
+    }
+
+    #[test]
+    fn test_plugin_directory_option_none() {
+        // Test that plugin_directory defaults to None
+        let args = create_test_args();
+        assert_eq!(args.plugin_directory, None);
     }
 }

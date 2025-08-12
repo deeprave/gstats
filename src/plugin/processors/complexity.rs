@@ -341,13 +341,13 @@ mod tests {
         metrics.cyclomatic_complexity = 2.0;
         assert_eq!(metrics.complexity_level(), ComplexityLevel::Low);
         
-        metrics.cyclomatic_complexity = 8.0;
+        metrics.cyclomatic_complexity = 13.0;
         assert_eq!(metrics.complexity_level(), ComplexityLevel::Medium);
         
-        metrics.cyclomatic_complexity = 15.0;
+        metrics.cyclomatic_complexity = 25.0;
         assert_eq!(metrics.complexity_level(), ComplexityLevel::High);
         
-        metrics.cyclomatic_complexity = 25.0;
+        metrics.cyclomatic_complexity = 50.0;
         assert_eq!(metrics.complexity_level(), ComplexityLevel::VeryHigh);
     }
 

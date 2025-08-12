@@ -48,6 +48,25 @@ impl MockPlugin {
         *self.execution_count.lock().unwrap() = 0;
     }
     
+    /// Set the plugin priority
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.info.priority = priority;
+        self
+    }
+    
+    /// Add a capability to this plugin
+    pub fn with_capability(mut self, name: &str, description: &str) -> Self {
+        self.info.capabilities.push(PluginCapability {
+            name: name.to_string(),
+            description: description.to_string(),
+            version: "1.0".to_string(),
+            function_name: None,
+            aliases: Vec::new(),
+            is_default: false,
+        });
+        self
+    }
+    
     /// Add a capability to the plugin
     pub fn add_capability(&mut self, name: String, description: String, version: String) {
         self.info.capabilities.push(crate::plugin::traits::PluginCapability {

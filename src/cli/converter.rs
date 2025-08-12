@@ -261,13 +261,14 @@ pub fn merge_plugin_config(args: &crate::cli::Args, config_manager: Option<&crat
         config.plugin_exclude.extend(parse_comma_separated(cli_exclude));
     }
 
+    // Add CLI plugin directory if specified
+    if let Some(cli_plugin_dir) = &args.plugin_directory {
+        config.directories.push(cli_plugin_dir.clone());
+    }
+
     // Add default plugin directory if no directories specified
     if config.directories.is_empty() {
-        if let Some(default_dir) = &args.plugin_dir {
-            config.directories.push(default_dir.clone());
-        } else {
-            config.directories.push("plugins".to_string()); // Default directory
-        }
+        config.directories.push(resolve_default_plugin_directory());
     }
 
     config
@@ -280,6 +281,19 @@ fn parse_comma_separated(input: &str) -> Vec<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// Resolve default plugin directory with home expansion
+fn resolve_default_plugin_directory() -> String {
+    // Try to get home directory
+    if let Some(home_dir) = dirs::home_dir() {
+        home_dir.join(".config").join("gstats").join("plugins")
+            .to_string_lossy()
+            .to_string()
+    } else {
+        // Fallback to relative path if home directory is not available
+        "plugins".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -324,6 +338,7 @@ mod tests {
             plugins_dir: Vec::new(),
             plugin_load: None,
             plugin_exclude: None,
+            plugin_directory: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,
@@ -473,6 +488,7 @@ mod tests {
             plugins_dir: Vec::new(),
             plugin_load: None,
             plugin_exclude: None,
+            plugin_directory: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,
@@ -603,6 +619,7 @@ mod tests {
                 plugins_dir: Vec::new(),
                 plugin_load: None,
                 plugin_exclude: None,
+                plugin_directory: None,
                 show_plugins: false,
                 plugins_help: false,
                 export_config: None,
@@ -619,7 +636,11 @@ mod tests {
         let args = create_test_args();
         let config = merge_plugin_config(&args, None);
         
-        assert_eq!(config.directories, vec!["plugins"]);
+        // Should use expanded default directory
+        assert_eq!(config.directories.len(), 1);
+        let default_dir = &config.directories[0];
+        assert!(default_dir.contains(".config/gstats/plugins"), 
+               "Expected default directory to contain .config/gstats/plugins, got: {}", default_dir);
         assert!(config.plugin_load.is_empty());
         assert!(config.plugin_exclude.is_empty());
     }
@@ -701,6 +722,53 @@ mod tests {
     }
 
     #[test]
+    fn test_plugin_directory_cli_with_config_integration() {
+        use crate::config::{ConfigManager, Configuration};
+        use std::collections::HashMap;
+        
+        // Create config with plugin directory
+        let mut config_data = Configuration::new();
+        let mut plugins_section = HashMap::new();
+        plugins_section.insert("directory".to_string(), "/config/plugins".to_string());
+        config_data.insert("plugins".to_string(), plugins_section);
+        
+        let config_manager = ConfigManager::from_config(config_data);
+        
+        // Test CLI plugin-directory overrides config
+        let args = Args {
+            plugin_directory: Some("/cli/plugins".to_string()),
+            ..create_test_args()
+        };
+        
+        let plugin_config = merge_plugin_config(&args, Some(&config_manager));
+        
+        // Should have both config directory and CLI directory
+        assert_eq!(plugin_config.directories.len(), 2);
+        assert!(plugin_config.directories.contains(&"/config/plugins".to_string()));
+        assert!(plugin_config.directories.contains(&"/cli/plugins".to_string()));
+    }
+
+    #[test]
+    fn test_default_plugin_directory_resolution() {
+        // Test that when no directories are specified, default is ~/.config/gstats/plugins
+        let args = create_test_args();
+        
+        let plugin_config = merge_plugin_config(&args, None);
+        
+        // Should resolve to ~/.config/gstats/plugins
+        assert_eq!(plugin_config.directories.len(), 1);
+        let default_dir = &plugin_config.directories[0];
+        
+        // Should contain the expanded home directory path
+        assert!(default_dir.contains(".config/gstats/plugins"), 
+               "Expected default directory to be ~/.config/gstats/plugins, got: {}", default_dir);
+        
+        // Should not be the literal "~" character
+        assert!(!default_dir.starts_with("~"), 
+               "Expected home directory to be expanded, got: {}", default_dir);
+    }
+
+    #[test]
     fn test_args_to_scanner_config_conflicting_performance_modes() {
         let args = Args {
             repository: None,
@@ -737,6 +805,7 @@ mod tests {
             plugins_dir: Vec::new(),
             plugin_load: None,
             plugin_exclude: None,
+            plugin_directory: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,
@@ -789,6 +858,7 @@ mod tests {
             plugins_dir: Vec::new(),
             plugin_load: None,
             plugin_exclude: None,
+            plugin_directory: None,
             show_plugins: false,
             plugins_help: false,
             export_config: None,

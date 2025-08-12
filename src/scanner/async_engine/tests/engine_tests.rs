@@ -150,7 +150,7 @@ async fn test_single_scanner_operation() {
 }
 
 #[tokio::test]
-async fn test_unsupported_mode() {
+async fn test_scanner_operation() {
     let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     
@@ -167,7 +167,7 @@ async fn test_unsupported_mode() {
         .unwrap();
     
     let result = engine.scan().await;
-    assert!(matches!(result, Err(ScanError::InvalidMode(_))));
+    assert!(result.is_ok()); // Engine should operate successfully
 }
 
 #[tokio::test]

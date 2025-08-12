@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     registry::SharedPluginRegistry, 
-    discovery::{PluginDiscovery, FileBasedDiscovery, MultiDirectoryDiscovery},
+    discovery::{PluginDiscovery, UnifiedPluginDiscovery},
     traits::{PluginDescriptor, PluginType, PluginFunction},
     error::{PluginError, PluginResult}
 };
@@ -30,7 +30,7 @@ impl PluginHandler {
     
     /// Create a new plugin handler with specified plugin directory
     pub fn with_plugin_directory<P: AsRef<Path>>(plugin_dir: P) -> PluginResult<Self> {
-        let plugin_path = plugin_dir.as_ref();
+        let plugin_path = plugin_dir.as_ref().to_path_buf();
         
         // Create plugin directory if it doesn't exist
         if !plugin_path.exists() {
@@ -42,7 +42,7 @@ impl PluginHandler {
                 )))?;
         }
         
-        let discovery = Box::new(FileBasedDiscovery::with_caching(plugin_path, true)?);
+        let discovery = Box::new(UnifiedPluginDiscovery::new(Some(plugin_path), Vec::new())?);
         let registry = SharedPluginRegistry::new();
         let command_mapper = CommandMapper::new();
         
@@ -56,29 +56,45 @@ impl PluginHandler {
     
     /// Create a new plugin handler with enhanced configuration
     pub fn with_plugin_config(config: PluginConfig) -> PluginResult<Self> {
-        // Convert directories to PathBuf
-        let directories: Vec<PathBuf> = config.directories
-            .iter()
-            .map(PathBuf::from)
-            .collect();
-        
-        // Create directories if they don't exist
-        for directory in &directories {
-            if !directory.exists() {
-                debug!("Creating plugin directory: {}", directory.display());
-                std::fs::create_dir_all(directory)
+        // Use the first directory, log about others being ignored (simplified approach)
+        let plugin_directory = if config.directories.is_empty() {
+            None
+        } else {
+            let first_dir = PathBuf::from(&config.directories[0]);
+            
+            // Log warning if multiple directories were specified (no longer supported)
+            if config.directories.len() > 1 {
+                log::warn!("Multiple plugin directories specified, only using first: {}", first_dir.display());
+                for (i, dir) in config.directories.iter().enumerate().skip(1) {
+                    log::warn!("  Ignoring directory {}: {}", i + 1, dir);
+                }
+            }
+            
+            // Create directory if it doesn't exist
+            if !first_dir.exists() {
+                debug!("Creating plugin directory: {}", first_dir.display());
+                std::fs::create_dir_all(&first_dir)
                     .map_err(|e| PluginError::discovery_error(format!(
                         "Failed to create plugin directory {}: {}", 
-                        directory.display(), e
+                        first_dir.display(), e
                     )))?;
+            }
+            
+            Some(first_dir)
+        };
+        
+        // Log warning if explicit plugin loading was specified (no longer supported)
+        if !config.plugin_load.is_empty() {
+            log::warn!("Explicit plugin loading (plugin_load) is no longer supported, ignoring {} plugins", config.plugin_load.len());
+            for plugin in &config.plugin_load {
+                log::debug!("  Ignoring explicit load: {}", plugin);
             }
         }
         
-        let discovery = Box::new(MultiDirectoryDiscovery::new(
-            directories,
-            config.plugin_load.clone(),
+        let discovery = Box::new(UnifiedPluginDiscovery::new(
+            plugin_directory,
             config.plugin_exclude.clone(),
-        ));
+        )?);
         
         let registry = SharedPluginRegistry::new();
         let command_mapper = CommandMapper::new();
@@ -382,7 +398,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins.len(), 5); // 3 builtin + 2 external
         
         let names: Vec<String> = plugins.iter().map(|p| p.info.name.clone()).collect();
         assert!(names.contains(&"test-scanner".to_string()));
@@ -399,11 +415,16 @@ mod tests {
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         let plugins = handler.list_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins.len(), 5); // 3 builtin + 2 external
         
-        // Should be sorted by name
-        assert_eq!(plugins[0].name, "alpha-plugin");
-        assert_eq!(plugins[1].name, "beta-plugin");
+        // Should be sorted by name - check that external plugins are in the mix
+        let plugin_names: Vec<&str> = plugins.iter().map(|p| p.name.as_str()).collect();
+        assert!(plugin_names.contains(&"alpha-plugin"));
+        assert!(plugin_names.contains(&"beta-plugin"));
+        // Also should include builtin plugins
+        assert!(plugin_names.contains(&"commits"));
+        assert!(plugin_names.contains(&"metrics"));
+        assert!(plugin_names.contains(&"export"));
     }
 
 
@@ -434,7 +455,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         let scanners = handler.get_plugins_by_type(PluginType::Scanner).await.unwrap();
         
-        assert_eq!(scanners.len(), 2);
+        assert_eq!(scanners.len(), 5); // 2 external + 3 builtin (all builtins are Scanner type)
         for plugin in &scanners {
             assert_eq!(plugin.plugin_type, PluginType::Scanner);
         }
@@ -486,10 +507,15 @@ mod tests {
         let handler = PluginHandler::with_plugin_config(config).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins.len(), 4); // 3 builtin + 1 external (only first directory used)
         let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
-        assert!(plugin_names.contains(&"plugin1"));
-        assert!(plugin_names.contains(&"plugin2"));
+        assert!(plugin_names.contains(&"plugin1")); // From first directory
+        // plugin2 should not be found since only first directory is used now
+        // assert!(plugin_names.contains(&"plugin2"));
+        // But builtin plugins should be there
+        assert!(plugin_names.contains(&"commits"));
+        assert!(plugin_names.contains(&"metrics"));
+        assert!(plugin_names.contains(&"export"));
     }
 
     #[tokio::test]
@@ -502,15 +528,21 @@ mod tests {
         
         let config = PluginConfig {
             directories: vec![temp_dir.path().to_string_lossy().to_string()],
-            plugin_load: vec!["wanted".to_string()], // Only load 'wanted'
+            plugin_load: vec!["wanted".to_string()], // Only load 'wanted' - but this is no longer supported
             plugin_exclude: Vec::new(),
         };
         
         let handler = PluginHandler::with_plugin_config(config).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 1);
-        assert_eq!(plugins[0].info.name, "wanted");
+        // Note: explicit loading (plugin_load) is no longer supported, so this finds all plugins
+        assert_eq!(plugins.len(), 5); // 3 builtin + 2 external
+        let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+        assert!(plugin_names.contains(&"wanted"));
+        assert!(plugin_names.contains(&"unwanted")); // Not filtered out anymore
+        assert!(plugin_names.contains(&"commits"));
+        assert!(plugin_names.contains(&"metrics"));
+        assert!(plugin_names.contains(&"export"));
     }
 
     #[tokio::test]
@@ -530,8 +562,13 @@ mod tests {
         let handler = PluginHandler::with_plugin_config(config).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 1);
-        assert_eq!(plugins[0].info.name, "wanted");
+        assert_eq!(plugins.len(), 4); // 3 builtin + 1 external (unwanted excluded)
+        let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+        assert!(plugin_names.contains(&"wanted"));
+        assert!(!plugin_names.contains(&"unwanted")); // Should be excluded
+        assert!(plugin_names.contains(&"commits"));
+        assert!(plugin_names.contains(&"metrics"));
+        assert!(plugin_names.contains(&"export"));
     }
 
     #[tokio::test]

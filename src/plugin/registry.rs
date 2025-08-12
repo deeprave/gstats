@@ -9,6 +9,7 @@ use crate::plugin::traits::{Plugin, PluginType};
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::PluginContext;
 use crate::plugin::subscriber::PluginSubscriber;
+use crate::plugin::priority_queue::PriorityQueue;
 use crate::notifications::{AsyncNotificationManager, ScanEvent};
 use crate::notifications::traits::{NotificationManager, Subscriber};
 
@@ -147,22 +148,46 @@ impl PluginRegistry {
         self.plugins.keys().cloned().collect()
     }
     
-    /// Get plugins by type
+    /// Get plugins by type, ordered by priority (highest to lowest)
     pub fn get_plugins_by_type(&self, plugin_type: PluginType) -> Vec<String> {
-        self.plugins
-            .iter()
-            .filter(|(_, plugin)| plugin.plugin_info().plugin_type == plugin_type)
-            .map(|(name, _)| name.clone())
-            .collect()
+        let mut plugin_queue = PriorityQueue::new();
+        
+        // Add matching plugins to priority queue
+        for (name, plugin) in &self.plugins {
+            if plugin.plugin_info().plugin_type == plugin_type {
+                let priority = plugin.plugin_info().priority;
+                plugin_queue.push(priority, name.clone());
+            }
+        }
+        
+        // Extract names in priority order
+        let mut ordered_plugins = Vec::new();
+        while let Some((_, name)) = plugin_queue.pop() {
+            ordered_plugins.push(name);
+        }
+        
+        ordered_plugins
     }
     
-    /// Get plugins with a specific capability
+    /// Get plugins with a specific capability, ordered by priority (highest to lowest)
     pub fn get_plugins_with_capability(&self, capability: &str) -> Vec<String> {
-        self.plugins
-            .iter()
-            .filter(|(_, plugin)| plugin.supports_capability(capability))
-            .map(|(name, _)| name.clone())
-            .collect()
+        let mut plugin_queue = PriorityQueue::new();
+        
+        // Add matching plugins to priority queue
+        for (name, plugin) in &self.plugins {
+            if plugin.supports_capability(capability) {
+                let priority = plugin.plugin_info().priority;
+                plugin_queue.push(priority, name.clone());
+            }
+        }
+        
+        // Extract names in priority order
+        let mut ordered_plugins = Vec::new();
+        while let Some((_, name)) = plugin_queue.pop() {
+            ordered_plugins.push(name);
+        }
+        
+        ordered_plugins
     }
     
     /// Get a plugin subscriber by name

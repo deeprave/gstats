@@ -2,7 +2,7 @@
 //! 
 //! Tests plugin discovery, descriptor parsing, and dynamic loading capabilities.
 
-use crate::plugin::discovery::{PluginDiscovery, FileBasedDiscovery, MultiDirectoryDiscovery, PluginDescriptorParser};
+use crate::plugin::discovery::{PluginDiscovery, FileBasedDiscovery, PluginDescriptorParser};
 use crate::plugin::traits::{PluginDescriptor, PluginInfo, PluginType};
 use crate::plugin::error::PluginError;
 use std::collections::HashMap;
@@ -334,176 +334,6 @@ fn create_test_descriptor_with_api(name: &str, version: &str, api_version: u32) 
     }
 }
 
-#[tokio::test]
-async fn test_multi_directory_discovery_creation() {
-    
-    let directories = vec![
-        PathBuf::from("plugins1"),
-        PathBuf::from("plugins2"),
-    ];
-    let explicit_plugins = vec!["plugin1".to_string()];
-    let excluded_plugins = vec!["unwanted".to_string()];
-    
-    let discovery = MultiDirectoryDiscovery::new(
-        directories,
-        explicit_plugins,
-        excluded_plugins,
-    );
-    
-    assert_eq!(discovery.plugin_directory().to_string_lossy(), "plugins1");
-    assert!(discovery.supports_dynamic_loading());
-}
-
-#[tokio::test]
-async fn test_multi_directory_discovery_multiple_dirs() {
-    use tempfile::tempdir;
-    
-    let temp_dir1 = tempdir().unwrap();
-    let temp_dir2 = tempdir().unwrap();
-    
-    // Create plugin1 in first directory
-    let plugin1_content = create_test_plugin_yaml("test-plugin1", "1.0.0", PluginType::Scanner);
-    let plugin1_path = temp_dir1.path().join("test-plugin1.yaml");
-    fs::write(&plugin1_path, plugin1_content).await.unwrap();
-    
-    // Create plugin2 in second directory
-    let plugin2_content = create_test_plugin_yaml("test-plugin2", "2.0.0", PluginType::Output);
-    let plugin2_path = temp_dir2.path().join("test-plugin2.yaml");
-    fs::write(&plugin2_path, plugin2_content).await.unwrap();
-    
-    let directories = vec![
-        temp_dir1.path().to_path_buf(),
-        temp_dir2.path().to_path_buf(),
-    ];
-    
-    let discovery = MultiDirectoryDiscovery::new(
-        directories,
-        Vec::new(),
-        Vec::new(),
-    );
-    
-    let plugins = discovery.discover_plugins().await.unwrap();
-    assert_eq!(plugins.len(), 2);
-    
-    let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
-    assert!(plugin_names.contains(&"test-plugin1"));
-    assert!(plugin_names.contains(&"test-plugin2"));
-}
-
-#[tokio::test]
-async fn test_multi_directory_discovery_explicit_loading() {
-    use tempfile::tempdir;
-    
-    let temp_dir = tempdir().unwrap();
-    
-    // Create two plugins in directory
-    let plugin1_content = create_test_plugin_yaml("plugin1", "1.0.0", PluginType::Scanner);
-    let plugin1_path = temp_dir.path().join("plugin1.yaml");
-    fs::write(&plugin1_path, plugin1_content).await.unwrap();
-    
-    let plugin2_content = create_test_plugin_yaml("plugin2", "2.0.0", PluginType::Output);
-    let plugin2_path = temp_dir.path().join("plugin2.yaml");
-    fs::write(&plugin2_path, plugin2_content).await.unwrap();
-    
-    let directories = vec![temp_dir.path().to_path_buf()];
-    let explicit_plugins = vec!["plugin1".to_string()]; // Only load plugin1
-    
-    let discovery = MultiDirectoryDiscovery::new(
-        directories,
-        explicit_plugins,
-        Vec::new(),
-    );
-    
-    let plugins = discovery.discover_plugins().await.unwrap();
-    assert_eq!(plugins.len(), 1);
-    assert_eq!(plugins[0].info.name, "plugin1");
-}
-
-#[tokio::test]
-async fn test_multi_directory_discovery_exclusion() {
-    use tempfile::tempdir;
-    
-    let temp_dir = tempdir().unwrap();
-    
-    // Create two plugins
-    let plugin1_content = create_test_plugin_yaml("wanted-plugin", "1.0.0", PluginType::Scanner);
-    let plugin1_path = temp_dir.path().join("wanted-plugin.yaml");
-    fs::write(&plugin1_path, plugin1_content).await.unwrap();
-    
-    let plugin2_content = create_test_plugin_yaml("unwanted-plugin", "2.0.0", PluginType::Output);
-    let plugin2_path = temp_dir.path().join("unwanted-plugin.yaml");
-    fs::write(&plugin2_path, plugin2_content).await.unwrap();
-    
-    let directories = vec![temp_dir.path().to_path_buf()];
-    let excluded_plugins = vec!["unwanted-plugin".to_string()];
-    
-    let discovery = MultiDirectoryDiscovery::new(
-        directories,
-        Vec::new(),
-        excluded_plugins,
-    );
-    
-    let plugins = discovery.discover_plugins().await.unwrap();
-    assert_eq!(plugins.len(), 1);
-    assert_eq!(plugins[0].info.name, "wanted-plugin");
-}
-
-#[tokio::test]
-async fn test_multi_directory_discovery_deduplication() {
-    use tempfile::tempdir;
-    
-    let temp_dir1 = tempdir().unwrap();
-    let temp_dir2 = tempdir().unwrap();
-    
-    // Create same plugin in both directories (first found wins)
-    let plugin_content = create_test_plugin_yaml("duplicate-plugin", "1.0.0", PluginType::Scanner);
-    
-    let plugin1_path = temp_dir1.path().join("duplicate-plugin.yaml");
-    fs::write(&plugin1_path, plugin_content.clone()).await.unwrap();
-    
-    let plugin2_path = temp_dir2.path().join("duplicate-plugin.yaml");
-    fs::write(&plugin2_path, plugin_content).await.unwrap();
-    
-    let directories = vec![
-        temp_dir1.path().to_path_buf(),
-        temp_dir2.path().to_path_buf(),
-    ];
-    
-    let discovery = MultiDirectoryDiscovery::new(
-        directories,
-        Vec::new(),
-        Vec::new(),
-    );
-    
-    let plugins = discovery.discover_plugins().await.unwrap();
-    assert_eq!(plugins.len(), 1); // Should be deduplicated
-    assert_eq!(plugins[0].info.name, "duplicate-plugin");
-}
-
-#[tokio::test]
-async fn test_multi_directory_discovery_explicit_by_path() {
-    use tempfile::tempdir;
-    
-    let temp_dir = tempdir().unwrap();
-    
-    // Create plugin
-    let plugin_content = create_test_plugin_yaml("path-plugin", "1.0.0", PluginType::Scanner);
-    let plugin_path = temp_dir.path().join("path-plugin.yaml");
-    fs::write(&plugin_path, plugin_content).await.unwrap();
-    
-    let directories = Vec::new(); // No directories for discovery
-    let explicit_plugins = vec![plugin_path.to_string_lossy().to_string()]; // Load by full path
-    
-    let discovery = MultiDirectoryDiscovery::new(
-        directories,
-        explicit_plugins,
-        Vec::new(),
-    );
-    
-    let plugins = discovery.discover_plugins().await.unwrap();
-    assert_eq!(plugins.len(), 1);
-    assert_eq!(plugins[0].info.name, "path-plugin");
-}
 
 fn create_test_plugin_yaml(name: &str, version: &str, plugin_type: PluginType) -> String {
     format!(
@@ -518,10 +348,260 @@ fn create_test_plugin_yaml(name: &str, version: &str, plugin_type: PluginType) -
   capabilities: []
   plugin_type: {plugin_type:?}
   license: null
+  priority: 5
 file_path: null
 entry_point: main
 config: {{}}
 "#
     )
+}
+
+// Tests for UnifiedPluginDiscovery
+// Following TDD methodology - these tests should initially fail
+
+#[tokio::test]
+async fn test_unified_discovery_creation_without_directory() {
+    use crate::plugin::discovery::UnifiedPluginDiscovery;
+    
+    let excluded_plugins = vec!["unwanted".to_string()];
+    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins).unwrap();
+    
+    // Should not have external discovery when no directory provided
+    assert!(!discovery.supports_dynamic_loading());
+    assert_eq!(discovery.plugin_directory().to_string_lossy(), "plugins");
+}
+
+#[tokio::test]
+async fn test_unified_discovery_creation_with_nonexistent_directory() {
+    use crate::plugin::discovery::UnifiedPluginDiscovery;
+    use std::path::PathBuf;
+    
+    let nonexistent_dir = PathBuf::from("/nonexistent/directory");
+    let excluded_plugins = vec![];
+    let discovery = UnifiedPluginDiscovery::new(Some(nonexistent_dir), excluded_plugins).unwrap();
+    
+    // Should not have external discovery when directory doesn't exist
+    assert!(!discovery.supports_dynamic_loading());
+}
+
+#[tokio::test]
+async fn test_unified_discovery_creation_with_existing_directory() {
+    use crate::plugin::discovery::UnifiedPluginDiscovery;
+    use tempfile::tempdir;
+    
+    let temp_dir = tempdir().unwrap();
+    let excluded_plugins = vec![];
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    
+    // Should have external discovery when directory exists
+    assert!(discovery.supports_dynamic_loading());
+    assert_eq!(discovery.plugin_directory(), temp_dir.path());
+}
+
+#[tokio::test]
+async fn test_unified_discovery_with_default_directory() {
+    use crate::plugin::discovery::UnifiedPluginDiscovery;
+    
+    let excluded_plugins = vec![];
+    let discovery = UnifiedPluginDiscovery::with_default_directory(excluded_plugins).unwrap();
+    
+    // Should use default directory in home/.config/gstats/plugins
+    let plugin_dir = discovery.plugin_directory();
+    assert!(plugin_dir.to_string_lossy().contains(".config/gstats/plugins"));
+}
+
+#[tokio::test]
+async fn test_unified_discovery_builtin_plugins_only() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    
+    // No external directory, so only builtin plugins
+    let excluded_plugins = vec![];
+    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find builtin plugins: commits, metrics, export
+    assert_eq!(plugins.len(), 3);
+    
+    let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"commits"));
+    assert!(plugin_names.contains(&"metrics"));
+    assert!(plugin_names.contains(&"export"));
+    
+    // All should be builtin (no file_path)
+    for plugin in &plugins {
+        assert!(plugin.file_path.is_none());
+        assert_eq!(plugin.entry_point, "builtin");
+    }
+}
+
+#[tokio::test]
+async fn test_unified_discovery_builtin_plugins_with_exclusions() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    
+    // Exclude one builtin plugin
+    let excluded_plugins = vec!["metrics".to_string()];
+    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find 2 builtin plugins (3 total - 1 excluded)
+    assert_eq!(plugins.len(), 2);
+    
+    let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"commits"));
+    assert!(plugin_names.contains(&"export"));
+    assert!(!plugin_names.contains(&"metrics")); // Should be excluded
+}
+
+#[tokio::test]
+async fn test_unified_discovery_external_plugins_only() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    use tempfile::tempdir;
+    use tokio::fs;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create external plugin
+    let external_plugin = create_test_plugin_yaml("external-scanner", "1.0.0", PluginType::Scanner);
+    let external_path = temp_dir.path().join("external-scanner.yaml");
+    fs::write(&external_path, external_plugin).await.unwrap();
+    
+    // Exclude ALL builtin plugins
+    let excluded_plugins = vec!["commits".to_string(), "metrics".to_string(), "export".to_string()];
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find only the external plugin
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].info.name, "external-scanner");
+    assert!(plugins[0].file_path.is_some()); // External plugin should have file_path
+}
+
+#[tokio::test]
+async fn test_unified_discovery_mixed_builtin_and_external() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    use tempfile::tempdir;
+    use tokio::fs;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create external plugin
+    let external_plugin = create_test_plugin_yaml("external-processor", "2.0.0", PluginType::Processing);
+    let external_path = temp_dir.path().join("external-processor.yaml");
+    fs::write(&external_path, external_plugin).await.unwrap();
+    
+    // No exclusions
+    let excluded_plugins = vec![];
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find 3 builtin + 1 external = 4 total
+    assert_eq!(plugins.len(), 4);
+    
+    let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"commits"));
+    assert!(plugin_names.contains(&"metrics"));
+    assert!(plugin_names.contains(&"export"));
+    assert!(plugin_names.contains(&"external-processor"));
+}
+
+#[tokio::test]
+async fn test_unified_discovery_external_overrides_builtin() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    use tempfile::tempdir;
+    use tokio::fs;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create external plugin with same name as builtin
+    let external_plugin = create_test_plugin_yaml("commits", "3.0.0", PluginType::Processing);
+    let external_path = temp_dir.path().join("commits.yaml");
+    fs::write(&external_path, external_plugin).await.unwrap();
+    
+    // No exclusions
+    let excluded_plugins = vec![];
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find 3 total: external "commits" + builtin "metrics" + builtin "export"
+    assert_eq!(plugins.len(), 3);
+    
+    let commits_plugin = plugins.iter().find(|p| p.info.name == "commits").unwrap();
+    
+    // The "commits" plugin should be the external one (has file_path and version 3.0.0)
+    assert!(commits_plugin.file_path.is_some());
+    assert_eq!(commits_plugin.info.version, "3.0.0");
+    assert_eq!(commits_plugin.info.plugin_type, PluginType::Processing); // External type
+}
+
+#[tokio::test]
+async fn test_unified_discovery_multiple_external_plugins_same_name() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    use tempfile::tempdir;
+    use tokio::fs;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create subdirectory with another plugin with same name
+    let subdir = temp_dir.path().join("subdir");
+    fs::create_dir(&subdir).await.unwrap();
+    
+    // Create two external plugins with same name in different locations
+    let plugin1 = create_test_plugin_yaml("duplicate", "1.0.0", PluginType::Scanner);
+    let plugin1_path = temp_dir.path().join("duplicate.yaml");
+    fs::write(&plugin1_path, plugin1).await.unwrap();
+    
+    let plugin2 = create_test_plugin_yaml("duplicate", "2.0.0", PluginType::Output);
+    let plugin2_path = subdir.join("duplicate.yaml");
+    fs::write(&plugin2_path, plugin2).await.unwrap();
+    
+    // Exclude all builtin plugins to focus on external behavior
+    let excluded_plugins = vec!["commits".to_string(), "metrics".to_string(), "export".to_string()];
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find only one "duplicate" plugin (FileBasedDiscovery's deduplication)
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].info.name, "duplicate");
+    assert!(plugins[0].file_path.is_some());
+}
+
+#[tokio::test]
+async fn test_unified_discovery_external_exclusion() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    use tempfile::tempdir;
+    use tokio::fs;
+    
+    let temp_dir = tempdir().unwrap();
+    
+    // Create external plugins
+    let wanted_plugin = create_test_plugin_yaml("wanted", "1.0.0", PluginType::Scanner);
+    let wanted_path = temp_dir.path().join("wanted.yaml");
+    fs::write(&wanted_path, wanted_plugin).await.unwrap();
+    
+    let unwanted_plugin = create_test_plugin_yaml("unwanted", "1.0.0", PluginType::Output);
+    let unwanted_path = temp_dir.path().join("unwanted.yaml");
+    fs::write(&unwanted_path, unwanted_plugin).await.unwrap();
+    
+    // Exclude the unwanted external plugin and one builtin
+    let excluded_plugins = vec!["unwanted".to_string(), "metrics".to_string()];
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Should find: "wanted" external + "commits" builtin + "export" builtin = 3 total
+    assert_eq!(plugins.len(), 3);
+    
+    let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"wanted"));
+    assert!(plugin_names.contains(&"commits"));
+    assert!(plugin_names.contains(&"export"));
+    assert!(!plugin_names.contains(&"unwanted"));
+    assert!(!plugin_names.contains(&"metrics"));
 }
 

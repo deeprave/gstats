@@ -161,6 +161,9 @@ pub struct PluginInfo {
     
     /// License information
     pub license: Option<String>,
+    
+    /// Plugin execution priority (higher values = higher priority, default = 0)
+    pub priority: i32,
 }
 
 /// Plugin dependency specification
@@ -394,6 +397,7 @@ impl PluginInfo {
             capabilities: Vec::new(),
             plugin_type,
             license: None,
+            priority: 5, // Default priority
         }
     }
     
@@ -429,6 +433,12 @@ impl PluginInfo {
     /// Set license
     pub fn with_license(mut self, license: String) -> Self {
         self.license = Some(license);
+        self
+    }
+    
+    /// Set plugin execution priority
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
         self
     }
     

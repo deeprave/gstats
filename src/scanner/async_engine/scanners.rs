@@ -161,6 +161,7 @@ impl AsyncScanner for EventDrivenScanner {
 mod tests {
     use super::*;
     use crate::scanner::query::QueryParams;
+    use futures::StreamExt;
     use std::path::Path;
 
     #[tokio::test]

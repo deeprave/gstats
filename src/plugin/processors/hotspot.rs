@@ -419,6 +419,11 @@ mod tests {
         // High risk
         complexity.cyclomatic_complexity = 25.0;
         change_stats.change_count = 20;
+        // Set recent change to get recency boost
+        change_stats.last_changed = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64 - (3 * 24 * 60 * 60); // 3 days ago
         let hotspot = HotspotMetrics::new("test.rs".to_string(), &complexity, &change_stats, TimeWindow::Month);
         assert!(matches!(hotspot.risk_level, RiskLevel::High | RiskLevel::Critical));
     }

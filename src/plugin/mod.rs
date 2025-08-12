@@ -28,6 +28,7 @@ pub mod executor;
 pub mod subscriber;
 pub mod builtin;
 pub mod processors;
+pub mod priority_queue;
 
 #[cfg(test)]
 pub mod tests;

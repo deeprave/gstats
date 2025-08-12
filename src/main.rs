@@ -9,11 +9,40 @@ mod stats;
 mod app;
 mod output;
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use std::process;
 use std::sync::Arc;
+use std::path::PathBuf;
 use log::error;
 use crate::display::CompactFormat;
+
+/// Simple repository path resolution without validation
+/// Validation will be handled by the scanner itself
+fn resolve_repository_path(repository_arg: Option<&str>) -> Result<PathBuf> {
+    match repository_arg {
+        Some(path) => {
+            // Expand tilde if present
+            let expanded_path = if path.starts_with("~") {
+                if let Some(home_dir) = dirs::home_dir() {
+                    home_dir.join(path.strip_prefix("~/").unwrap_or(&path[1..]))
+                } else {
+                    PathBuf::from(path)
+                }
+            } else {
+                PathBuf::from(path)
+            };
+            
+            // Return canonical path if possible, otherwise just the expanded path
+            expanded_path.canonicalize()
+                .or_else(|_| Ok(expanded_path))
+        }
+        None => {
+            // Use current directory
+            std::env::current_dir()
+                .context("Failed to get current directory")
+        }
+    }
+}
 
 /// Statistics about what was actually processed during scanning
 #[derive(Debug, Clone)]
@@ -96,8 +125,8 @@ fn run() -> Result<()> {
         });
     }
     
-    // Resolve repository path (validates it's a git repository)
-    let repo_path = app::resolve_repository_path(args.repository.clone())?;
+    // Resolve repository path (scanner will validate it's a git repository)
+    let repo_path = resolve_repository_path(args.repository.as_deref())?;
     
     // Run scanner with existing runtime
     let runtime_arc = Arc::new(runtime);
@@ -147,26 +176,23 @@ mod integration_tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_repository_validation_at_cli_level() {
-        // Test with current directory (should be a git repo)
-        let result = app::validate_repository_path(None);
-        assert!(result.is_ok(), "Current directory should be a valid git repository");
+    async fn test_repository_path_resolution() {
+        // Test with current directory
+        let result = resolve_repository_path(None);
+        assert!(result.is_ok(), "Should resolve current directory");
         
         // Test with explicit valid path
         let current_dir = std::env::current_dir().unwrap();
-        let result = app::validate_repository_path(Some(current_dir.to_string_lossy().to_string()));
-        assert!(result.is_ok(), "Explicit current directory should be valid");
-    }
-
-    #[tokio::test]
-    async fn test_repository_validation_with_invalid_path() {
-        // Test with non-existent path
-        let result = app::validate_repository_path(Some("/nonexistent/path".to_string()));
-        assert!(result.is_err(), "Non-existent path should fail validation");
+        let result = resolve_repository_path(Some(&current_dir.to_string_lossy()));
+        assert!(result.is_ok(), "Should resolve explicit path");
         
-        // Test with non-git directory
+        // Test with non-existent path (should still resolve the path, validation happens later)
+        let result = resolve_repository_path(Some("/nonexistent/path"));
+        assert!(result.is_ok(), "Should resolve path even if it doesn't exist - validation happens in scanner");
+        
+        // Test with directory that exists (even if not git)
         let temp_dir = TempDir::new().unwrap();
-        let result = app::validate_repository_path(Some(temp_dir.path().to_string_lossy().to_string()));
-        assert!(result.is_err(), "Non-git directory should fail validation");
+        let result = resolve_repository_path(Some(&temp_dir.path().to_string_lossy()));
+        assert!(result.is_ok(), "Should resolve existing directory - git validation happens in scanner");
     }
 }

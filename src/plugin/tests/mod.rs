@@ -19,6 +19,9 @@ pub mod discovery_tests;
 #[cfg(test)]
 pub mod integration_tests; // Phase 5: End-to-end integration tests
 
+#[cfg(test)]
+pub mod priority_tests;
+
 // Temporarily commented out due to import issues
 // #[cfg(test)]
 // pub mod executor_tests;

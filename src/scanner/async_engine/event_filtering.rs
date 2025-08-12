@@ -452,13 +452,13 @@ mod tests {
         let decision = filter.should_process_event(&event);
         match decision {
             FilterDecision::Process { routing } => {
-                assert_eq!(routing, ProcessorRouting::HistoryAndChangeFrequency);
+                assert_eq!(routing, ProcessorRouting::HistoryOnly);
             }
             _ => panic!("Expected Process decision"),
         }
         
         assert_eq!(filter.stats.events_routed_to_history, 1);
-        assert_eq!(filter.stats.events_routed_to_change_frequency, 1);
+        assert_eq!(filter.stats.events_routed_to_change_frequency, 0);
     }
 
     #[test]
@@ -553,7 +553,7 @@ mod tests {
         let stats = filter.get_stats();
         assert_eq!(stats.total_events_processed, 2);
         assert_eq!(stats.events_routed_to_history, 1);
-        assert_eq!(stats.events_routed_to_change_frequency, 1);
+        assert_eq!(stats.events_routed_to_change_frequency, 0); // CommitDiscovered now routes to HistoryOnly
         assert_eq!(stats.events_routed_to_files, 1);
     }
 

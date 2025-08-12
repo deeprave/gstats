@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::fs;
 use std::time::SystemTime;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 /// Plugin discovery trait for finding and loading plugins
 #[async_trait]
@@ -93,6 +93,14 @@ impl FileBasedDiscovery {
     pub fn with_caching<P: AsRef<Path>>(plugin_directory: P, cache_enabled: bool) -> PluginResult<Self> {
         let mut discovery = Self::new(plugin_directory)?;
         discovery.cache_enabled = cache_enabled;
+        Ok(discovery)
+    }
+    
+    /// Create a new file-based discovery with caching and dynamic loading enabled
+    pub fn with_caching_and_dynamic_loading<P: AsRef<Path>>(plugin_directory: P, cache_enabled: bool, supports_dynamic: bool) -> PluginResult<Self> {
+        let mut discovery = Self::new(plugin_directory)?;
+        discovery.cache_enabled = cache_enabled;
+        discovery.supports_dynamic_loading = supports_dynamic;
         Ok(discovery)
     }
     
@@ -268,206 +276,175 @@ impl Default for PluginDescriptorParser {
     }
 }
 
-/// Enhanced plugin discovery supporting multiple directories and selective loading
-#[derive(Debug)]
-pub struct MultiDirectoryDiscovery {
-    /// Multiple directories to search for plugins
-    directories: Vec<PathBuf>,
-    /// Plugins to explicitly load (bypasses normal discovery)
-    explicit_plugins: Vec<String>,
-    /// Plugins to exclude by name or path
+
+/// Unified plugin discovery combining builtin and external plugins
+/// External plugins override builtin plugins with the same name
+pub struct UnifiedPluginDiscovery {
+    /// External plugin discovery (optional)
+    external_discovery: Option<Box<dyn PluginDiscovery>>,
+    /// Plugin directory for external plugins
+    plugin_directory: Option<PathBuf>,
+    /// Plugins to exclude by name
     excluded_plugins: Vec<String>,
     /// Parser for plugin descriptors
     parser: PluginDescriptorParser,
 }
 
-impl MultiDirectoryDiscovery {
-    /// Create a new multi-directory discovery instance
+impl UnifiedPluginDiscovery {
+    /// Create a new unified discovery instance
     pub fn new(
-        directories: Vec<PathBuf>,
-        explicit_plugins: Vec<String>,
+        plugin_directory: Option<PathBuf>,
         excluded_plugins: Vec<String>,
-    ) -> Self {
-        Self {
-            directories,
-            explicit_plugins,
-            excluded_plugins,
-            parser: PluginDescriptorParser::new(),
-        }
-    }
-
-    /// Discover plugins from multiple directories with filtering
-    async fn discover_from_directories(&self) -> PluginResult<Vec<PluginDescriptor>> {
-        let mut all_descriptors = Vec::new();
-        let mut seen_names = HashSet::new();
-
-        for directory in &self.directories {
-            if !directory.exists() {
-                log::warn!("Plugin directory does not exist: {}", directory.display());
-                continue;
+    ) -> PluginResult<Self> {
+        let external_discovery = if let Some(dir) = &plugin_directory {
+            if dir.exists() {
+                Some(Box::new(FileBasedDiscovery::with_caching_and_dynamic_loading(dir, true, true)?) as Box<dyn PluginDiscovery>)
+            } else {
+                None
             }
-
-            if !directory.is_dir() {
-                log::warn!("Plugin path is not a directory: {}", directory.display());
-                continue;
-            }
-
-            let descriptors = self.scan_directory_safe(directory).await?;
-            
-            // Deduplicate by plugin name (first found wins)
-            for descriptor in descriptors {
-                if !seen_names.contains(&descriptor.info.name) {
-                    seen_names.insert(descriptor.info.name.clone());
-                    all_descriptors.push(descriptor);
-                }
-            }
-        }
-
-        Ok(all_descriptors)
-    }
-
-    /// Load plugins explicitly by name or path (bypasses discovery)
-    async fn load_explicit_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
-        let mut descriptors = Vec::new();
-
-        for plugin_spec in &self.explicit_plugins {
-            // Try as direct file path first
-            let plugin_path = PathBuf::from(plugin_spec);
-            if plugin_path.exists() && plugin_path.is_file() {
-                match self.parse_descriptor_file(&plugin_path).await {
-                    Ok(descriptor) => descriptors.push(descriptor),
-                    Err(e) => log::warn!("Failed to load explicit plugin {}: {}", plugin_spec, e),
-                }
-                continue;
-            }
-
-            // Try finding by name in directories
-            let mut found = false;
-            for directory in &self.directories {
-                if !directory.exists() {
-                    continue;
-                }
-
-                let yaml_file = directory.join(format!("{}.yaml", plugin_spec));
-                if yaml_file.exists() {
-                    match self.parse_descriptor_file(&yaml_file).await {
-                        Ok(descriptor) => {
-                            descriptors.push(descriptor);
-                            found = true;
-                            break;
-                        }
-                        Err(e) => log::warn!("Failed to load plugin {} from {}: {}", plugin_spec, yaml_file.display(), e),
-                    }
-                }
-            }
-
-            if !found {
-                log::warn!("Explicit plugin not found: {}", plugin_spec);
-            }
-        }
-
-        Ok(descriptors)
-    }
-
-    /// Apply exclusion filters to discovered plugins
-    fn apply_exclusions(&self, descriptors: Vec<PluginDescriptor>) -> Vec<PluginDescriptor> {
-        if self.excluded_plugins.is_empty() {
-            return descriptors;
-        }
-
-        descriptors
-            .into_iter()
-            .filter(|descriptor| {
-                // Check if plugin name is in exclusion list
-                if self.excluded_plugins.contains(&descriptor.info.name) {
-                    log::debug!("Excluding plugin by name: {}", descriptor.info.name);
-                    return false;
-                }
-
-                // Check if plugin path is in exclusion list
-                if let Some(ref path) = descriptor.file_path {
-                    let path_str = path.to_string_lossy();
-                    for exclusion in &self.excluded_plugins {
-                        if path_str.contains(exclusion) {
-                            log::debug!("Excluding plugin by path: {} (matches {})", path_str, exclusion);
-                            return false;
-                        }
-                    }
-                }
-
-                true
-            })
-            .collect()
-    }
-
-    /// Parse a plugin descriptor file (similar to FileBasedDiscovery::parse_descriptor_file)
-    async fn parse_descriptor_file(&self, file_path: &Path) -> PluginResult<PluginDescriptor> {
-        let content = fs::read_to_string(file_path).await
-            .map_err(|e| PluginError::discovery_error(format!("Failed to read file {}: {}", file_path.display(), e)))?;
-        
-        let mut descriptor = self.parser.parse_yaml(&content)?;
-        
-        // Set the file path in the descriptor for reference
-        descriptor.file_path = Some(file_path.to_path_buf());
-        
-        Ok(descriptor)
-    }
-
-    /// Safe directory scanning (doesn't fail on errors)
-    async fn scan_directory_safe(&self, directory: &Path) -> PluginResult<Vec<PluginDescriptor>> {
-        let mut descriptors = Vec::new();
-        
-        let mut entries = match fs::read_dir(directory).await {
-            Ok(entries) => entries,
-            Err(e) => {
-                log::warn!("Failed to read plugin directory {}: {}", directory.display(), e);
-                return Ok(descriptors);
-            }
+        } else {
+            None
         };
 
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "yaml" || ext == "yml") {
-                match self.parse_descriptor_file(&path).await {
-                    Ok(descriptor) => descriptors.push(descriptor),
-                    Err(e) => log::warn!("Failed to parse plugin descriptor {}: {}", path.display(), e),
-                }
+        Ok(Self {
+            external_discovery,
+            plugin_directory,
+            excluded_plugins,
+            parser: PluginDescriptorParser::new(),
+        })
+    }
+
+    /// Create a unified discovery with default directory
+    pub fn with_default_directory(excluded_plugins: Vec<String>) -> PluginResult<Self> {
+        let default_dir = if let Some(home_dir) = dirs::home_dir() {
+            Some(home_dir.join(".config").join("gstats").join("plugins"))
+        } else {
+            None
+        };
+
+        Self::new(default_dir, excluded_plugins)
+    }
+
+    /// Discover builtin plugins as descriptors
+    async fn discover_builtin_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
+        use crate::plugin::builtin;
+        
+        let mut descriptors = Vec::new();
+        let builtin_names = builtin::get_builtin_plugins();
+
+        for name in builtin_names {
+            // Skip excluded plugins
+            if self.excluded_plugins.contains(&name.to_string()) {
+                log::debug!("Excluding builtin plugin: {}", name);
+                continue;
             }
+
+            // Create descriptor for builtin plugin
+            let info = crate::plugin::traits::PluginInfo::new(
+                name.to_string(),
+                "1.0.0".to_string(),
+                20250727, // Current API version
+                format!("Built-in {} plugin", name),
+                "gstats team".to_string(),
+                crate::plugin::traits::PluginType::Scanner, // Default type
+            );
+
+            let descriptor = crate::plugin::traits::PluginDescriptor {
+                info,
+                file_path: None, // Builtin plugins don't have file paths
+                entry_point: "builtin".to_string(),
+                config: HashMap::new(),
+            };
+
+            descriptors.push(descriptor);
         }
 
         Ok(descriptors)
+    }
+
+    /// Discover external plugins as descriptors
+    async fn discover_external_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
+        if let Some(ref discovery) = self.external_discovery {
+            let plugins = discovery.discover_plugins().await?;
+            
+            // Apply exclusions to external plugins
+            let filtered_plugins = plugins.into_iter()
+                .filter(|plugin| {
+                    if self.excluded_plugins.contains(&plugin.info.name) {
+                        log::debug!("Excluding external plugin: {}", plugin.info.name);
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+                
+            Ok(filtered_plugins)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Deduplicate plugins with external plugins overriding builtin ones
+    fn deduplicate_plugins(&self, mut plugins: Vec<PluginDescriptor>) -> Vec<PluginDescriptor> {
+        
+        let mut plugin_map: HashMap<String, PluginDescriptor> = HashMap::new();
+        
+        // Process plugins in order: builtin first, then external (so external overrides)
+        for plugin in plugins.drain(..) {
+            let name = plugin.info.name.clone();
+            
+            if let Some(existing) = plugin_map.get(&name) {
+                // External plugin (has file_path) overrides builtin plugin (no file_path)
+                if plugin.file_path.is_some() || existing.file_path.is_none() {
+                    log::debug!("Plugin '{}' overridden by external plugin", name);
+                    plugin_map.insert(name, plugin);
+                }
+                // Otherwise keep existing (external keeps external, builtin keeps if no external)
+            } else {
+                plugin_map.insert(name, plugin);
+            }
+        }
+        
+        plugin_map.into_values().collect()
     }
 }
 
 #[async_trait]
-impl PluginDiscovery for MultiDirectoryDiscovery {
+impl PluginDiscovery for UnifiedPluginDiscovery {
     async fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
-        let descriptors = if self.explicit_plugins.is_empty() {
-            // Normal discovery mode
-            self.discover_from_directories().await?
-        } else {
-            // Explicit loading mode (bypasses discovery)
-            self.load_explicit_plugins().await?
-        };
+        let mut all_plugins = Vec::new();
 
-        // Apply exclusions
-        let filtered_descriptors = self.apply_exclusions(descriptors);
+        // Discover builtin plugins first
+        let builtin_plugins = self.discover_builtin_plugins().await?;
+        all_plugins.extend(builtin_plugins);
+
+        // Then discover external plugins
+        let external_plugins = self.discover_external_plugins().await?;
+        all_plugins.extend(external_plugins);
+
+        // Deduplicate with external overriding builtin
+        let deduplicated_plugins = self.deduplicate_plugins(all_plugins);
 
         log::debug!(
-            "MultiDirectoryDiscovery found {} plugins after filtering",
-            filtered_descriptors.len()
+            "UnifiedPluginDiscovery found {} plugins after deduplication",
+            deduplicated_plugins.len()
         );
 
-        Ok(filtered_descriptors)
+        Ok(deduplicated_plugins)
     }
 
     fn supports_dynamic_loading(&self) -> bool {
-        true // Enhanced discovery supports dynamic loading
+        self.external_discovery
+            .as_ref()
+            .map(|d| d.supports_dynamic_loading())
+            .unwrap_or(false)
     }
 
     fn plugin_directory(&self) -> &Path {
-        // Return first directory as primary (for backwards compatibility)
-        self.directories.first().map(|p| p.as_path()).unwrap_or(Path::new("plugins"))
+        self.plugin_directory
+            .as_ref()
+            .map(|p| p.as_path())
+            .unwrap_or_else(|| Path::new("plugins"))
     }
 }

@@ -5,6 +5,7 @@ This document provides comprehensive documentation for using the notification sy
 ## Overview
 
 The notification system enables event-driven communication between the scanner engine and plugins, allowing for:
+
 - Real-time progress updates
 - Data availability notifications
 - Error and warning propagation
@@ -29,7 +30,9 @@ Scanner Engine → AsyncNotificationManager → PluginSubscriber → Plugin Even
 ### Core Scanner Events
 
 #### ScanStarted
+
 Emitted when a scan begins.
+
 ```rust
 ScanEvent::ScanStarted {
     scan_id: String,
@@ -37,7 +40,9 @@ ScanEvent::ScanStarted {
 ```
 
 #### ScanDataReady
+
 Emitted when scanner has processed data and it's ready for plugin consumption.
+
 ```rust
 ScanEvent::ScanDataReady {
     scan_id: String,
@@ -47,7 +52,9 @@ ScanEvent::ScanDataReady {
 ```
 
 #### ScanCompleted
+
 Emitted when scanning is complete.
+
 ```rust
 ScanEvent::ScanCompleted {
     scan_id: String,
@@ -59,7 +66,9 @@ ScanEvent::ScanCompleted {
 ### Plugin Coordination Events
 
 #### DataReady
+
 Emitted by analysis plugins when their processing is complete.
+
 ```rust
 ScanEvent::DataReady {
     scan_id: String,
@@ -71,7 +80,9 @@ ScanEvent::DataReady {
 ### Error and Warning Events
 
 #### ScanError
+
 Emitted for fatal and non-fatal errors.
+
 ```rust
 ScanEvent::ScanError {
     scan_id: String,
@@ -81,7 +92,9 @@ ScanEvent::ScanError {
 ```
 
 #### ScanWarning
+
 Emitted for recoverable warnings.
+
 ```rust
 ScanEvent::ScanWarning {
     scan_id: String,
@@ -113,6 +126,7 @@ registry.subscribe_all_plugins().await?;
 ### Implementing Event Handlers in Plugins
 
 #### ScanDataReady Handler
+
 ```rust
 impl CommitsPlugin {
     pub async fn handle_scan_data_ready(&mut self, event: ScanEvent) -> PluginResult<()> {
@@ -134,6 +148,7 @@ impl CommitsPlugin {
 ```
 
 #### Error and Warning Handlers
+
 ```rust
 impl Plugin {
     pub async fn handle_scan_error(&mut self, event: ScanEvent) -> PluginResult<()> {
@@ -177,13 +192,13 @@ impl ExportPlugin {
             ScanEvent::DataReady { scan_id, plugin_id, data_type } => {
                 // Track collected plugin data
                 self.collected_plugins.insert(plugin_id.clone(), data_type.clone());
-                
+              
                 // Check if all expected plugins have reported
                 if self.all_expected_plugins_ready() {
                     log::info!("All plugins ready for scan {}, triggering export", scan_id);
                     self.trigger_export_if_ready().await?;
                 }
-                
+              
                 Ok(())
             }
             _ => Err(PluginError::ExecutionFailed { 
@@ -191,7 +206,7 @@ impl ExportPlugin {
             })
         }
     }
-    
+  
     fn all_expected_plugins_ready(&self) -> bool {
         for expected_plugin in &self.expected_plugins {
             if !self.collected_plugins.contains_key(expected_plugin) {
@@ -271,11 +286,11 @@ impl Plugin {
             ScanEvent::ScanCompleted { scan_id, duration, warnings } => {
                 log::info!("Scan {} completed in {:?} with {} warnings", 
                           scan_id, duration, warnings.len());
-                
+              
                 // Finalize processing and cleanup resources
                 self.finalize_processing().await?;
                 self.cleanup_temporary_data().await?;
-                
+              
                 Ok(())
             }
             _ => Err(PluginError::ExecutionFailed { 
@@ -339,6 +354,7 @@ RUST_LOG=debug gstats /path/to/repository
 ## Examples
 
 See the integration tests in `src/plugin/tests/integration_tests.rs` for comprehensive examples of:
+
 - End-to-end scanner-plugin coordination
 - Error scenario handling
 - Plugin lifecycle coordination
@@ -348,6 +364,7 @@ See the integration tests in `src/plugin/tests/integration_tests.rs` for compreh
 ## Future Enhancements
 
 Planned improvements to the notification system:
+
 - Event filtering and routing
 - Priority-based event delivery
 - Event persistence and replay

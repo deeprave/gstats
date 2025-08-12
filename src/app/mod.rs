@@ -2,9 +2,7 @@
 
 pub mod initialization;
 pub mod execution;
-pub mod repository;
 
-pub use repository::resolve_repository_path;
 pub use initialization::{
     load_configuration, 
     configure_logging
