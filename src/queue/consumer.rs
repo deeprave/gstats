@@ -349,12 +349,11 @@ pub mod api_analysis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::modes::ScanMode;
     use crate::scanner::messages::{MessageHeader, MessageData};
     use tokio::time::timeout;
 
     fn create_test_message() -> ScanMessage {
-        let header = MessageHeader::new(ScanMode::FILES, 0);
+        let header = MessageHeader::new(0);
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1000,
@@ -373,7 +372,7 @@ mod tests {
         assert!(result.is_none());
         
         // Add a message and try again
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         queue.push(create_test_message()).await.unwrap();
         
         let result = consumer.pop(Some(Duration::ZERO)).await.unwrap();
@@ -385,7 +384,7 @@ mod tests {
         let queue = SharedMessageQueue::new("test-scan".to_string());
         let consumer = QueuePollingConsumer::new(queue.clone());
         
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         
         // Should timeout after 50ms
         let start = tokio::time::Instant::now();
@@ -402,7 +401,7 @@ mod tests {
         let queue = SharedMessageQueue::new("test-scan".to_string());
         let consumer = QueuePollingConsumer::new(queue.clone());
         
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         
         // Add multiple messages
         for _ in 0..5 {
@@ -427,7 +426,7 @@ mod tests {
         let queue_clone = queue.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            queue_clone.start_scan(ScanMode::FILES).await.unwrap();
+            queue_clone.start_scan().await.unwrap();
             queue_clone.push(create_test_message()).await.unwrap();
             queue_clone.complete_scan().await.unwrap();
             
@@ -446,7 +445,7 @@ mod tests {
         let queue = SharedMessageQueue::new("test-scan".to_string());
         let consumer = QueuePollingConsumer::new(queue.clone());
         
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         queue.push(create_test_message()).await.unwrap();
         queue.complete_scan().await.unwrap();
         
@@ -490,7 +489,7 @@ mod tests {
         };
         
         // Start scan and add messages
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         for _ in 0..3 {
             queue.push(create_test_message()).await.unwrap();
         }

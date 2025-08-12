@@ -57,9 +57,6 @@ For plugins that process repository data:
 ```rust
 #[async_trait]
 pub trait ScannerPlugin: Plugin {
-    /// Declare which scan modes this plugin supports
-    fn supported_modes(&self) -> ScanMode;
-    
     /// Process individual scan messages
     async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>>;
     
@@ -67,7 +64,7 @@ pub trait ScannerPlugin: Plugin {
     async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage>;
     
     /// Estimate processing time for performance planning
-    fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<Duration>;
+    fn estimate_processing_time(&self, item_count: usize) -> Option<Duration>;
     
     /// Provide JSON schema for plugin configuration
     fn config_schema(&self) -> serde_json::Value;
@@ -107,7 +104,6 @@ Create a new plugin by implementing the base `Plugin` trait:
 ```rust
 use async_trait::async_trait;
 use crate::plugin::*;
-use crate::scanner::modes::ScanMode;
 use std::collections::HashMap;
 
 pub struct MyPlugin {
@@ -166,7 +162,7 @@ impl Plugin for MyPlugin {
                     complexity: 0.0,
                 };
                 
-                let header = MessageHeader::new(ScanMode::FILES, 
+                let header = MessageHeader::new(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -194,7 +190,7 @@ Here's a complete example of a scanner plugin that analyses file extensions:
 ```rust
 use async_trait::async_trait;
 use crate::plugin::*;
-use crate::scanner::{modes::ScanMode, messages::*};
+use crate::scanner::messages::*;
 use std::collections::HashMap;
 
 pub struct FileExtensionPlugin {
@@ -249,7 +245,7 @@ impl Plugin for FileExtensionPlugin {
                     complexity: self.extension_counts.len() as f64,
                 };
                 
-                let header = MessageHeader::new(ScanMode::FILES, 
+                let header = MessageHeader::new(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -271,9 +267,6 @@ impl Plugin for FileExtensionPlugin {
 
 #[async_trait]
 impl ScannerPlugin for FileExtensionPlugin {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::FILES
-    }
     
     async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
         if let MessageData::FileInfo { path, .. } = &data.data {
@@ -302,7 +295,7 @@ impl ScannerPlugin for FileExtensionPlugin {
             complexity: self.extension_counts.len() as f64,
         };
         
-        let header = MessageHeader::new(ScanMode::FILES, 
+        let header = MessageHeader::new(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -312,13 +305,9 @@ impl ScannerPlugin for FileExtensionPlugin {
         Ok(ScanMessage::new(header, data))
     }
     
-    fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<Duration> {
-        if modes.contains(ScanMode::FILES) {
-            // Estimate 1ms per file
-            Some(Duration::from_millis(item_count as u64))
-        } else {
-            None
-        }
+    fn estimate_processing_time(&self, item_count: usize) -> Option<Duration> {
+        // Estimate 1ms per file
+        Some(Duration::from_millis(item_count as u64))
     }
     
     fn config_schema(&self) -> serde_json::Value {
@@ -365,7 +354,7 @@ pub struct ScanMessage {
 }
 
 pub struct MessageHeader {
-    pub scan_mode: ScanMode,
+    pub sequence: u64,
     pub timestamp: u64,
 }
 ```
@@ -419,7 +408,6 @@ Plugins communicate using structured request/response enums:
 pub enum PluginRequest {
     Execute {
         request_id: String,
-        scan_modes: ScanMode,
         parameters: HashMap<String, serde_json::Value>,
         priority: RequestPriority,
         timeout_ms: Option<u64>,

@@ -1,7 +1,6 @@
 use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::ScanMessage;
-use crate::scanner::modes::ScanMode;
 use crate::scanner::async_engine::error::ScanError;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
@@ -25,25 +24,16 @@ pub use event_processor::{EventProcessor, ProcessorStats, ProcessorConfig, Share
 pub struct ProcessorFactory;
 
 impl ProcessorFactory {
-    /// Create all available processors for the given scan modes
-    pub fn create_processors(scan_modes: ScanMode) -> Vec<Box<dyn EventProcessor>> {
+    /// Create all available processors without mode filtering
+    pub fn create_processors() -> Vec<Box<dyn EventProcessor>> {
         let mut processors: Vec<Box<dyn EventProcessor>> = Vec::new();
 
-        // Always include statistics processor
+        // Include all processors - scanner now processes all data types
         processors.push(Box::new(statistics::StatisticsProcessor::new()));
+        processors.push(Box::new(history::HistoryEventProcessor::new()));
+        processors.push(Box::new(files::FileEventProcessor::new()));
 
-        // Add mode-specific processors
-        if scan_modes.contains(ScanMode::HISTORY) {
-            processors.push(Box::new(history::HistoryEventProcessor::new()));
-        }
-
-        if scan_modes.contains(ScanMode::FILES) {
-            processors.push(Box::new(files::FileEventProcessor::new()));
-        }
-
-        // Note: change_frequency processor moved to metrics plugin
-
-        debug!("Created {} processors for modes: {:?}", processors.len(), scan_modes);
+        debug!("Created {} processors", processors.len());
         processors
     }
 
@@ -57,13 +47,10 @@ impl ProcessorFactory {
         ]
     }
 
-    /// Check if a processor is available for the given modes
-    pub fn supports_modes(processor_name: &str, modes: ScanMode) -> bool {
+    /// Check if a processor is available
+    pub fn is_available(processor_name: &str) -> bool {
         match processor_name {
-            "statistics" => true, // Always available
-            "history" => modes.contains(ScanMode::HISTORY),
-            "files" => modes.contains(ScanMode::FILES),
-            // Note: change_frequency moved to metrics plugin
+            "statistics" | "history" | "files" => true,
             _ => false,
         }
     }
@@ -266,10 +253,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_factory() {
-        let processors = ProcessorFactory::create_processors(ScanMode::FILES | ScanMode::HISTORY);
+        let processors = ProcessorFactory::create_processors();
         
-        // Should include statistics (always), files, and history processors
-        assert!(processors.len() >= 3);
+        // Should include all processors: statistics, files, and history
+        assert_eq!(processors.len(), 3);
         
         let available = ProcessorFactory::available_processors();
         assert!(available.contains(&"statistics"));
@@ -288,10 +275,10 @@ mod tests {
         // 2. Collect processors from plugins based on scan modes
         // 3. Return combined processor list
         
-        let processors = ProcessorFactory::create_processors(ScanMode::FILES | ScanMode::HISTORY);
+        let processors = ProcessorFactory::create_processors();
         
         // For now, verify that basic scanner processors are still created
-        assert!(processors.len() >= 3); // statistics, files, history
+        assert_eq!(processors.len(), 3); // statistics, files, history
         
         let processor_names: Vec<&str> = processors.iter().map(|p| p.name()).collect();
         assert!(processor_names.contains(&"StatisticsProcessor"));
@@ -328,7 +315,6 @@ mod tests {
         let event = RepositoryEvent::RepositoryStarted {
             total_commits: Some(10),
             total_files: Some(5),
-            scan_modes: ScanMode::FILES,
         };
         
         let messages = coordinator.process_event(&event).await.unwrap();

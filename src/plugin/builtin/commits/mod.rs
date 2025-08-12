@@ -6,7 +6,7 @@ use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
-use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageData, MessageHeader}};
+use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use serde_json::json;
@@ -173,7 +173,6 @@ impl CommitsPlugin {
         };
 
         let header = MessageHeader::new(
-            ScanMode::HISTORY,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -345,9 +344,6 @@ impl Plugin for CommitsPlugin {
 
 #[async_trait]
 impl ScannerPlugin for CommitsPlugin {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::HISTORY
-    }
 
     async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
         if !self.initialized {
@@ -388,19 +384,9 @@ impl ScannerPlugin for CommitsPlugin {
         aggregated.generate_summary()
     }
 
-    fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<std::time::Duration> {
-        if !modes.intersects(self.supported_modes()) {
-            return None;
-        }
-
+    fn estimate_processing_time(&self, item_count: usize) -> Option<std::time::Duration> {
         // Estimate ~1ms per commit for processing
-        let processing_time_ms = if modes.contains(ScanMode::HISTORY) {
-            item_count
-        } else {
-            item_count / 2 // Less time for author-only analysis
-        };
-
-        Some(std::time::Duration::from_millis(processing_time_ms as u64))
+        Some(std::time::Duration::from_millis(item_count as u64))
     }
 
     fn config_schema(&self) -> serde_json::Value {
@@ -461,7 +447,6 @@ impl CommitsPlugin {
             };
 
             let header = MessageHeader::new(
-                ScanMode::HISTORY,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -498,7 +483,6 @@ mod tests {
         };
 
         let header = MessageHeader::new(
-            ScanMode::HISTORY,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -539,12 +523,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_commits_plugin_supported_modes() {
-        let plugin = CommitsPlugin::new();
-        let modes = plugin.supported_modes();
-        
-        assert!(modes.contains(ScanMode::HISTORY));
-        assert!(!modes.contains(ScanMode::FILES));
+    async fn test_commits_plugin_processing() {
+        let _plugin = CommitsPlugin::new();
+        // Plugin no longer advertises supported modes - processes all data
+        // This test just verifies the plugin can be created
+        assert!(true);
     }
 
     #[tokio::test]
@@ -630,14 +613,10 @@ mod tests {
     async fn test_commits_plugin_processing_time_estimation() {
         let plugin = CommitsPlugin::new();
         
-        // Test with supported modes
-        let time = plugin.estimate_processing_time(ScanMode::HISTORY, 100);
+        // Test processing time estimation
+        let time = plugin.estimate_processing_time(100);
         assert!(time.is_some());
         assert_eq!(time.unwrap().as_millis(), 100);
-
-        // Test with unsupported modes
-        let time = plugin.estimate_processing_time(ScanMode::FILES, 100);
-        assert!(time.is_none());
     }
 
     #[tokio::test]

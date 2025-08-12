@@ -8,7 +8,6 @@ use crate::queue::error::{QueueError, QueueResult};
 use crate::queue::notifications::{QueueEvent, QueueEventNotifier};
 use crate::queue::memory::MemoryMonitor;
 use crate::scanner::messages::ScanMessage;
-use crate::scanner::modes::ScanMode;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -19,7 +18,7 @@ enum ScanState {
     /// Scan has not been started yet
     NotStarted,
     /// Scan is currently in progress
-    InProgress { modes: ScanMode },
+    InProgress,
     /// Scan has been completed
     Completed { total_messages: u64 },
 }
@@ -83,22 +82,22 @@ impl SharedMessageQueue {
 
     // Producer Interface
 
-    /// Start a new scan with the specified modes
-    pub async fn start_scan(&self, modes: ScanMode) -> QueueResult<()> {
+    /// Start a new scan
+    pub async fn start_scan(&self) -> QueueResult<()> {
         let mut state = self.scan_state.write().await;
         
         match *state {
             ScanState::NotStarted => {
-                *state = ScanState::InProgress { modes };
+                *state = ScanState::InProgress;
                 drop(state); // Release lock before emitting event
 
-                let event = QueueEvent::scan_started(self.scan_id.clone(), modes);
+                let event = QueueEvent::scan_started(self.scan_id.clone());
                 self.event_notifier.emit(event)?;
                 
-                log::info!("Started scan '{}' with modes: {:?}", self.scan_id, modes);
+                log::info!("Started scan '{}'", self.scan_id);
                 Ok(())
             }
-            ScanState::InProgress { .. } => {
+            ScanState::InProgress => {
                 Err(QueueError::ScanAlreadyStarted {
                     scan_id: self.scan_id.clone(),
                 })
@@ -329,7 +328,7 @@ mod tests {
     use tokio::time::{timeout, Duration};
 
     fn create_test_message() -> ScanMessage {
-        let header = MessageHeader::new(ScanMode::FILES, 0);
+        let header = MessageHeader::new(0);
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1000,
@@ -352,7 +351,7 @@ mod tests {
         let queue = SharedMessageQueue::new("test-scan".to_string());
         
         // Start scan
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         assert!(queue.is_scan_in_progress().await);
         assert!(!queue.is_scan_complete().await);
 
@@ -371,8 +370,8 @@ mod tests {
         assert!(queue.push(message).await.is_err());
 
         // Cannot start scan twice
-        queue.start_scan(ScanMode::FILES).await.unwrap();
-        assert!(queue.start_scan(ScanMode::HISTORY).await.is_err());
+        queue.start_scan().await.unwrap();
+        assert!(queue.start_scan().await.is_err());
 
         // Cannot complete scan twice
         queue.complete_scan().await.unwrap();
@@ -382,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_push_pop() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
 
         let message = create_test_message();
         queue.push(message.clone()).await.unwrap();
@@ -398,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_pop() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
 
         // Push multiple messages
         for _ in 0..5 {
@@ -424,7 +423,7 @@ mod tests {
         let mut event_receiver = queue.subscribe_events();
 
         // Start scan - should emit ScanStarted
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         let event = timeout(Duration::from_millis(100), event_receiver.recv()).await.unwrap().unwrap();
         assert!(matches!(event, QueueEvent::ScanStarted { .. }));
 
@@ -442,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn test_capacity_limit() {
         let queue = SharedMessageQueue::with_capacity("test-scan".to_string(), 2);
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
 
         // Should be able to add up to capacity
         queue.push(create_test_message()).await.unwrap();
@@ -455,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn test_wait_for_drain() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
-        queue.start_scan(ScanMode::FILES).await.unwrap();
+        queue.start_scan().await.unwrap();
         queue.push(create_test_message()).await.unwrap();
         queue.complete_scan().await.unwrap();
 

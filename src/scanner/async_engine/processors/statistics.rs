@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileInfo
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::statistics::RepositoryStatistics;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
@@ -110,11 +109,6 @@ impl StatisticsProcessor {
 
 #[async_trait]
 impl EventProcessor for StatisticsProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        // Statistics processor supports all modes to collect comprehensive data
-        ScanMode::all()
-    }
-
     fn name(&self) -> &'static str {
         "StatisticsProcessor"
     }
@@ -171,7 +165,7 @@ impl EventProcessor for StatisticsProcessor {
         
         // Generate a final statistics message
         let message = ScanMessage::new(
-            MessageHeader::new(ScanMode::all(), 0),
+            MessageHeader::new(0),
             MessageData::RepositoryStatistics {
                 total_commits: self.stats.total_commits,
                 total_files: self.stats.total_files,
@@ -357,8 +351,7 @@ mod tests {
     #[tokio::test]
     async fn test_statistics_processor_always_included_in_factory() {
         use crate::scanner::async_engine::processors::ProcessorFactory;
-        use crate::scanner::modes::ScanMode;
-
+        
         // Test that StatisticsProcessor is always included regardless of scan modes
         let test_modes = vec![
             ScanMode::FILES,

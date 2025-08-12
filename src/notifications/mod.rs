@@ -15,7 +15,6 @@
 //! ```no_run
 //! use gstats::notifications::{AsyncNotificationManager, ScanEvent};
 //! use gstats::notifications::traits::NotificationManager;
-//! use gstats::scanner::modes::ScanMode;
 //! use std::sync::Arc;
 //! 
 //! # #[tokio::main]
@@ -24,7 +23,7 @@
 //! let mut manager = AsyncNotificationManager::<ScanEvent>::new();
 //! 
 //! // Create and publish an event
-//! let event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+//! let event = ScanEvent::started("scan_001".to_string());
 //! manager.publish(event).await?;
 //! # Ok(())
 //! # }

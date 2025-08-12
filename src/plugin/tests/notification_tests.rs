@@ -6,7 +6,6 @@ use super::mock_plugins::*;
 use crate::plugin::notification::AsyncNotificationManager;
 use crate::plugin::traits::{QueueUpdate, QueueUpdateType, ScanProgress, SystemEvent, SystemEventType, NotificationPreferences};
 use crate::plugin::error::PluginError;
-use crate::scanner::modes::ScanMode;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;

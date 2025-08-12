@@ -312,11 +312,10 @@ impl DataTransformer {
 mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, FileChangeData as ScanFileChangeData};
-    use crate::scanner::modes::ScanMode;
 
     #[test]
     fn test_file_data_transformation() {
-        let header = MessageHeader::new(ScanMode::FILES, 0);
+        let header = MessageHeader::new(0);
         let data = MessageData::FileInfo {
             path: "src/main.rs".to_string(),
             size: 1024,
@@ -338,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_commit_data_transformation() {
-        let header = MessageHeader::new(ScanMode::HISTORY, 0);
+        let header = MessageHeader::new(0);
         let data = MessageData::CommitInfo {
             hash: "abc123".to_string(),
             author: "John Doe".to_string(),

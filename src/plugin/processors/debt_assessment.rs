@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use crate::plugin::processors::change_frequency::{FileChangeStats, TimeWindow};
 use crate::plugin::processors::complexity::ComplexityMetrics;
@@ -445,7 +444,6 @@ impl DebtAssessmentProcessor {
         
         for assessment in top_debt_files {
             let header = MessageHeader::new(
-                ScanMode::METRICS,
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -483,9 +481,6 @@ pub struct DebtSummary {
 
 #[async_trait]
 impl EventProcessor for DebtAssessmentProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::METRICS | ScanMode::CHANGE_FREQUENCY
-    }
 
     fn name(&self) -> &'static str {
         "debt_assessment"
@@ -543,7 +538,7 @@ mod tests {
     async fn test_debt_assessment_processor_creation() {
         let processor = DebtAssessmentProcessor::new();
         assert_eq!(processor.name(), "debt_assessment");
-        assert_eq!(processor.supported_modes(), ScanMode::METRICS | ScanMode::CHANGE_FREQUENCY);
+        // Processor no longer advertises supported modes
         assert!(processor.debt_assessments.is_empty());
     }
 

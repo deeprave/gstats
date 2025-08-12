@@ -47,7 +47,6 @@ impl Publisher<ScanEvent> for ScannerPublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::modes::ScanMode;
     use std::time::Duration;
 
     #[tokio::test]

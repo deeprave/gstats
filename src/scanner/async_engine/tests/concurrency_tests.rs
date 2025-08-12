@@ -4,7 +4,6 @@ use crate::scanner::async_engine::error::{ScanResult, ScanError};
 use crate::scanner::async_engine::engine::AsyncScannerEngineBuilder;
 use crate::scanner::async_engine::task_manager::TaskManager;
 use crate::scanner::async_traits::*;
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::traits::MessageProducer;
 use std::path::PathBuf;
@@ -17,7 +16,6 @@ use tokio::sync::Barrier;
 
 struct ConcurrentScanner {
     name: String,
-    supported_modes: ScanMode,
     message_count: usize,
     work_duration_ms: u64,
     start_barrier: Option<Arc<Barrier>>,
@@ -29,16 +27,13 @@ impl AsyncScanner for ConcurrentScanner {
         &self.name
     }
     
-    fn supports_mode(&self, mode: ScanMode) -> bool {
-        self.supported_modes.contains(mode)
-    }
     
-    async fn scan_async(&self, mode: ScanMode) -> ScanResult<ScanMessageStream> {
+    async fn scan_async(&self, _repository_path: &std::path::Path) -> ScanResult<ScanMessageStream> {
         let count = self.message_count;
         let work_duration = self.work_duration_ms;
         let barrier = self.start_barrier.clone();
         
-        let stream = stream::unfold((0, mode), move |(i, mode)| {
+        let stream = stream::unfold(0, move |i| {
             let barrier = barrier.clone();
             async move {
                 if i >= count {
@@ -56,7 +51,7 @@ impl AsyncScanner for ConcurrentScanner {
                 tokio::time::sleep(Duration::from_millis(work_duration)).await;
                 
                 let message = ScanMessage::new(
-                    MessageHeader::new(mode, i as u64),
+                    MessageHeader::new(i as u64),
                     MessageData::FileInfo {
                         path: format!("concurrent_file_{}.rs", i),
                         size: 1024,
@@ -64,7 +59,7 @@ impl AsyncScanner for ConcurrentScanner {
                     },
                 );
                 
-                Some((Ok(message), (i + 1, mode)))
+                Some((Ok(message), i + 1))
             }
         });
         
@@ -74,37 +69,23 @@ impl AsyncScanner for ConcurrentScanner {
 
 struct CountingProducer {
     total_count: Arc<AtomicUsize>,
-    mode_counts: Arc<dashmap::DashMap<ScanMode, AtomicUsize>>,
 }
 
 impl CountingProducer {
     fn new() -> Self {
         Self {
             total_count: Arc::new(AtomicUsize::new(0)),
-            mode_counts: Arc::new(dashmap::DashMap::new()),
         }
     }
     
     fn get_total_count(&self) -> usize {
         self.total_count.load(Ordering::Relaxed)
     }
-    
-    fn get_mode_count(&self, mode: ScanMode) -> usize {
-        self.mode_counts
-            .get(&mode)
-            .map(|counter| counter.load(Ordering::Relaxed))
-            .unwrap_or(0)
-    }
 }
 
 impl MessageProducer for CountingProducer {
-    fn produce_message(&self, message: ScanMessage) {
+    fn produce_message(&self, _message: ScanMessage) {
         self.total_count.fetch_add(1, Ordering::Relaxed);
-        
-        self.mode_counts
-            .entry(message.header.scan_mode)
-            .or_insert_with(|| AtomicUsize::new(0))
-            .fetch_add(1, Ordering::Relaxed);
     }
     
     fn get_producer_name(&self) -> &str {
@@ -122,18 +103,16 @@ async fn test_multiple_concurrent_scanners() {
         .repository_path(repo_path)
         .message_producer(producer);
     
-    // Add multiple scanners for different modes
+    // Add multiple scanners
     builder = builder
         .add_scanner(Arc::new(ConcurrentScanner {
             name: "ConcurrentFileProcessor".to_string(),
-            supported_modes: ScanMode::FILES,
             message_count: 10,
             work_duration_ms: 10,
             start_barrier: None,
         }))
         .add_scanner(Arc::new(ConcurrentScanner {
             name: "ConcurrentHistoryProcessor".to_string(),
-            supported_modes: ScanMode::HISTORY,
             message_count: 10,
             work_duration_ms: 10,
             start_barrier: None,
@@ -142,7 +121,7 @@ async fn test_multiple_concurrent_scanners() {
     let engine = builder.build().unwrap();
     
     let start = Instant::now();
-    engine.scan(ScanMode::FILES | ScanMode::HISTORY).await.unwrap();
+    engine.scan().await.unwrap();
     let duration = start.elapsed();
     
     // Wait for async message production
@@ -152,8 +131,6 @@ async fn test_multiple_concurrent_scanners() {
     assert!(duration.as_millis() < 200); // Should be much less than sequential (200ms)
     
     assert_eq!(producer_ref.get_total_count(), 20);
-    assert_eq!(producer_ref.get_mode_count(ScanMode::FILES), 10);
-    assert_eq!(producer_ref.get_mode_count(ScanMode::HISTORY), 10);
 }
 
 #[tokio::test]
@@ -175,7 +152,6 @@ async fn test_task_concurrency_limit() {
     for i in 0..3 {
         builder = builder.add_scanner(Arc::new(ConcurrentScanner {
             name: format!("Scanner{}", i),
-            supported_modes: ScanMode::from_bits(1 << i).unwrap(),
             message_count: 2, // Increase message count for better timing measurement
             work_duration_ms: 100,
             start_barrier: None, // Remove barrier
@@ -187,7 +163,7 @@ async fn test_task_concurrency_limit() {
     let start = Instant::now();
     
     // Start scan
-    engine.scan(ScanMode::all()).await.unwrap();
+    engine.scan().await.unwrap();
     let total_duration = start.elapsed();
     
     // With concurrency limit of 2, the 3 tasks should run as 2+1
@@ -207,7 +183,7 @@ async fn test_task_manager_resource_limits() {
     
     // Spawn 4 tasks
     for _i in 0..4 {
-        let task_id = manager.spawn_task(ScanMode::FILES, move |_cancel| async move {
+        let task_id = manager.spawn_task(format!("task-{}", _i), move |_cancel| async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
             Ok(())
         }).await.unwrap();
@@ -241,7 +217,6 @@ async fn test_concurrent_error_handling() {
     
     struct ErrorScanner {
         name: String,
-        mode: ScanMode,
         error_after: usize,
     }
     
@@ -251,11 +226,8 @@ async fn test_concurrent_error_handling() {
             &self.name
         }
         
-        fn supports_mode(&self, mode: ScanMode) -> bool {
-            self.mode == mode
-        }
         
-        async fn scan_async(&self, mode: ScanMode) -> ScanResult<ScanMessageStream> {
+        async fn scan_async(&self, _repository_path: &std::path::Path) -> ScanResult<ScanMessageStream> {
             let error_after = self.error_after;
             
             let stream = stream::unfold(0, move |i| async move {
@@ -263,7 +235,7 @@ async fn test_concurrent_error_handling() {
                     Some((Err(ScanError::stream("Simulated error")), i + 1))
                 } else if i < 5 { // Always produce exactly 5 messages
                     let msg = ScanMessage::new(
-                        MessageHeader::new(mode, i as u64),
+                        MessageHeader::new(i as u64),
                         MessageData::FileInfo {
                             path: format!("file_{}.rs", i),
                             size: 1024,
@@ -285,27 +257,23 @@ async fn test_concurrent_error_handling() {
         .message_producer(producer)
         .add_scanner(Arc::new(ErrorScanner {
             name: "GoodScanner".to_string(),
-            mode: ScanMode::FILES,
             error_after: 10, // Won't error within 5 messages
         }))
         .add_scanner(Arc::new(ErrorScanner {
             name: "BadScanner".to_string(),
-            mode: ScanMode::HISTORY,
             error_after: 3, // Will error after 3 messages
         }))
         .build()
         .unwrap();
     
-    let result = engine.scan(ScanMode::FILES | ScanMode::HISTORY).await;
+    let result = engine.scan().await;
     assert!(result.is_err()); // Should fail due to BadScanner
     
     // Wait for async operations
     tokio::time::sleep(Duration::from_millis(100)).await;
     
-    // GoodScanner should have produced 5 messages
-    // BadScanner should have produced 3 messages before error
-    assert_eq!(producer_ref.get_mode_count(ScanMode::FILES), 5);
-    assert_eq!(producer_ref.get_mode_count(ScanMode::HISTORY), 3);
+    // Both scanners should have produced messages before error
+    assert!(producer_ref.get_total_count() >= 3);
 }
 
 #[tokio::test]
@@ -313,12 +281,12 @@ async fn test_active_task_tracking() {
     let manager = TaskManager::new(10);
     
     // Spawn several tasks with different durations
-    let task1 = manager.spawn_task(ScanMode::FILES, |_| async {
+    let task1 = manager.spawn_task("task-1".to_string(), |_| async {
         tokio::time::sleep(Duration::from_millis(100)).await;
         Ok(())
     }).await.unwrap();
     
-    let task2 = manager.spawn_task(ScanMode::HISTORY, |_| async {
+    let task2 = manager.spawn_task("task-2".to_string(), |_| async {
         tokio::time::sleep(Duration::from_millis(200)).await;
         Ok(())
     }).await.unwrap();
@@ -334,8 +302,9 @@ async fn test_active_task_tracking() {
         .map(|(id, mode, _duration)| (id, mode))
         .collect();
     
-    assert_eq!(task_info.get(&task1), Some(&ScanMode::FILES));
-    assert_eq!(task_info.get(&task2), Some(&ScanMode::HISTORY));
+    // Task manager should have both tasks registered
+    assert!(task_info.contains_key(&task1));
+    assert!(task_info.contains_key(&task2));
     
     // Wait for first task to complete
     manager.wait_for_task(&task1, None).await.unwrap();

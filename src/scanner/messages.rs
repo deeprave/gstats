@@ -2,7 +2,6 @@
 //! 
 //! Compact message structures for memory-efficient queue operations.
 
-use crate::scanner::modes::ScanMode;
 use serde::{Serialize, Deserialize};
 
 /// File change data for commits
@@ -25,8 +24,8 @@ pub struct ScanMessage {
 /// Fixed header containing scanning metadata
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageHeader {
-    /// Scanning mode used
-    pub scan_mode: ScanMode,
+    /// Message sequence number
+    pub sequence: u64,
     /// Timestamp when message was created
     pub timestamp: u64,
 }
@@ -98,16 +97,19 @@ pub enum MessageData {
 
 impl MessageHeader {
     /// Create a new message header
-    pub fn new(scan_mode: ScanMode, timestamp: u64) -> Self {
+    pub fn new(sequence: u64) -> Self {
         Self {
-            scan_mode,
-            timestamp,
+            sequence,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
         }
     }
     
-    /// Get the scan mode
-    pub fn mode(&self) -> ScanMode {
-        self.scan_mode
+    /// Get the sequence number
+    pub fn sequence(&self) -> u64 {
+        self.sequence
     }
     
     /// Get the timestamp
@@ -181,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_message_creation() {
-        let header = MessageHeader::new(ScanMode::FILES, 12345);
+        let header = MessageHeader::new(12345);
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1024,
@@ -189,14 +191,13 @@ mod tests {
         };
         let message = ScanMessage::new(header, data);
 
-        assert_eq!(message.header.scan_mode, ScanMode::FILES);
-        assert_eq!(message.header.timestamp, 12345);
+        assert_eq!(message.header.sequence, 12345);
     }
 
     #[test]
     fn test_message_serialization() {
         let message = ScanMessage::new(
-            MessageHeader::new(ScanMode::HISTORY, 67890),
+            MessageHeader::new(67890),
             MessageData::CommitInfo {
                 hash: "abc123".to_string(),
                 author: "developer".to_string(),

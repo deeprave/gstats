@@ -6,7 +6,6 @@
 //! - Memory-efficient processing with Send+Sync data extraction
 //! - Better performance for multi-mode scans
 
-use crate::scanner::modes::ScanMode;
 use crate::scanner::async_traits::AsyncScanner;
 use crate::scanner::query::QueryParams;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
@@ -51,21 +50,9 @@ impl AsyncScanner for EventDrivenScanner {
         &self.name
     }
 
-    fn supports_mode(&self, mode: ScanMode) -> bool {
-        // EventDrivenScanner supports all modes through single-pass traversal
-        matches!(mode, 
-            ScanMode::FILES | 
-            ScanMode::HISTORY | 
-            ScanMode::METRICS | 
-            ScanMode::DEPENDENCIES | 
-            ScanMode::SECURITY | 
-            ScanMode::PERFORMANCE | 
-            ScanMode::CHANGE_FREQUENCY
-        ) || mode.is_empty() || mode == ScanMode::all()
-    }
 
-    async fn scan_async(&self, repository_path: &Path, modes: ScanMode) -> ScanResult<ScanMessageStream> {
-        debug!("EventDrivenScanner: Starting scan for path: {:?}, modes: {:?}", repository_path, modes);
+    async fn scan_async(&self, repository_path: &Path) -> ScanResult<ScanMessageStream> {
+        debug!("EventDrivenScanner: Starting scan for path: {:?}", repository_path);
         
         // Repository-owning pattern: extract Send+Sync data immediately using spawn_blocking
         let repo_path = repository_path.to_path_buf();
@@ -78,8 +65,8 @@ impl AsyncScanner for EventDrivenScanner {
             let mut messages = Vec::new();
             let mut message_index = 0u64;
             
-            // Extract commit data if HISTORY mode is requested
-            if modes.contains(ScanMode::HISTORY) {
+            // Extract commit data - scanner now emits ALL repository data
+            {
                 let head_id = repo.head_id()
                     .map_err(|e| ScanError::Repository(format!("Failed to get head: {}", e)))?;
                 
@@ -111,7 +98,7 @@ impl AsyncScanner for EventDrivenScanner {
                     
                     // Create Send+Sync message
                     let scan_message = ScanMessage::new(
-                        MessageHeader::new(ScanMode::HISTORY, message_index),
+                        MessageHeader::new(message_index),
                         MessageData::CommitInfo {
                             hash,
                             message,
@@ -126,8 +113,8 @@ impl AsyncScanner for EventDrivenScanner {
                 }
             }
             
-            // Extract file data if FILES mode is requested
-            if modes.contains(ScanMode::FILES) {
+            // Extract file data - scanner now emits ALL repository data
+            {
                 let head = repo.head_commit()
                     .map_err(|e| ScanError::Repository(format!("Failed to get head commit: {}", e)))?;
                 let tree = head.tree()
@@ -146,7 +133,7 @@ impl AsyncScanner for EventDrivenScanner {
                     
                     // Create Send+Sync message
                     let scan_message = ScanMessage::new(
-                        MessageHeader::new(ScanMode::FILES, message_index),
+                        MessageHeader::new(message_index),
                         MessageData::FileInfo {
                             path,
                             size,
@@ -183,25 +170,8 @@ mod tests {
         let scanner = EventDrivenScanner::new(query_params);
         
         assert_eq!(scanner.name(), "EventDrivenScanner");
-        assert!(scanner.supports_mode(ScanMode::FILES));
-        assert!(scanner.supports_mode(ScanMode::HISTORY));
-        assert!(scanner.supports_mode(ScanMode::all()));
     }
 
-    #[tokio::test]
-    async fn test_event_driven_scanner_supports_all_modes() {
-        let query_params = QueryParams::default();
-        let scanner = EventDrivenScanner::new(query_params);
-        
-        assert!(scanner.supports_mode(ScanMode::FILES));
-        assert!(scanner.supports_mode(ScanMode::HISTORY));
-        assert!(scanner.supports_mode(ScanMode::METRICS));
-        assert!(scanner.supports_mode(ScanMode::DEPENDENCIES));
-        assert!(scanner.supports_mode(ScanMode::SECURITY));
-        assert!(scanner.supports_mode(ScanMode::PERFORMANCE));
-        assert!(scanner.supports_mode(ScanMode::CHANGE_FREQUENCY));
-        assert!(scanner.supports_mode(ScanMode::all()));
-    }
 
     #[tokio::test]
     async fn test_event_driven_scanner_with_invalid_path() {
@@ -209,7 +179,7 @@ mod tests {
         let scanner = EventDrivenScanner::new(query_params);
         let invalid_path = Path::new("/nonexistent/path");
         
-        let result = scanner.scan_async(invalid_path, ScanMode::FILES).await;
+        let result = scanner.scan_async(invalid_path).await;
         assert!(result.is_err());
         
         if let Err(ScanError::Repository(msg)) = result {
@@ -226,7 +196,7 @@ mod tests {
         let current_path = Path::new(".");
         
         // This should work if current directory is a git repository
-        let result = scanner.scan_async(current_path, ScanMode::FILES).await;
+        let result = scanner.scan_async(current_path).await;
         
         // Result depends on whether current directory is a git repo
         // If it's a git repo, should succeed; if not, should fail with Repository error
@@ -254,8 +224,8 @@ mod tests {
         let scanner = EventDrivenScanner::new(query_params);
         let current_path = Path::new(".");
         
-        // Test HISTORY mode specifically
-        match scanner.scan_async(current_path, ScanMode::HISTORY).await {
+        // Test scanner with current directory
+        match scanner.scan_async(current_path).await {
             Ok(mut stream) => {
                 let mut commit_count = 0;
                 while let Some(message_result) = stream.next().await {
@@ -289,8 +259,8 @@ mod tests {
         let scanner = EventDrivenScanner::new(query_params);
         let current_path = Path::new(".");
         
-        // Test FILES mode specifically
-        match scanner.scan_async(current_path, ScanMode::FILES).await {
+        // Test scanner with current directory
+        match scanner.scan_async(current_path).await {
             Ok(mut stream) => {
                 let mut file_count = 0;
                 while let Some(message_result) = stream.next().await {

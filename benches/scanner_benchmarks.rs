@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use git2::Repository;
 
 use gstats::scanner::{
-    ScannerConfig, ScanMode, AsyncScannerEngineBuilder,
+    ScannerConfig, AsyncScannerEngineBuilder,
     async_engine::repository::AsyncRepositoryHandle,
 };
 use gstats::git::RepositoryHandle;
@@ -169,7 +169,7 @@ fn bench_scanner_repository_sizes(c: &mut Criterion) {
                     
                     b.iter(|| {
                         rt.block_on(async {
-                            engine.scan(ScanMode::FILES).await.unwrap()
+                            engine.scan().await.unwrap()
                         })
                     })
                 }
@@ -177,8 +177,8 @@ fn bench_scanner_repository_sizes(c: &mut Criterion) {
     }
 }
 
-/// Benchmark different scan modes
-fn bench_scan_modes(c: &mut Criterion) {
+/// Benchmark complete repository scanning
+fn bench_complete_scan(c: &mut Criterion) {
     let (_temp_dir, repo_path) = create_test_repository(100);
     let repo_handle = RepositoryHandle::open(&repo_path).unwrap();
     let config = ScannerConfig::default();
@@ -196,21 +196,13 @@ fn bench_scan_modes(c: &mut Criterion) {
         .build()
         .unwrap();
     
-    let modes = vec![
-        ("files", ScanMode::FILES),
-        ("history", ScanMode::HISTORY),
-        ("all", ScanMode::all()),
-    ];
-    
-    for (name, mode) in modes {
-        c.bench_function(&format!("scan_mode_{}", name), |b| {
-            b.iter(|| {
-                rt.block_on(async {
-                    engine.scan(mode).await.unwrap()
-                })
+    c.bench_function("complete_repository_scan", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                engine.scan().await.unwrap()
             })
-        });
-    }
+        })
+    });
 }
 
 criterion_group!(
@@ -219,7 +211,7 @@ criterion_group!(
     bench_repository_operations,
     bench_scanner_engine_creation,
     bench_scanner_repository_sizes,
-    bench_scan_modes
+    bench_complete_scan
 );
 
 criterion_main!(scanner_benches);

@@ -227,10 +227,9 @@ impl Default for MemoryMonitor {
 mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, MessageData};
-    use crate::scanner::modes::ScanMode;
 
     fn create_test_message(size_hint: usize) -> ScanMessage {
-        let header = MessageHeader::new(ScanMode::FILES, 0);
+        let header = MessageHeader::new(0);
         let data = MessageData::FileInfo {
             path: "x".repeat(size_hint), // Approximate size control
             size: 1000,

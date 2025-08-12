@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use tokio::runtime::Runtime;
 use futures::StreamExt;
 use crate::scanner::config::ScannerConfig;
-use crate::scanner::modes::ScanMode;
 use crate::scanner::traits::MessageProducer;
 use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
 use crate::scanner::statistics::RepositoryStatistics;
@@ -147,52 +146,31 @@ impl AsyncScannerEngine {
     }
     
     /// Execute scan with specified modes
-    pub async fn scan(&self, modes: ScanMode) -> ScanResult<()> {
+    pub async fn scan(&self) -> ScanResult<()> {
         if self.scanners.is_empty() {
             return Err(ScanError::no_scanners_registered());
         }
         
-        // Find scanners that support the requested modes
-        let mut mode_scanners: Vec<(ScanMode, Arc<dyn AsyncScanner>)> = Vec::new();
-        
-        for mode in modes.iter() {
-            let mut found = false;
-            for scanner in &self.scanners {
-                if scanner.supports_mode(mode) {
-                    mode_scanners.push((mode, Arc::clone(scanner)));
-                    found = true;
-                    break;
-                }
-            }
-            
-            if !found {
-                log::debug!("Mode {:?} will be handled by plugin processing", mode);
-            }
-        }
-        
-        if mode_scanners.is_empty() {
-            return Err(ScanError::InvalidMode(modes));
-        }
-        
-        // Spawn tasks for each mode
+        // Run all scanners - no mode filtering
         let mut tasks = Vec::new();
         
-        for (mode, scanner) in mode_scanners {
+        for scanner in &self.scanners {
             let scanner_name = scanner.name().to_string();
+            let scanner_clone = Arc::clone(scanner);
             let producer = Arc::clone(&self.message_producer);
-            let repository_path = self.repository_path.clone(); // Clone the path
+            let repository_path = self.repository_path.clone();
             
-            let task_id = self.task_manager.spawn_task(mode, move |cancel| {
+            let task_id = self.task_manager.spawn_task(scanner_name.clone(), move |cancel| {
                 async move {
-                    log::debug!("Starting {} scan with scanner: {}", mode.bits(), scanner_name);
+                    log::debug!("Starting scan with scanner: {}", scanner_name);
                     
                     // Get message stream from scanner with repository path
-                    let stream = scanner.scan_async(&repository_path, mode).await?;
+                    let stream = scanner_clone.scan_async(&repository_path).await?;
                     
                     // Process messages from stream
                     AsyncScannerEngine::process_stream(stream, producer, cancel).await?;
                     
-                    log::debug!("Completed {} scan", mode.bits());
+                    log::debug!("Completed scan with scanner: {}", scanner_name);
                     Ok(())
                 }
             }).await?;

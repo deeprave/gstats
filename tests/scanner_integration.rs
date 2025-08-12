@@ -2,7 +2,7 @@
 //! 
 //! Simplified tests that verify scanner components work with current architecture
 
-use gstats::scanner::{ScannerConfig, ScanMode};
+use gstats::scanner::ScannerConfig;
 
 #[test]
 fn test_scanner_configuration_system() {
@@ -16,31 +16,13 @@ fn test_scanner_configuration_system() {
     assert!(default_config.max_threads.is_none() || default_config.max_threads.unwrap() >= 1);
 }
 
-#[test]
-fn test_scanning_modes() {
-    // Test that ScanMode bitflags work
-    let files_mode = ScanMode::FILES;
-    let history_mode = ScanMode::HISTORY;
-    let combined = files_mode | history_mode;
-    
-    assert!(combined.contains(ScanMode::FILES));
-    assert!(combined.contains(ScanMode::HISTORY));
-    assert!(!combined.contains(ScanMode::METRICS));
-    
-    // Test empty mode
-    let empty = ScanMode::empty();
-    assert!(empty.is_empty());
-}
 
 #[test]
 fn test_message_data_types() {
     use gstats::scanner::messages::{MessageHeader, ScanMessage, MessageData};
     
     // Create a message header
-    let header = MessageHeader {
-        scan_mode: ScanMode::FILES,
-        timestamp: 1234567890,
-    };
+    let header = MessageHeader::new(123);
     
     // Create scan message with file info
     let file_data = MessageData::FileInfo {
@@ -55,8 +37,7 @@ fn test_message_data_types() {
     };
     
     // Test message properties
-    assert_eq!(message.header.scan_mode, ScanMode::FILES);
-    assert_eq!(message.header.timestamp, 1234567890);
+    assert_eq!(message.header.sequence, 123);
     
     match message.data {
         MessageData::FileInfo { path, size, lines } => {
@@ -72,10 +53,7 @@ fn test_message_data_types() {
 fn test_commit_message_data() {
     use gstats::scanner::messages::{MessageData, ScanMessage, MessageHeader};
     
-    let header = MessageHeader {
-        scan_mode: ScanMode::HISTORY,
-        timestamp: 1234567890,
-    };
+    let header = MessageHeader::new(456);
     
     let commit_data = MessageData::CommitInfo {
         hash: "abc123def456".to_string(),
@@ -106,10 +84,7 @@ fn test_commit_message_data() {
 fn test_metric_message_data() {
     use gstats::scanner::messages::{MessageData, ScanMessage, MessageHeader};
     
-    let header = MessageHeader {
-        scan_mode: ScanMode::METRICS,
-        timestamp: 1234567890,
-    };
+    let header = MessageHeader::new(789);
     
     let metric_data = MessageData::MetricInfo {
         file_count: 157,
@@ -146,23 +121,6 @@ fn test_scanner_config_builder() {
     }
 }
 
-#[test]
-fn test_scan_mode_operations() {
-    // Test all available scan modes
-    let all_modes = ScanMode::all();
-    assert!(all_modes.contains(ScanMode::FILES));
-    assert!(all_modes.contains(ScanMode::HISTORY));
-    
-    // Test mode combinations
-    let files_and_history = ScanMode::FILES | ScanMode::HISTORY;
-    assert!(files_and_history.intersects(ScanMode::FILES));
-    assert!(files_and_history.intersects(ScanMode::HISTORY));
-    
-    // Test mode subtraction
-    let only_files = files_and_history - ScanMode::HISTORY;
-    assert!(only_files.contains(ScanMode::FILES));
-    assert!(!only_files.contains(ScanMode::HISTORY));
-}
 
 #[test]
 fn test_message_data_variants() {

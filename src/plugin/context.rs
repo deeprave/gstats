@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use crate::scanner::{ScannerConfig, QueryParams};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::ScanMessage;
 use crate::display::CompactFormat;
 
@@ -65,12 +64,10 @@ pub enum InvocationType {
 /// Request types for plugin execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PluginRequest {
-    /// Execute scan with specified modes
+    /// Execute scan
     Execute {
         /// Request identifier for tracking
         request_id: String,
-        /// Requested scan modes
-        scan_modes: ScanMode,
         /// Request-specific parameters
         parameters: HashMap<String, serde_json::Value>,
         /// Maximum execution time in milliseconds
@@ -232,10 +229,9 @@ impl RuntimeInfo {
 
 impl PluginRequest {
     /// Create a new execute plugin request
-    pub fn new(scan_modes: ScanMode) -> Self {
+    pub fn new() -> Self {
         Self::Execute {
             request_id: uuid::Uuid::now_v7().to_string(),
-            scan_modes,
             parameters: HashMap::new(),
             timeout_ms: None,
             priority: RequestPriority::Normal,
@@ -245,10 +241,9 @@ impl PluginRequest {
     }
     
     /// Create a new execute plugin request with invocation context
-    pub fn new_with_invocation(scan_modes: ScanMode, invoked_as: String, invocation_type: InvocationType) -> Self {
+    pub fn new_with_invocation(invoked_as: String, invocation_type: InvocationType) -> Self {
         Self::Execute {
             request_id: uuid::Uuid::now_v7().to_string(),
-            scan_modes,
             parameters: HashMap::new(),
             timeout_ms: None,
             priority: RequestPriority::Normal,
@@ -260,8 +255,8 @@ impl PluginRequest {
     /// Set request priority (only for Execute requests)
     pub fn with_priority(self, priority: RequestPriority) -> Self {
         match self {
-            Self::Execute { request_id, scan_modes, parameters, timeout_ms, invoked_as, invocation_type, .. } => {
-                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority, invoked_as, invocation_type }
+            Self::Execute { request_id, parameters, timeout_ms, invoked_as, invocation_type, .. } => {
+                Self::Execute { request_id, parameters, timeout_ms, priority, invoked_as, invocation_type }
             }
             _ => self,
         }
@@ -270,8 +265,8 @@ impl PluginRequest {
     /// Set timeout (only for Execute requests)
     pub fn with_timeout(self, timeout_ms: u64) -> Self {
         match self {
-            Self::Execute { request_id, scan_modes, parameters, priority, invoked_as, invocation_type, .. } => {
-                Self::Execute { request_id, scan_modes, parameters, timeout_ms: Some(timeout_ms), priority, invoked_as, invocation_type }
+            Self::Execute { request_id, parameters, priority, invoked_as, invocation_type, .. } => {
+                Self::Execute { request_id, parameters, timeout_ms: Some(timeout_ms), priority, invoked_as, invocation_type }
             }
             _ => self,
         }
@@ -280,11 +275,11 @@ impl PluginRequest {
     /// Add parameter (only for Execute requests)
     pub fn with_parameter<T: Serialize>(self, key: String, value: T) -> Self {
         match self {
-            Self::Execute { request_id, scan_modes, mut parameters, timeout_ms, priority, invoked_as, invocation_type } => {
+            Self::Execute { request_id, mut parameters, timeout_ms, priority, invoked_as, invocation_type } => {
                 if let Ok(json_value) = serde_json::to_value(value) {
                     parameters.insert(key, json_value);
                 }
-                Self::Execute { request_id, scan_modes, parameters, timeout_ms, priority, invoked_as, invocation_type }
+                Self::Execute { request_id, parameters, timeout_ms, priority, invoked_as, invocation_type }
             }
             _ => self,
         }
@@ -558,14 +553,13 @@ mod tests {
     
     #[test]
     fn test_plugin_request_creation() {
-        let request = PluginRequest::new(ScanMode::FILES)
+        let request = PluginRequest::new()
             .with_priority(RequestPriority::High)
             .with_timeout(5000)
             .with_parameter("limit".to_string(), 100);
         
         match request {
-            PluginRequest::Execute { scan_modes, priority, timeout_ms, .. } => {
-                assert_eq!(scan_modes, ScanMode::FILES);
+            PluginRequest::Execute { priority, timeout_ms, .. } => {
                 assert_eq!(priority, RequestPriority::High);
                 assert_eq!(timeout_ms, Some(5000));
             }

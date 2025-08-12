@@ -11,7 +11,6 @@ use tokio_util::sync::CancellationToken;
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
 use std::cmp::Ordering;
-use crate::scanner::modes::ScanMode;
 // Removed queue dependency - using local memory pressure enum
 use super::error::{ScanError, ScanResult, TaskError};
 
@@ -34,15 +33,6 @@ pub enum TaskPriority {
 }
 
 impl TaskPriority {
-    /// Get priority for a scan mode
-    pub fn for_mode(mode: ScanMode) -> Self {
-        match mode {
-            ScanMode::FILES => TaskPriority::Normal,
-            ScanMode::HISTORY => TaskPriority::High,
-            ScanMode::METRICS => TaskPriority::Low,
-            _ => TaskPriority::Normal,
-        }
-    }
     
     /// Adjust priority based on memory pressure
     pub fn adjust_for_pressure(self, pressure: MemoryPressureLevel) -> Self {
@@ -69,8 +59,6 @@ impl TaskPriority {
 /// Resource constraints for task execution
 #[derive(Debug, Clone)]
 pub struct ResourceConstraints {
-    /// Maximum concurrent tasks per mode
-    pub max_tasks_per_mode: HashMap<ScanMode, usize>,
     /// Total maximum concurrent tasks
     pub max_total_tasks: usize,
     /// Memory pressure threshold for task throttling
@@ -81,13 +69,7 @@ pub struct ResourceConstraints {
 
 impl Default for ResourceConstraints {
     fn default() -> Self {
-        let mut max_tasks_per_mode = HashMap::new();
-        max_tasks_per_mode.insert(ScanMode::FILES, 4);
-        max_tasks_per_mode.insert(ScanMode::HISTORY, 2);
-        max_tasks_per_mode.insert(ScanMode::METRICS, 1);
-        
         Self {
-            max_tasks_per_mode,
             max_total_tasks: 8,
             memory_pressure_threshold: MemoryPressureLevel::High,
             backoff_duration: Duration::from_millis(100),
@@ -102,7 +84,6 @@ type TaskFn = Box<dyn FnOnce(CancellationToken) -> Pin<Box<dyn std::future::Futu
 struct PendingTask {
     id: TaskId,
     priority: TaskPriority,
-    mode: ScanMode,
     task_fn: TaskFn,
     created_at: Instant,
 }
@@ -159,7 +140,6 @@ impl std::fmt::Display for TaskId {
 #[derive(Debug)]
 pub struct TaskInfo {
     pub id: TaskId,
-    pub mode: ScanMode,
     pub priority: TaskPriority,
     pub started_at: Instant,
     pub handle: JoinHandle<ScanResult<()>>,
@@ -188,8 +168,6 @@ pub struct TaskManager {
     /// Resource constraints and limits
     constraints: ResourceConstraints,
     
-    /// Per-mode task counters
-    mode_counters: Arc<DashMap<ScanMode, usize>>,
     
     
     /// Task scheduler handle
@@ -211,7 +189,6 @@ impl TaskManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
-            mode_counters: Arc::new(DashMap::new()),
             scheduler_handle: None,
         }
     }
@@ -226,7 +203,6 @@ impl TaskManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
-            mode_counters: Arc::new(DashMap::new()),
             scheduler_handle: None,
         }
     }
@@ -240,20 +216,20 @@ impl TaskManager {
     /// Spawn a new scanning task with priority scheduling
     pub async fn spawn_task<F, Fut>(
         &self,
-        mode: ScanMode,
+        task_name: String,
         task_fn: F,
     ) -> ScanResult<TaskId>
     where
         F: FnOnce(CancellationToken) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ScanResult<()>> + Send + 'static,
     {
-        self.spawn_task_with_priority(mode, TaskPriority::for_mode(mode), task_fn).await
+        self.spawn_task_with_priority(task_name, TaskPriority::Normal, task_fn).await
     }
     
     /// Spawn a task with explicit priority
     pub async fn spawn_task_with_priority<F, Fut>(
         &self,
-        mode: ScanMode,
+        task_name: String,
         priority: TaskPriority,
         task_fn: F,
     ) -> ScanResult<TaskId>
@@ -261,18 +237,18 @@ impl TaskManager {
         F: FnOnce(CancellationToken) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ScanResult<()>> + Send + 'static,
     {
-        let task_id = TaskId::new(&format!("scan-{:?}", mode));
+        let task_id = TaskId::new(&task_name);
         
         // Check if we can execute immediately or need to queue
-        if self.can_execute_immediate(mode)? {
-            self.execute_task_immediate(task_id.clone(), mode, priority, task_fn).await
+        if self.can_execute_immediate()? {
+            self.execute_task_immediate(task_id.clone(), priority, task_fn).await
         } else {
-            self.queue_task(task_id.clone(), mode, priority, task_fn).await
+            self.queue_task(task_id.clone(), priority, task_fn).await
         }
     }
     
     /// Check if task can be executed immediately based on resource constraints
-    fn can_execute_immediate(&self, mode: ScanMode) -> ScanResult<bool> {
+    fn can_execute_immediate(&self) -> ScanResult<bool> {
         // Check memory pressure using active task count as proxy
         let pressure = self.estimate_memory_pressure();
         if pressure >= self.constraints.memory_pressure_threshold {
@@ -284,14 +260,6 @@ impl TaskManager {
             return Ok(false);
         }
         
-        // Check per-mode limits
-        if let Some(&max_for_mode) = self.constraints.max_tasks_per_mode.get(&mode) {
-            let current_count = self.mode_counters.get(&mode).map(|c| *c).unwrap_or(0);
-            if current_count >= max_for_mode {
-                return Ok(false);
-            }
-        }
-        
         Ok(true)
     }
     
@@ -299,7 +267,6 @@ impl TaskManager {
     async fn execute_task_immediate<F, Fut>(
         &self,
         task_id: TaskId,
-        mode: ScanMode,
         priority: TaskPriority,
         task_fn: F,
     ) -> ScanResult<TaskId>
@@ -315,20 +282,15 @@ impl TaskManager {
         let pressure = self.estimate_memory_pressure();
         let adjusted_priority = priority.adjust_for_pressure(pressure);
         
-        // Update mode counter
-        self.mode_counters.entry(mode).and_modify(|c| *c += 1).or_insert(1);
-        
         let cancellation = self.cancellation_token.child_token();
         let active_tasks = Arc::clone(&self.active_tasks);
         let completed_count = Arc::clone(&self.completed_count);
         let errors = Arc::clone(&self.errors);
-        let mode_counters = Arc::clone(&self.mode_counters);
         let pending_tasks = Arc::clone(&self.pending_tasks);
         let semaphore_clone = Arc::clone(&self.semaphore);
         let constraints = self.constraints.clone();
         // Removed queue_ref - no longer needed
         let task_id_clone = task_id.clone();
-        let mode_clone = mode;
         
         // Spawn the actual task
         let handle = tokio::spawn(async move {
@@ -348,14 +310,12 @@ impl TaskManager {
                     let mut error_list = errors.write().await;
                     error_list.push(TaskError::new(
                         task_id_clone.as_str(),
-                        mode_clone,
                         ScanError::Other(anyhow::anyhow!("{}", e)),
                     ));
                 }
             }
             
             // Update counters
-            mode_counters.entry(mode_clone).and_modify(|c| *c = c.saturating_sub(1));
             active_tasks.remove(&task_id_clone);
             
             // Try to process pending tasks when this task completes
@@ -376,7 +336,6 @@ impl TaskManager {
         // Register the task
         let task_info = TaskInfo {
             id: task_id.clone(),
-            mode,
             priority: adjusted_priority,
             started_at: Instant::now(),
             handle,
@@ -391,7 +350,6 @@ impl TaskManager {
     async fn queue_task<F, Fut>(
         &self,
         task_id: TaskId,
-        mode: ScanMode,
         priority: TaskPriority,
         task_fn: F,
     ) -> ScanResult<TaskId>
@@ -406,7 +364,6 @@ impl TaskManager {
         let pending_task = PendingTask {
             id: task_id.clone(),
             priority,
-            mode,
             task_fn: boxed_fn,
             created_at: Instant::now(),
         };
@@ -441,7 +398,7 @@ impl TaskManager {
                 let mut temp_heap = BinaryHeap::new();
                 
                 while let Some(task) = pending.pop() {
-                    if self.can_execute_immediate(task.mode)? {
+                    if self.can_execute_immediate()? {
                         next_task = Some(task);
                         break;
                     } else {
@@ -459,10 +416,10 @@ impl TaskManager {
             
             if let Some(task) = task {
                 // Execute the task
-                let PendingTask { id, mode, priority, task_fn, .. } = task;
+                let PendingTask { id, priority, task_fn, .. } = task;
                 
                 // Convert task_fn to the format expected by execute_task_immediate
-                let result = self.execute_task_via_pending(id, mode, priority, task_fn).await;
+                let result = self.execute_task_via_pending(id, priority, task_fn).await;
                 
                 match result {
                     Ok(_) => processed += 1,
@@ -484,7 +441,6 @@ impl TaskManager {
     async fn execute_task_via_pending(
         &self,
         task_id: TaskId,
-        mode: ScanMode,
         priority: TaskPriority,
         task_fn: TaskFn,
     ) -> ScanResult<TaskId> {
@@ -492,16 +448,12 @@ impl TaskManager {
         let permit = self.semaphore.clone().acquire_owned().await
             .map_err(|_| ScanError::resource_limit("Failed to acquire task permit"))?;
         
-        // Update mode counter
-        self.mode_counters.entry(mode).and_modify(|c| *c += 1).or_insert(1);
         
         let cancellation = self.cancellation_token.child_token();
         let active_tasks = Arc::clone(&self.active_tasks);
         let completed_count = Arc::clone(&self.completed_count);
         let errors = Arc::clone(&self.errors);
-        let mode_counters = Arc::clone(&self.mode_counters);
         let task_id_clone = task_id.clone();
-        let mode_clone = mode;
         
         // Spawn the actual task with proper tracking
         let handle = tokio::spawn(async move {
@@ -521,14 +473,12 @@ impl TaskManager {
                     let mut error_list = errors.write().await;
                     error_list.push(TaskError::new(
                         task_id_clone.as_str(),
-                        mode_clone,
                         ScanError::Other(anyhow::anyhow!("{}", e)),
                     ));
                 }
             }
             
             // Update counters
-            mode_counters.entry(mode_clone).and_modify(|c| *c = c.saturating_sub(1));
             active_tasks.remove(&task_id_clone);
             
             result
@@ -537,7 +487,6 @@ impl TaskManager {
         // Register the task
         let task_info = TaskInfo {
             id: task_id.clone(),
-            mode,
             priority,
             started_at: Instant::now(),
             handle,
@@ -657,14 +606,13 @@ impl TaskManager {
     }
     
     /// Get active task information
-    pub fn get_active_tasks(&self) -> Vec<(TaskId, ScanMode, Duration)> {
+    pub fn get_active_tasks(&self) -> Vec<(TaskId, Duration)> {
         self.active_tasks
             .iter()
             .map(|entry| {
                 let task_info = entry.value();
                 (
                     entry.key().clone(),
-                    task_info.mode,
                     task_info.started_at.elapsed(),
                 )
             })
@@ -672,14 +620,13 @@ impl TaskManager {
     }
     
     /// Get enhanced task information including priority
-    pub fn get_active_tasks_detailed(&self) -> Vec<(TaskId, ScanMode, TaskPriority, Duration)> {
+    pub fn get_active_tasks_detailed(&self) -> Vec<(TaskId, TaskPriority, Duration)> {
         self.active_tasks
             .iter()
             .map(|entry| {
                 let task_info = entry.value();
                 (
                     entry.key().clone(),
-                    task_info.mode,
                     task_info.priority,
                     task_info.started_at.elapsed(),
                 )
@@ -693,19 +640,11 @@ impl TaskManager {
         pending.len()
     }
     
-    /// Get current task count per mode
-    pub fn get_mode_distribution(&self) -> HashMap<ScanMode, usize> {
-        self.mode_counters
-            .iter()
-            .map(|entry| (*entry.key(), *entry.value()))
-            .collect()
-    }
     
     /// Get resource utilization statistics
     pub async fn get_resource_stats(&self) -> TaskResourceStats {
         let pending_count = self.pending_task_count().await;
         let active_count = self.active_task_count();
-        let mode_distribution = self.get_mode_distribution();
         
         let memory_pressure = self.estimate_memory_pressure();
         
@@ -713,7 +652,6 @@ impl TaskManager {
             active_tasks: active_count,
             pending_tasks: pending_count,
             completed_tasks: self.completed_task_count().await,
-            mode_distribution,
             memory_pressure,
             total_capacity: self.constraints.max_total_tasks,
             semaphore_permits: self.semaphore.available_permits(),
@@ -812,7 +750,6 @@ pub struct TaskResourceStats {
     pub active_tasks: usize,
     pub pending_tasks: usize,
     pub completed_tasks: usize,
-    pub mode_distribution: HashMap<ScanMode, usize>,
     pub memory_pressure: MemoryPressureLevel,
     pub total_capacity: usize,
     pub semaphore_permits: usize,
@@ -836,7 +773,7 @@ mod tests {
     async fn test_task_spawning() {
         let manager = TaskManager::new(2);
         
-        let task_id = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        let task_id = manager.spawn_task("test-task".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(10)).await;
             Ok(())
         }).await.unwrap();
@@ -855,8 +792,8 @@ mod tests {
         
         // Spawn 3 tasks with limit of 2
         let mut tasks = Vec::new();
-        for _i in 0..3 {
-            let task_id = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        for i in 0..3 {
+            let task_id = manager.spawn_task(format!("test-task-{}", i), |_cancel| async {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 Ok(())
             }).await.unwrap();
@@ -884,7 +821,7 @@ mod tests {
         let manager = TaskManager::new(5);
         
         // Spawn a long-running task
-        let _task_id = manager.spawn_task(ScanMode::FILES, |cancel| async move {
+        let _task_id = manager.spawn_task("long-task".to_string(), |cancel| async move {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {
                     Err(ScanError::async_operation("Should have been cancelled"))
@@ -911,7 +848,7 @@ mod tests {
     async fn test_task_timeout() {
         let manager = TaskManager::new(1);
         
-        let task_id = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        let task_id = manager.spawn_task("slow-task".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_secs(1)).await;
             Ok(())
         }).await.unwrap();
@@ -925,10 +862,10 @@ mod tests {
     async fn test_task_priority() {
         let _manager = TaskManager::new(2);
         
-        // Test default priority assignment
-        assert_eq!(TaskPriority::for_mode(ScanMode::FILES), TaskPriority::Normal);
-        assert_eq!(TaskPriority::for_mode(ScanMode::HISTORY), TaskPriority::High);
-        assert_eq!(TaskPriority::for_mode(ScanMode::METRICS), TaskPriority::Low);
+        // Test default priority levels exist
+        let _normal = TaskPriority::Normal;
+        let _high = TaskPriority::High;
+        let _low = TaskPriority::Low;
         
         // Test priority adjustment under pressure
         let high_priority = TaskPriority::High;
@@ -942,28 +879,26 @@ mod tests {
     
     #[tokio::test]
     async fn test_resource_constraints() {
-        let mut constraints = ResourceConstraints::default();
-        constraints.max_tasks_per_mode.insert(ScanMode::FILES, 1);
+        let constraints = ResourceConstraints::default();
         
         let manager = TaskManager::with_constraints(constraints);
         
         // First task should execute
-        let task_id1 = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        let task_id1 = manager.spawn_task("task-1".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok(())
         }).await.unwrap();
         
         assert_eq!(manager.active_task_count(), 1);
         
-        // Second task should be queued due to per-mode limit
-        let task_id2 = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        // Second task should execute normally (no per-mode limits)
+        let task_id2 = manager.spawn_task("task-2".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(50)).await;
             Ok(())
         }).await.unwrap();
         
-        // Should only have 1 active task due to mode limit
-        assert_eq!(manager.active_task_count(), 1);
-        assert_eq!(manager.pending_task_count().await, 1);
+        // Both tasks should be able to run concurrently
+        assert!(manager.active_task_count() <= 2);
         
         // Wait for tasks to complete
         manager.wait_for_task(&task_id1, None).await.unwrap();
@@ -974,21 +909,19 @@ mod tests {
     async fn test_mode_distribution() {
         let manager = TaskManager::new(5);
         
-        // Spawn tasks in different modes
-        let _task1 = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        // Spawn tasks with different names
+        let _task1 = manager.spawn_task("files-task".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok(())
         }).await.unwrap();
         
-        let _task2 = manager.spawn_task(ScanMode::HISTORY, |_cancel| async {
+        let _task2 = manager.spawn_task("history-task".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok(())
         }).await.unwrap();
         
-        let distribution = manager.get_mode_distribution();
-        assert_eq!(distribution.get(&ScanMode::FILES), Some(&1));
-        assert_eq!(distribution.get(&ScanMode::HISTORY), Some(&1));
-        assert_eq!(distribution.get(&ScanMode::METRICS), None);
+        // Just verify we have active tasks
+        assert_eq!(manager.active_task_count(), 2);
     }
     
     #[tokio::test]
@@ -996,7 +929,7 @@ mod tests {
         let manager = TaskManager::new(10);
         
         // Spawn a task
-        let _task_id = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        let _task_id = manager.spawn_task("stats-task".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok(())
         }).await.unwrap();
@@ -1006,7 +939,7 @@ mod tests {
         assert_eq!(stats.pending_tasks, 0);
         assert_eq!(stats.total_capacity, 10);
         assert!(stats.semaphore_permits < 10); // One permit should be taken
-        assert_eq!(stats.memory_pressure, MemoryPressureLevel::Normal); // No queue attached
+        assert_eq!(stats.memory_pressure, MemoryPressureLevel::Normal);
     }
     
     #[tokio::test]
@@ -1014,12 +947,12 @@ mod tests {
         let manager = TaskManager::new(2);
         
         // Fill up the task capacity
-        let _task1 = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        let _task1 = manager.spawn_task("pressure-task-1".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(200)).await;
             Ok(())
         }).await.unwrap();
         
-        let _task2 = manager.spawn_task(ScanMode::FILES, |_cancel| async {
+        let _task2 = manager.spawn_task("pressure-task-2".to_string(), |_cancel| async {
             tokio::time::sleep(Duration::from_millis(200)).await;
             Ok(())
         }).await.unwrap();

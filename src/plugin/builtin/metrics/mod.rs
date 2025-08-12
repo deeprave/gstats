@@ -8,7 +8,7 @@ use crate::plugin::{
     Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::PluginType
 };
-use crate::scanner::{modes::ScanMode, messages::{ScanMessage, MessageHeader}};
+use crate::scanner::messages::{ScanMessage, MessageHeader};
 use crate::scanner::async_engine::processors::{EventProcessor, EventProcessingCoordinator};
 use crate::scanner::async_engine::shared_state::SharedProcessorState;
 use crate::plugin::processors::{
@@ -81,27 +81,16 @@ impl MetricsPlugin {
         }
     }
 
-    fn get_required_scan_modes(&self) -> ScanMode {
-        ScanMode::CHANGE_FREQUENCY | ScanMode::FILES | ScanMode::METRICS
-    }
-
-    fn create_processors(&self, scan_modes: ScanMode) -> Vec<Box<dyn EventProcessor>> {
+    fn create_processors(&self) -> Vec<Box<dyn EventProcessor>> {
         let mut processors: Vec<Box<dyn EventProcessor>> = Vec::new();
 
-        if scan_modes.contains(ScanMode::CHANGE_FREQUENCY) {
-            processors.push(Box::new(ComprehensiveChangeFrequencyProcessor::new()));
-        }
-
-        if scan_modes.contains(ScanMode::METRICS) {
-            processors.push(Box::new(ComprehensiveComplexityProcessor::new()));
-            processors.push(Box::new(ComprehensiveHotspotProcessor::new()));
-            processors.push(Box::new(ComprehensiveDebtAssessmentProcessor::new()));
-        }
-
-        if scan_modes.contains(ScanMode::FILES) {
-            processors.push(Box::new(ComprehensiveFormatDetectionProcessor::new()));
-            processors.push(Box::new(ComprehensiveDuplicationDetectorProcessor::new()));
-        }
+        // All processors run without mode filtering
+        processors.push(Box::new(ComprehensiveChangeFrequencyProcessor::new()));
+        processors.push(Box::new(ComprehensiveComplexityProcessor::new()));
+        processors.push(Box::new(ComprehensiveHotspotProcessor::new()));
+        processors.push(Box::new(ComprehensiveDebtAssessmentProcessor::new()));
+        processors.push(Box::new(ComprehensiveFormatDetectionProcessor::new()));
+        processors.push(Box::new(ComprehensiveDuplicationDetectorProcessor::new()));
 
         processors
     }
@@ -125,8 +114,7 @@ impl Plugin for MetricsPlugin {
         }
 
         let mut coordinator = EventProcessingCoordinator::new();
-        let scan_modes = self.get_required_scan_modes();
-        let processors = self.create_processors(scan_modes);
+        let processors = self.create_processors();
         
         for processor in processors {
             coordinator.add_processor(processor);
@@ -153,9 +141,6 @@ impl Plugin for MetricsPlugin {
 
 #[async_trait]
 impl ScannerPlugin for MetricsPlugin {
-    fn supported_modes(&self) -> ScanMode {
-        self.get_required_scan_modes()
-    }
 
     async fn process_scan_data(&self, _data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
         // TODO: Process scan data through processors
@@ -164,7 +149,7 @@ impl ScannerPlugin for MetricsPlugin {
 
     async fn aggregate_results(&self, _results: Vec<ScanMessage>) -> PluginResult<ScanMessage> {
         // TODO: Aggregate results from processors
-        let header = MessageHeader::new(ScanMode::METRICS, 0);
+        let header = MessageHeader::new(0);
         let data = crate::scanner::messages::MessageData::MetricInfo {
             file_count: 0,
             line_count: 0,

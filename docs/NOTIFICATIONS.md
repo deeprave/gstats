@@ -33,7 +33,6 @@ Emitted when a scan begins.
 ```rust
 ScanEvent::ScanStarted {
     scan_id: String,
-    modes: ScanMode,
 }
 ```
 
@@ -212,7 +211,6 @@ impl ExportPlugin {
 // Emit scan started event
 let scan_started = ScanEvent::ScanStarted {
     scan_id: scan_id.clone(),
-    modes: ScanMode::HISTORY | ScanMode::FILES,
 };
 notification_manager.publish(scan_started).await?;
 

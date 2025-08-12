@@ -94,7 +94,7 @@ impl Subscriber<ScanEvent> for PluginSubscriber {
         // In future tasks, we'll implement actual plugin event handling
         
         match event {
-            ScanEvent::ScanStarted { scan_id, modes: _ } => {
+            ScanEvent::ScanStarted { scan_id } => {
                 log::debug!("Plugin {} received ScanStarted event for scan {}", self.plugin_name, scan_id);
                 // Plugins can prepare for incoming data based on scan modes
                 // For now, just log the event

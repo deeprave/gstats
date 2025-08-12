@@ -9,7 +9,7 @@ This directory contains comprehensive performance benchmarks for the gstats scan
 - **Repository handle operations**
 - **Scanner engine creation and setup**
 - **Performance with different repository sizes**
-- **Scan mode comparison (FILES, HISTORY, ALL)**
+- **Complete repository scanning without mode filtering**
 
 **Target Metrics:**
 - Configuration creation: < 1ms
@@ -34,7 +34,7 @@ This directory contains comprehensive performance benchmarks for the gstats scan
 - **Single producer throughput (target: >10,000 messages/sec)**
 - **Multi-producer concurrent throughput**
 - **Consumer thread latency (target: <1ms average)**
-- **ScanMode filtering performance (target: <100μs lookup)**
+- **Message processing without mode filtering**
 - **Batch processing latency**
 - **Message size impact on throughput**
 - **Backoff algorithm effectiveness**
@@ -42,7 +42,7 @@ This directory contains comprehensive performance benchmarks for the gstats scan
 **Target Metrics:**
 - Queue throughput: > 10,000 messages/second
 - Consumer latency: < 1ms average
-- ScanMode filtering: < 100μs lookup time
+- Message processing: < 100μs per message
 - Multi-producer scaling: Near-linear to 16 threads
 
 ### 4. Integration Benchmarks (`integration_benchmarks.rs`)
@@ -123,7 +123,7 @@ cargo test --test async_validation
 ### Queue System
 - ✅ **Throughput**: > 10,000 messages/second
 - ✅ **Latency**: < 1ms average processing
-- ✅ **Filtering**: < 100μs ScanMode lookup
+- ✅ **Processing**: < 100μs per message
 - ✅ **Memory**: < 1MB queue overhead
 - ✅ **Scaling**: Near-linear to 16 producer threads
 

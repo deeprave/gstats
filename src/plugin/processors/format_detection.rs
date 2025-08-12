@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -322,7 +321,6 @@ impl FormatDetectionProcessor {
         
         // Create a summary message with format statistics
         let header = MessageHeader::new(
-            ScanMode::FILES,
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -343,9 +341,6 @@ impl FormatDetectionProcessor {
 
 #[async_trait]
 impl EventProcessor for FormatDetectionProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::FILES
-    }
 
     fn name(&self) -> &'static str {
         "format_detection"
@@ -409,7 +404,7 @@ mod tests {
     async fn test_format_detection_processor_creation() {
         let processor = FormatDetectionProcessor::new();
         assert_eq!(processor.name(), "format_detection");
-        assert_eq!(processor.supported_modes(), ScanMode::FILES);
+        // Processor no longer advertises supported modes
         assert!(processor.file_formats.is_empty());
         assert_eq!(processor.statistics.total_files, 0);
     }

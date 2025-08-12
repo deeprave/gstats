@@ -66,20 +66,10 @@ High-performance async scanning system for repository analysis using event-drive
 
 #### Core Features:
 - **Repository-Owning Pattern**: Each scanner creates its own repository access using spawn_blocking
-- **Single-Pass Scanning**: EventDrivenScanner processes all scan modes in one repository traversal
+- **Single-Pass Scanning**: EventDrivenScanner processes all repository data in one traversal
 - **Event-Driven Processing**: Streaming data processing through EventProcessor trait
 - **Gitoxide Integration**: Uses latest gitoxide (0.73) for Git operations without Send/Sync issues
-
-```rust
-// Scanner modes (bitflags for combinations)
-ScanMode::FILES            // File system analysis
-ScanMode::HISTORY          // Git commit history
-ScanMode::METRICS          // Code quality metrics
-ScanMode::SECURITY         // Security vulnerability scanning
-ScanMode::DEPENDENCIES     // Dependency analysis
-ScanMode::PERFORMANCE      // Performance bottleneck detection
-ScanMode::CHANGE_FREQUENCY // File change frequency analysis
-```
+- **Comprehensive Analysis**: Scanner extracts all repository data (files, history, metrics) without filtering
 
 #### Architecture Flow:
 ```
@@ -153,7 +143,7 @@ Extensible plugin architecture with async communication and lifecycle management
 ```rust
 // Plugin communication
 pub enum PluginRequest {
-    Execute { scan_modes: ScanMode, config: serde_json::Value },
+    Execute { config: serde_json::Value },
     GetStatistics,
     GetCapabilities,
     Export,
@@ -211,7 +201,7 @@ pub struct ScanMessage {
 }
 
 pub struct MessageHeader {
-    pub scan_mode: ScanMode,
+    pub sequence: u64,
     pub timestamp: u64,
 }
 ```
@@ -251,10 +241,9 @@ pub trait Plugin: Send + Sync {
 // Scanner-specific capabilities
 #[async_trait]
 pub trait ScannerPlugin: Plugin {
-    fn supported_modes(&self) -> ScanMode;
     async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>>;
     async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage>;
-    fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<Duration>;
+    fn estimate_processing_time(&self, item_count: usize) -> Option<Duration>;
     fn config_schema(&self) -> serde_json::Value;
 }
 
@@ -300,7 +289,6 @@ The plugin system is fully integrated with the async scanner engine through seve
 ```rust
 pub struct PluginExecutor {
     registry: Arc<RwLock<PluginRegistry>>,
-    scan_modes: ScanMode,
     metrics: Arc<RwLock<ExecutionMetrics>>,
 }
 ```

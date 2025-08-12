@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::{RepositoryEvent, FileInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -178,7 +177,6 @@ impl ComplexityProcessor {
         
         for (file_path, metrics) in &self.file_complexities {
             let header = MessageHeader::new(
-                ScanMode::METRICS,
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -200,9 +198,6 @@ impl ComplexityProcessor {
 
 #[async_trait]
 impl EventProcessor for ComplexityProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::METRICS
-    }
 
     fn name(&self) -> &'static str {
         "complexity"
@@ -326,7 +321,7 @@ mod tests {
     async fn test_complexity_processor_creation() {
         let processor = ComplexityProcessor::new();
         assert_eq!(processor.name(), "complexity");
-        assert_eq!(processor.supported_modes(), ScanMode::METRICS);
+        // Processor no longer advertises supported modes
         assert!(processor.file_complexities.is_empty());
     }
 

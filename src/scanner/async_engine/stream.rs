@@ -326,19 +326,6 @@ pub mod stream_utils {
         ProgressTrackingStream::new(stream, estimated_total)
     }
     
-    /// Filter stream by scan mode
-    pub fn filter_by_mode<S>(stream: S, mode: crate::scanner::modes::ScanMode) -> impl Stream<Item = ScanResult<ScanMessage>>
-    where
-        S: Stream<Item = ScanResult<ScanMessage>>,
-    {
-        futures::StreamExt::filter_map(stream, move |result| {
-            futures::future::ready(match result {
-                Ok(message) if message.header.scan_mode.contains(mode) => Some(Ok(message)),
-                Ok(_) => None, // Filter out messages not matching mode
-                Err(e) => Some(Err(e)),
-            })
-        })
-    }
     
     /// Transform stream with rate limiting
     pub fn rate_limited<S>(stream: S, max_per_second: f64) -> impl Stream<Item = ScanResult<ScanMessage>>
@@ -356,12 +343,11 @@ mod tests {
     use super::*;
     use futures::stream;
     use tokio_stream::StreamExt;
-    use crate::scanner::modes::ScanMode;
     use crate::scanner::messages::{MessageHeader, MessageData};
     
     fn create_test_message(id: u64) -> ScanMessage {
         ScanMessage::new(
-            MessageHeader::new(ScanMode::FILES, id),
+            MessageHeader::new(id),
             MessageData::FileInfo {
                 path: format!("test_{}.rs", id),
                 size: 1024,
@@ -441,11 +427,11 @@ mod tests {
     async fn test_stream_filtering() {
         let messages: Vec<ScanResult<ScanMessage>> = vec![
             Ok(ScanMessage::new(
-                MessageHeader::new(ScanMode::FILES, 1),
+                MessageHeader::new(1),
                 MessageData::FileInfo { path: "test.rs".to_string(), size: 100, lines: 10 }
             )),
             Ok(ScanMessage::new(
-                MessageHeader::new(ScanMode::HISTORY, 2),
+                MessageHeader::new(2),
                 MessageData::CommitInfo { 
                     hash: "abc123".to_string(), 
                     author: "test".to_string(), 
@@ -459,20 +445,19 @@ mod tests {
                 }
             )),
             Ok(ScanMessage::new(
-                MessageHeader::new(ScanMode::FILES, 3),
+                MessageHeader::new(3),
                 MessageData::FileInfo { path: "test2.rs".to_string(), size: 200, lines: 20 }
             )),
         ];
         
         let input_stream = stream::iter(messages);
-        let filtered = stream_utils::filter_by_mode(input_stream, ScanMode::FILES);
         
-        let results: Vec<_> = filtered.collect().await;
+        let results: Vec<_> = input_stream.collect().await;
         assert_eq!(results.len(), 2);
         
         for result in results {
             let message = result.unwrap();
-            assert!(message.header.scan_mode.contains(ScanMode::FILES));
+            assert!(message.header.sequence > 0);
         }
     }
 }

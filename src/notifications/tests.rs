@@ -11,7 +11,6 @@ use crate::notifications::traits::{NotificationManager, Publisher, Subscriber};
 use crate::notifications::events::{QueueEvent, PluginEvent};
 use crate::notifications::error::NotificationError;
 // Removed unused imports: EventFilter, RateLimit, OverflowAction
-use crate::scanner::modes::ScanMode;
 
 /// Mock subscriber for testing
 struct MockSubscriber {
@@ -142,7 +141,7 @@ async fn test_event_publishing() {
     manager.subscribe(subscriber.clone()).await.unwrap();
     
     // Publish an event
-    let event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+    let event = ScanEvent::started("scan_001".to_string());
     let result = manager.publish(event.clone()).await;
     assert!(result.is_ok());
     
@@ -152,9 +151,8 @@ async fn test_event_publishing() {
     assert_eq!(received_events.len(), 1);
     
     match &received_events[0] {
-        ScanEvent::ScanStarted { scan_id, modes, .. } => {
+        ScanEvent::ScanStarted { scan_id, .. } => {
             assert_eq!(scan_id, "scan_001");
-            assert_eq!(*modes, ScanMode::FILES);
         }
         _ => panic!("Expected ScanStarted event"),
     }
@@ -170,7 +168,7 @@ async fn test_targeted_publishing() {
     manager.subscribe(subscriber2.clone()).await.unwrap();
     
     // Publish to specific subscriber
-    let event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+    let event = ScanEvent::started("scan_001".to_string());
     let result = manager.publish_to(event, "subscriber1").await;
     assert!(result.is_ok());
     
@@ -191,7 +189,7 @@ async fn test_publisher_interface() {
     let publisher = MockPublisher::new("test_publisher", manager);
     
     // Publish through publisher interface
-    let event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+    let event = ScanEvent::started("scan_001".to_string());
     let result = publisher.publish(event).await;
     assert!(result.is_ok());
     
@@ -210,7 +208,7 @@ async fn test_delivery_failure_handling() {
     manager.subscribe(normal_subscriber.clone()).await.unwrap();
     
     // Publish an event - should succeed for normal subscriber despite failing subscriber
-    let event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+    let event = ScanEvent::started("scan_001".to_string());
     let result = manager.publish(event).await;
     assert!(result.is_ok()); // Manager doesn't fail if some subscribers fail
     
@@ -234,7 +232,7 @@ async fn test_shutdown() {
     assert_eq!(manager.subscriber_count().await, 0);
     
     // Publishing after shutdown should fail
-    let event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+    let event = ScanEvent::started("scan_001".to_string());
     let result = manager.publish(event).await;
     assert!(result.is_err());
 }
@@ -248,7 +246,7 @@ async fn test_statistics() {
     
     // Publish some events
     for i in 0..3 {
-        let event = ScanEvent::started(format!("scan_{:03}", i), ScanMode::FILES);
+        let event = ScanEvent::started(format!("scan_{:03}", i));
         manager.publish(event).await.unwrap();
     }
     
@@ -267,11 +265,10 @@ async fn test_statistics() {
 #[tokio::test]
 async fn test_event_helper_functions() {
     // Test ScanEvent helper functions
-    let started_event = ScanEvent::started("scan_001".to_string(), ScanMode::FILES);
+    let started_event = ScanEvent::started("scan_001".to_string());
     match started_event {
-        ScanEvent::ScanStarted { scan_id, modes, .. } => {
+        ScanEvent::ScanStarted { scan_id, .. } => {
             assert_eq!(scan_id, "scan_001");
-            assert_eq!(modes, ScanMode::FILES);
         }
         _ => panic!("Expected ScanStarted event"),
     }
@@ -337,7 +334,6 @@ async fn test_unsubscription_during_active_publishing() {
     // Create event
     let event = ScanEvent::ScanStarted {
         scan_id: "test_scan".to_string(),
-        modes: ScanMode::HISTORY,
     };
     
     // Start publishing (this will take some time due to async processing)
@@ -431,15 +427,12 @@ async fn test_notification_manager_shutdown_with_pending_events() {
     let events = vec![
         ScanEvent::ScanStarted {
             scan_id: "scan1".to_string(),
-            modes: ScanMode::HISTORY,
         },
         ScanEvent::ScanStarted {
             scan_id: "scan2".to_string(),
-            modes: ScanMode::FILES,
         },
         ScanEvent::ScanStarted {
             scan_id: "scan3".to_string(),
-            modes: ScanMode::METRICS,
         },
     ];
     

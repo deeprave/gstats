@@ -138,7 +138,6 @@ impl MessageProducer for StreamingQueueProducer {
 mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, MessageData};
-    use crate::scanner::modes::ScanMode;
 
     fn create_test_message(id: u64) -> ScanMessage {
         ScanMessage::new(

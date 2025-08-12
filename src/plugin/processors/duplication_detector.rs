@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -440,7 +439,6 @@ impl DuplicationDetectorProcessor {
         // Create messages for top duplicate groups
         for group in self.duplicate_groups.iter().take(10) {
             let header = MessageHeader::new(
-                ScanMode::FILES,
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -463,9 +461,6 @@ impl DuplicationDetectorProcessor {
 
 #[async_trait]
 impl EventProcessor for DuplicationDetectorProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::FILES
-    }
 
     fn name(&self) -> &'static str {
         "duplication_detector"
@@ -537,7 +532,7 @@ mod tests {
     async fn test_duplication_detector_processor_creation() {
         let processor = DuplicationDetectorProcessor::new();
         assert_eq!(processor.name(), "duplication_detector");
-        assert_eq!(processor.supported_modes(), ScanMode::FILES);
+        // Processor no longer advertises supported modes
         assert!(processor.file_contents.is_empty());
         assert!(processor.duplicate_groups.is_empty());
     }

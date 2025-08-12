@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use futures::{Stream, StreamExt};
 use crate::scanner::messages::{ScanMessage, MessageData};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::async_engine::error::{ScanError, ScanResult};
 use crate::notifications::traits::Publisher;
 use crate::plugin::{
@@ -22,7 +21,6 @@ use std::collections::HashMap;
 /// Plugin executor that processes messages through registered plugins
 pub struct PluginExecutor {
     registry: Arc<RwLock<PluginRegistry>>,
-    scan_modes: ScanMode,
     /// Track execution metrics
     metrics: Arc<RwLock<ExecutionMetrics>>,
     /// Store aggregated results per plugin for later execution
@@ -45,10 +43,9 @@ pub struct ExecutionMetrics {
 
 impl PluginExecutor {
     /// Create a new plugin executor
-    pub fn new(registry: SharedPluginRegistry, scan_modes: ScanMode) -> Self {
+    pub fn new(registry: SharedPluginRegistry) -> Self {
         Self {
             registry: registry.inner().clone(),
-            scan_modes,
             metrics: Arc::new(RwLock::new(ExecutionMetrics::default())),
             aggregated_data: Arc::new(RwLock::new(HashMap::new())),
             scanner_publisher: None,
@@ -60,13 +57,11 @@ impl PluginExecutor {
     /// Create a new plugin executor with scanner publisher for event emission
     pub fn with_scanner_publisher(
         registry: SharedPluginRegistry, 
-        scan_modes: ScanMode,
         scanner_publisher: crate::scanner::ScannerPublisher,
         scan_id: String,
     ) -> Self {
         Self {
             registry: registry.inner().clone(),
-            scan_modes,
             metrics: Arc::new(RwLock::new(ExecutionMetrics::default())),
             aggregated_data: Arc::new(RwLock::new(HashMap::new())),
             scanner_publisher: Some(scanner_publisher),
@@ -98,8 +93,7 @@ impl PluginExecutor {
             if let Some(plugin) = registry.get_plugin(&plugin_name) {
                 // Try to downcast to ScannerPlugin
                 if let Some(scanner_plugin) = plugin.as_scanner_plugin() {
-                    // Check if this plugin supports the message's scan mode
-                    if scanner_plugin.supported_modes().intersects(message.header.scan_mode) {
+                    // All plugins now process all messages (no mode filtering)
                         match scanner_plugin.process_scan_data(&message).await {
                             Ok(processed_messages) => {
                                 log::debug!("Plugin {} processed message, got {} results",
@@ -174,10 +168,6 @@ impl PluginExecutor {
                                 }
                             }
                         }
-                    } else {
-                        log::trace!("Plugin {} doesn't support scan mode {:?}",
-                                   plugin_name, message.header.scan_mode);
-                    }
                 } else {
                     log::trace!("Plugin {} is not a ScannerPlugin", plugin_name);
                 }
@@ -416,7 +406,6 @@ impl Clone for PluginExecutor {
     fn clone(&self) -> Self {
         Self {
             registry: Arc::clone(&self.registry),
-            scan_modes: self.scan_modes,
             metrics: Arc::clone(&self.metrics),
             aggregated_data: Arc::clone(&self.aggregated_data),
             scanner_publisher: self.scanner_publisher.clone(),
@@ -500,11 +489,10 @@ impl PluginMessageProcessor {
     /// Create a new plugin message processor
     pub fn new(
         registry: SharedPluginRegistry, 
-        scan_modes: ScanMode,
         output_channel: tokio::sync::mpsc::Sender<ScanMessage>,
     ) -> Self {
         Self {
-            executor: PluginExecutor::new(registry, scan_modes),
+            executor: PluginExecutor::new(registry),
             output_channel,
         }
     }

@@ -1,5 +1,4 @@
 use crate::scanner::async_engine::events::{CommitInfo, FileInfo};
-use crate::scanner::modes::ScanMode;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
@@ -36,7 +35,6 @@ pub struct RepositoryMetadata {
     pub total_commits: Option<usize>,
     pub total_files: Option<usize>,
     pub scan_start_time: Option<SystemTime>,
-    pub active_modes: ScanMode,
     pub repository_path: Option<String>,
 }
 
@@ -46,7 +44,6 @@ impl Default for RepositoryMetadata {
             total_commits: None,
             total_files: None,
             scan_start_time: None,
-            active_modes: ScanMode::empty(),
             repository_path: None,
         }
     }
@@ -359,7 +356,6 @@ mod tests {
             total_commits: Some(100),
             total_files: Some(50),
             scan_start_time: Some(SystemTime::now()),
-            active_modes: ScanMode::HISTORY | ScanMode::FILES,
             repository_path: Some("/test/repo".to_string()),
         };
 
@@ -368,7 +364,6 @@ mod tests {
         
         assert_eq!(retrieved.total_commits, Some(100));
         assert_eq!(retrieved.total_files, Some(50));
-        assert_eq!(retrieved.active_modes, ScanMode::HISTORY | ScanMode::FILES);
     }
 
     #[test]

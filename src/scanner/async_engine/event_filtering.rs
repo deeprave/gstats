@@ -1,5 +1,4 @@
 use crate::scanner::async_engine::events::RepositoryEvent;
-use crate::scanner::modes::ScanMode;
 use crate::scanner::query::QueryParams;
 use std::collections::HashSet;
 use log::{debug, info};
@@ -103,8 +102,8 @@ pub struct FilteringStats {
 
 impl AdvancedEventFilter {
     /// Create a new advanced event filter
-    pub fn new(query_params: QueryParams, modes: ScanMode) -> Self {
-        let base_filter = crate::scanner::async_engine::events::EventFilter::from_query_params(query_params, modes);
+    pub fn new(query_params: QueryParams) -> Self {
+        let base_filter = crate::scanner::async_engine::events::EventFilter::from_query_params(query_params);
         
         Self {
             base_filter,
@@ -117,12 +116,11 @@ impl AdvancedEventFilter {
 
     /// Create with custom configuration
     pub fn with_config(
-        query_params: QueryParams, 
-        modes: ScanMode,
+        query_params: QueryParams,
         batching_config: EventBatchingConfig,
         memory_monitor: MemoryPressureMonitor,
     ) -> Self {
-        let base_filter = crate::scanner::async_engine::events::EventFilter::from_query_params(query_params, modes);
+        let base_filter = crate::scanner::async_engine::events::EventFilter::from_query_params(query_params);
         
         Self {
             base_filter,
@@ -195,34 +193,16 @@ impl AdvancedEventFilter {
             return ProcessorRouting::Broadcast;
         }
 
-        // Default routing based on event type and active modes
+        // Default routing based on event type - now processes all events
         match event {
             RepositoryEvent::CommitDiscovered { .. } => {
-                if self.base_filter.modes.contains(ScanMode::HISTORY) && 
-                   self.base_filter.modes.contains(ScanMode::CHANGE_FREQUENCY) {
-                    ProcessorRouting::HistoryAndChangeFrequency
-                } else if self.base_filter.modes.contains(ScanMode::HISTORY) {
-                    ProcessorRouting::HistoryOnly
-                } else if self.base_filter.modes.contains(ScanMode::CHANGE_FREQUENCY) {
-                    ProcessorRouting::ChangeFrequencyOnly
-                } else {
-                    ProcessorRouting::None
-                }
+                ProcessorRouting::HistoryAndChangeFrequency
             }
             RepositoryEvent::FileScanned { .. } => {
-                if self.base_filter.modes.contains(ScanMode::FILES) || 
-                   self.base_filter.modes.contains(ScanMode::METRICS) {
-                    ProcessorRouting::FileOnly
-                } else {
-                    ProcessorRouting::None
-                }
+                ProcessorRouting::FileOnly
             }
             RepositoryEvent::FileChanged { .. } => {
-                if self.base_filter.modes.contains(ScanMode::CHANGE_FREQUENCY) {
-                    ProcessorRouting::ChangeFrequencyOnly
-                } else {
-                    ProcessorRouting::None
-                }
+                ProcessorRouting::ChangeFrequencyOnly
             }
             RepositoryEvent::RepositoryStarted { .. } | 
             RepositoryEvent::RepositoryCompleted { .. } => {
@@ -248,8 +228,8 @@ impl AdvancedEventFilter {
         // Skip non-essential events under memory pressure
         match event {
             RepositoryEvent::FileChanged { .. } => {
-                // Skip file change events if not critical for active modes
-                !self.base_filter.modes.contains(ScanMode::CHANGE_FREQUENCY)
+                // Skip file change events under memory pressure
+                true // Can be skipped under pressure
             }
             RepositoryEvent::FileScanned { file_info } => {
                 // Skip large files or binary files under pressure
@@ -454,8 +434,7 @@ mod tests {
     #[test]
     fn test_advanced_filter_creation() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::HISTORY | ScanMode::FILES;
-        let filter = AdvancedEventFilter::new(query_params, modes);
+        let filter = AdvancedEventFilter::new(query_params);
         
         assert_eq!(filter.stats.total_events_processed, 0);
         assert!(filter.batching_config.enable_batching);
@@ -465,8 +444,7 @@ mod tests {
     #[test]
     fn test_processor_routing_commit_event() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::HISTORY;
-        let mut filter = AdvancedEventFilter::new(query_params, modes);
+        let mut filter = AdvancedEventFilter::new(query_params);
         
         let commit = create_test_commit();
         let event = RepositoryEvent::CommitDiscovered { commit, index: 0 };
@@ -474,19 +452,19 @@ mod tests {
         let decision = filter.should_process_event(&event);
         match decision {
             FilterDecision::Process { routing } => {
-                assert_eq!(routing, ProcessorRouting::HistoryOnly);
+                assert_eq!(routing, ProcessorRouting::HistoryAndChangeFrequency);
             }
             _ => panic!("Expected Process decision"),
         }
         
         assert_eq!(filter.stats.events_routed_to_history, 1);
+        assert_eq!(filter.stats.events_routed_to_change_frequency, 1);
     }
 
     #[test]
     fn test_processor_routing_file_event() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::FILES;
-        let mut filter = AdvancedEventFilter::new(query_params, modes);
+        let mut filter = AdvancedEventFilter::new(query_params);
         
         let file = create_test_file();
         let event = RepositoryEvent::FileScanned { file_info: file };
@@ -505,13 +483,11 @@ mod tests {
     #[test]
     fn test_broadcast_routing() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::HISTORY | ScanMode::FILES;
-        let mut filter = AdvancedEventFilter::new(query_params, modes);
+        let mut filter = AdvancedEventFilter::new(query_params);
         
         let event = RepositoryEvent::RepositoryStarted {
             total_commits: Some(100),
             total_files: Some(50),
-            scan_modes: modes,
         };
         
         let decision = filter.should_process_event(&event);
@@ -528,13 +504,11 @@ mod tests {
     #[test]
     fn test_memory_pressure_handling() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::FILES;
         let mut memory_monitor = MemoryPressureMonitor::default();
         memory_monitor.max_memory_bytes = 1024; // Very low threshold for testing
         
         let mut filter = AdvancedEventFilter::with_config(
             query_params,
-            modes,
             EventBatchingConfig::default(),
             memory_monitor,
         );
@@ -555,8 +529,7 @@ mod tests {
     #[test]
     fn test_batching_configuration() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::HISTORY;
-        let filter = AdvancedEventFilter::new(query_params, modes);
+        let filter = AdvancedEventFilter::new(query_params);
         
         assert!(filter.should_use_batching());
         assert_eq!(filter.get_batch_config().max_batch_size, 100);
@@ -566,8 +539,7 @@ mod tests {
     #[test]
     fn test_statistics_tracking() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::HISTORY | ScanMode::FILES;
-        let mut filter = AdvancedEventFilter::new(query_params, modes);
+        let mut filter = AdvancedEventFilter::new(query_params);
         
         // Process different types of events
         let commit = create_test_commit();
@@ -581,14 +553,14 @@ mod tests {
         let stats = filter.get_stats();
         assert_eq!(stats.total_events_processed, 2);
         assert_eq!(stats.events_routed_to_history, 1);
+        assert_eq!(stats.events_routed_to_change_frequency, 1);
         assert_eq!(stats.events_routed_to_files, 1);
     }
 
     #[test]
     fn test_stats_reset() {
         let query_params = QueryParams::default();
-        let modes = ScanMode::HISTORY;
-        let mut filter = AdvancedEventFilter::new(query_params, modes);
+        let mut filter = AdvancedEventFilter::new(query_params);
         
         // Process an event
         let commit = create_test_commit();

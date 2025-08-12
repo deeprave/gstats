@@ -4,7 +4,6 @@
 //! and consumers. Events are broadcast to all subscribers using tokio's
 //! broadcast channel for efficient async coordination.
 
-use crate::scanner::modes::ScanMode;
 use crate::queue::error::QueueResult;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -12,10 +11,9 @@ use tokio::sync::broadcast;
 /// Events emitted by the queue system for coordination
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum QueueEvent {
-    /// Scanning has started for the specified modes
+    /// Scanning has started
     ScanStarted {
         scan_id: String,
-        modes: ScanMode,
         timestamp: u64,
     },
 
@@ -73,10 +71,9 @@ impl QueueEvent {
     }
 
     /// Create a scan started event
-    pub fn scan_started(scan_id: String, modes: ScanMode) -> Self {
+    pub fn scan_started(scan_id: String) -> Self {
         Self::ScanStarted {
             scan_id,
-            modes,
             timestamp: current_timestamp(),
         }
     }
@@ -191,12 +188,12 @@ mod tests {
 
     #[test]
     fn test_queue_event_creation() {
-        let event = QueueEvent::scan_started("test-scan".to_string(), ScanMode::HISTORY);
+        let event = QueueEvent::scan_started("test-scan".to_string());
         assert_eq!(event.scan_id(), "test-scan");
         assert!(event.timestamp() > 0);
 
-        if let QueueEvent::ScanStarted { modes, .. } = event {
-            assert_eq!(modes, ScanMode::HISTORY);
+        if let QueueEvent::ScanStarted { .. } = event {
+            // ScanStarted event created successfully
         } else {
             panic!("Expected ScanStarted event");
         }
@@ -217,7 +214,7 @@ mod tests {
         assert_eq!(notifier.subscriber_count(), 1);
         assert!(notifier.has_subscribers());
 
-        let event = QueueEvent::scan_started("test".to_string(), ScanMode::FILES);
+        let event = QueueEvent::scan_started("test".to_string());
         notifier.emit(event.clone()).unwrap();
 
         let received_event = timeout(Duration::from_millis(100), receiver.recv())

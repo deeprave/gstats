@@ -2,7 +2,6 @@ use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::query::QueryParams;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
@@ -48,7 +47,6 @@ impl HistoryEventProcessor {
     /// Convert CommitInfo to ScanMessage
     fn create_commit_message(&self, commit: &CommitInfo, _index: usize) -> ScanMessage {
         let header = MessageHeader::new(
-            ScanMode::HISTORY,
             commit.timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -122,10 +120,6 @@ impl HistoryEventProcessor {
 
 #[async_trait]
 impl EventProcessor for HistoryEventProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::HISTORY
-    }
-
     fn name(&self) -> &'static str {
         "history"
     }

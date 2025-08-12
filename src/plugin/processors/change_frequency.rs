@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileChan
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -176,7 +175,6 @@ impl ChangeFrequencyProcessor {
             
             if frequency_score > 0.0 {
                 let header = MessageHeader::new(
-                    ScanMode::CHANGE_FREQUENCY,
                     SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -209,9 +207,6 @@ impl ChangeFrequencyProcessor {
 
 #[async_trait]
 impl EventProcessor for ChangeFrequencyProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::CHANGE_FREQUENCY
-    }
 
     fn name(&self) -> &'static str {
         "change_frequency"
@@ -303,7 +298,7 @@ mod tests {
     async fn test_change_frequency_processor_creation() {
         let processor = ChangeFrequencyProcessor::new();
         assert_eq!(processor.name(), "change_frequency");
-        assert_eq!(processor.supported_modes(), ScanMode::CHANGE_FREQUENCY);
+        // Processor no longer advertises supported modes
         assert_eq!(processor.total_changes, 0);
         assert!(processor.change_stats.is_empty());
     }

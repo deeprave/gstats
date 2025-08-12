@@ -10,7 +10,6 @@ use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::ScanMessage;
 use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
 use crate::scanner::async_engine::error::{ScanError, ScanResult};
@@ -52,18 +51,14 @@ impl AsyncScanner for PluginScanner {
         &self.name
     }
 
-    fn supports_mode(&self, mode: ScanMode) -> bool {
-        self.inner_scanner.supports_mode(mode)
-    }
 
-    async fn scan_async(&self, repository_path: &std::path::Path, mode: ScanMode) -> ScanResult<ScanMessageStream> {
+    async fn scan_async(&self, repository_path: &std::path::Path) -> ScanResult<ScanMessageStream> {
         // Get the stream from inner scanner with repository path
-        let inner_stream = self.inner_scanner.scan_async(repository_path, mode).await?;
+        let inner_stream = self.inner_scanner.scan_async(repository_path).await?;
         
-        // Create plugin executor for this scan mode
+        // Create plugin executor - no mode filtering needed
         let executor = Arc::new(PluginExecutor::new(
-            self.plugin_registry.clone(),
-            mode
+            self.plugin_registry.clone()
         ));
 
         // Wrap the stream with plugin processing
@@ -72,9 +67,9 @@ impl AsyncScanner for PluginScanner {
         Ok(Box::pin(plugin_stream))
     }
 
-    async fn estimate_message_count(&self, repository_path: &std::path::Path, modes: ScanMode) -> Option<usize> {
+    async fn estimate_message_count(&self, repository_path: &std::path::Path) -> Option<usize> {
         // Estimate might be higher due to plugin-generated messages
-        if let Some(base_count) = self.inner_scanner.estimate_message_count(repository_path, modes).await {
+        if let Some(base_count) = self.inner_scanner.estimate_message_count(repository_path).await {
             // Add 20% for potential plugin-generated messages
             Some((base_count as f64 * 1.2) as usize)
         } else {

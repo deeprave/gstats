@@ -6,7 +6,6 @@ use super::mock_plugins::*;
 use crate::plugin::registry::PluginRegistry;
 use crate::plugin::error::PluginError;
 use crate::plugin::traits::{Plugin, PluginState, PluginType};
-use crate::scanner::modes::ScanMode;
 use std::sync::Arc;
 
 #[tokio::test]

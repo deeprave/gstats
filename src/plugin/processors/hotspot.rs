@@ -8,7 +8,6 @@ use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use crate::plugin::processors::change_frequency::{FileChangeStats, TimeWindow};
 use crate::plugin::processors::complexity::ComplexityMetrics;
@@ -287,7 +286,6 @@ impl HotspotProcessor {
         
         for hotspot in top_hotspots {
             let header = MessageHeader::new(
-                ScanMode::METRICS,
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -323,9 +321,6 @@ pub struct HotspotSummary {
 
 #[async_trait]
 impl EventProcessor for HotspotProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::METRICS | ScanMode::CHANGE_FREQUENCY
-    }
 
     fn name(&self) -> &'static str {
         "hotspot"
@@ -384,7 +379,7 @@ mod tests {
     async fn test_hotspot_processor_creation() {
         let processor = HotspotProcessor::new();
         assert_eq!(processor.name(), "hotspot");
-        assert_eq!(processor.supported_modes(), ScanMode::METRICS | ScanMode::CHANGE_FREQUENCY);
+        // Processor no longer advertises supported modes
         assert!(processor.hotspots.is_empty());
     }
 

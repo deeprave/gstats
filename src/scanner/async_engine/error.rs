@@ -4,7 +4,6 @@
 
 use thiserror::Error;
 use std::sync::Arc;
-use crate::scanner::modes::ScanMode;
 
 /// Errors that can occur during async scanning operations
 #[derive(Debug, Error)]
@@ -30,8 +29,8 @@ pub enum ScanError {
     ResourceLimit(String),
     
     /// Invalid scan mode combination
-    #[error("The requested analysis mode is not available: {0:?}\n\nAvailable options:\n  • 'gstats commits' - Analyze commit history and contributors\n  • 'gstats metrics' - Analyze code metrics (requires metrics plugin)\n\nRun 'gstats --help' to see all available commands.")]
-    InvalidMode(ScanMode),
+    #[error("The requested analysis mode is not available: {0}\n\nAvailable options:\n  • 'gstats commits' - Analyze commit history and contributors\n  • 'gstats metrics' - Analyze code metrics (requires metrics plugin)\n\nRun 'gstats --help' to see all available commands.")]
+    InvalidMode(String),
     
     /// Configuration error
     #[error("Configuration problem: {0}\n\nCheck your configuration file or command line arguments. Run 'gstats --help' for usage information.")]
@@ -103,8 +102,8 @@ impl ScanError {
         Self::AsyncOperation(msg.into())
     }
     
-    pub fn invalid_mode(mode: crate::scanner::modes::ScanMode) -> Self {
-        Self::InvalidMode(mode)
+    pub fn invalid_mode(mode: &str) -> Self {
+        Self::InvalidMode(mode.to_string())
     }
 }
 
@@ -150,16 +149,14 @@ impl From<tokio::task::JoinError> for ScanError {
 #[derive(Debug, Clone)]
 pub struct TaskError {
     pub task_id: String,
-    pub mode: ScanMode,
     pub error: Arc<ScanError>,
 }
 
 impl TaskError {
     /// Create a new task error
-    pub fn new(task_id: impl Into<String>, mode: ScanMode, error: ScanError) -> Self {
+    pub fn new(task_id: impl Into<String>, error: ScanError) -> Self {
         Self {
             task_id: task_id.into(),
-            mode,
             error: Arc::new(error),
         }
     }
@@ -186,17 +183,16 @@ mod tests {
         let err = ScanError::repository("connection failed");
         assert!(err.to_string().contains("Repository error: connection failed"));
         
-        let err = ScanError::InvalidMode(ScanMode::FILES | ScanMode::HISTORY);
+        let err = ScanError::InvalidMode("invalid_mode".to_string());
         assert!(err.to_string().contains("The requested analysis mode is not available"));
     }
     
     #[test]
     fn test_task_error() {
         let scan_err = ScanError::repository("test");
-        let task_err = TaskError::new("task-1", ScanMode::FILES, scan_err);
+        let task_err = TaskError::new("task-1", scan_err);
         
         assert_eq!(task_err.task_id, "task-1");
-        assert_eq!(task_err.mode, ScanMode::FILES);
         assert!(matches!(&*task_err.error, ScanError::Repository(_)));
     }
 }

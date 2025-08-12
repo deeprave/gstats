@@ -5,7 +5,6 @@
 
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
-use crate::scanner::modes::ScanMode;
 
 /// Base trait for all notification events
 pub trait NotificationEvent: Send + Sync + Clone + std::fmt::Debug + 'static {}
@@ -16,7 +15,6 @@ pub enum ScanEvent {
     /// Scanning process started
     ScanStarted {
         scan_id: String,
-        modes: ScanMode,
     },
     
     /// Scanning progress update
@@ -255,10 +253,9 @@ impl From<SystemEvent> for UnifiedEvent {
 /// Helper functions for creating common events
 impl ScanEvent {
     /// Create a scan started event
-    pub fn started(scan_id: String, modes: ScanMode) -> Self {
+    pub fn started(scan_id: String) -> Self {
         Self::ScanStarted {
             scan_id,
-            modes,
         }
     }
     

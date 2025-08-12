@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::ScanMessage;
 use super::error::{PluginError, PluginResult};
 use super::context::{PluginContext, PluginRequest, PluginResponse};
@@ -73,8 +72,6 @@ pub trait Plugin: Send + Sync {
 /// Scanner-specific plugin capabilities extending the base Plugin trait
 #[async_trait]
 pub trait ScannerPlugin: Plugin {
-    /// Get supported scan modes
-    fn supported_modes(&self) -> ScanMode;
     
     /// Process scan data and return processed messages
     async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>>;
@@ -82,10 +79,10 @@ pub trait ScannerPlugin: Plugin {
     /// Aggregate multiple scan results into a summary
     async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage>;
     
-    /// Estimate processing time for given scan modes
-    fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<std::time::Duration> {
+    /// Estimate processing time for given item count
+    fn estimate_processing_time(&self, item_count: usize) -> Option<std::time::Duration> {
         // Default implementation returns None (unknown)
-        let _ = (modes, item_count);
+        let _ = item_count;
         None
     }
     
@@ -286,8 +283,6 @@ pub struct ScanProgress {
     /// Scan identifier
     pub scan_id: String,
     
-    /// Scan mode
-    pub scan_mode: ScanMode,
     
     /// Entries processed
     pub entries_processed: u64,
@@ -471,10 +466,9 @@ impl QueueUpdate {
 
 impl ScanProgress {
     /// Create a new scan progress notification
-    pub fn new(scan_id: String, scan_mode: ScanMode, entries_processed: u64, current_phase: String) -> Self {
+    pub fn new(scan_id: String, entries_processed: u64, current_phase: String) -> Self {
         Self {
             scan_id,
-            scan_mode,
             entries_processed,
             total_items: None,
             progress_percentage: 0.0,

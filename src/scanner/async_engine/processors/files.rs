@@ -2,7 +2,6 @@ use crate::scanner::async_engine::events::{RepositoryEvent, FileInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::query::QueryParams;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
@@ -75,7 +74,6 @@ impl FileEventProcessor {
     /// Convert FileInfo to ScanMessage
     fn create_file_message(&self, file_info: &FileInfo) -> ScanMessage {
         let header = MessageHeader::new(
-            ScanMode::FILES,
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -168,10 +166,6 @@ impl FileEventProcessor {
 
 #[async_trait]
 impl EventProcessor for FileEventProcessor {
-    fn supported_modes(&self) -> ScanMode {
-        ScanMode::FILES | ScanMode::METRICS
-    }
-
     fn name(&self) -> &'static str {
         "files"
     }

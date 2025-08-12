@@ -9,7 +9,6 @@ use crate::plugin::{
     builtin::{commits::CommitsPlugin, metrics::MetricsPlugin, export::ExportPlugin}
 };
 use crate::plugin::tests::mock_plugins::create_test_context;
-use crate::scanner::modes::ScanMode;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 

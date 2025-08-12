@@ -1,5 +1,4 @@
 use crate::scanner::query::QueryParams;
-use crate::scanner::modes::ScanMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -11,7 +10,6 @@ pub enum RepositoryEvent {
     RepositoryStarted {
         total_commits: Option<usize>,
         total_files: Option<usize>,
-        scan_modes: ScanMode,
     },
 
     /// Emitted when a commit is discovered during history traversal
@@ -107,7 +105,6 @@ pub struct RepositoryStats {
 /// Event filter for optimization
 #[derive(Debug, Clone)]
 pub struct EventFilter {
-    pub modes: ScanMode,
     pub query_params: QueryParams,
     pub include_binary_files: bool,
     pub max_file_size: Option<u64>,
@@ -115,9 +112,8 @@ pub struct EventFilter {
 
 impl EventFilter {
     /// Create a new event filter from query parameters
-    pub fn from_query_params(query_params: QueryParams, modes: ScanMode) -> Self {
+    pub fn from_query_params(query_params: QueryParams) -> Self {
         Self {
-            modes,
             query_params,
             include_binary_files: false,
             max_file_size: Some(10 * 1024 * 1024), // 10MB default limit
@@ -253,26 +249,6 @@ impl RepositoryEvent {
         }
     }
 
-    /// Check if this event is relevant for the given scan modes
-    pub fn is_relevant_for_modes(&self, modes: ScanMode) -> bool {
-        match self {
-            RepositoryEvent::RepositoryStarted { .. } | 
-            RepositoryEvent::RepositoryCompleted { .. } |
-            RepositoryEvent::ScanError { .. } => true, // Always relevant
-            
-            RepositoryEvent::CommitDiscovered { .. } => {
-                modes.contains(ScanMode::HISTORY)
-            },
-            
-            RepositoryEvent::FileChanged { .. } => {
-                modes.contains(ScanMode::CHANGE_FREQUENCY) || modes.contains(ScanMode::HISTORY)
-            },
-            
-            RepositoryEvent::FileScanned { .. } => {
-                modes.contains(ScanMode::FILES) || modes.contains(ScanMode::METRICS)
-            },
-        }
-    }
 }
 
 #[cfg(test)]
@@ -290,22 +266,16 @@ mod tests {
     }
 
     #[test]
-    fn test_event_relevance_for_modes() {
+    fn test_event_processing_without_modes() {
         let commit_event = RepositoryEvent::CommitDiscovered {
             commit: create_test_commit(),
             index: 0,
         };
         
-        assert!(commit_event.is_relevant_for_modes(ScanMode::HISTORY));
-        assert!(!commit_event.is_relevant_for_modes(ScanMode::FILES));
-        
+        // Events are now processed without mode filtering
         let file_event = RepositoryEvent::FileScanned {
             file_info: create_test_file_info(),
         };
-        
-        assert!(file_event.is_relevant_for_modes(ScanMode::FILES));
-        assert!(file_event.is_relevant_for_modes(ScanMode::METRICS));
-        assert!(!file_event.is_relevant_for_modes(ScanMode::HISTORY));
     }
 
     #[test]
@@ -318,7 +288,7 @@ mod tests {
             end: None,
         });
         
-        let filter = EventFilter::from_query_params(query_params, ScanMode::HISTORY);
+        let filter = EventFilter::from_query_params(query_params);
         
         let old_commit = CommitInfo {
             timestamp: UNIX_EPOCH + Duration::from_secs(500),
@@ -344,7 +314,7 @@ mod tests {
             exclude: vec![],
         };
         
-        let filter = EventFilter::from_query_params(query_params, ScanMode::HISTORY);
+        let filter = EventFilter::from_query_params(query_params);
         
         let matching_commit = CommitInfo {
             author_name: "john.doe".to_string(),
@@ -362,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_event_filter_file_size_filtering() {
-        let filter = EventFilter::from_query_params(QueryParams::default(), ScanMode::FILES);
+        let filter = EventFilter::from_query_params(QueryParams::default());
         
         let small_file = FileInfo {
             size: 1024,

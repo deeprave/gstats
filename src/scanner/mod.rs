@@ -31,7 +31,7 @@
 //! ```
 
 pub mod version;
-pub mod modes; 
+ 
 pub mod messages;
 pub mod config;
 pub mod traits;
@@ -46,7 +46,6 @@ pub mod publisher;
 // Re-export core types for easier access
 pub use config::ScannerConfig;
 pub use traits::{MessageProducer, CallbackMessageProducer};
-pub use modes::ScanMode;
 pub use version::{get_api_version, is_api_compatible};
 pub use query::QueryParams;
 pub use async_engine::AsyncScannerEngineBuilder;

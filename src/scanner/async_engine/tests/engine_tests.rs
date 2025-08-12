@@ -3,7 +3,6 @@
 use crate::scanner::async_engine::error::{ScanResult, ScanError};
 use crate::scanner::async_engine::engine::AsyncScannerEngineBuilder;
 use crate::scanner::async_traits::*;
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use crate::scanner::traits::MessageProducer;
 use async_trait::async_trait;
@@ -63,15 +62,12 @@ impl AsyncScanner for DelayedScanner {
         "DelayedScanner"
     }
     
-    fn supports_mode(&self, mode: ScanMode) -> bool {
-        mode == ScanMode::FILES
-    }
     
-    async fn scan_async(&self, mode: ScanMode) -> ScanResult<ScanMessageStream> {
+    async fn scan_async(&self, _repository_path: &std::path::Path) -> ScanResult<ScanMessageStream> {
         let delay = self.delay_ms;
         let count = self.message_count;
         
-        let stream = stream::unfold((0, delay, mode), move |(i, delay, mode)| async move {
+        let stream = stream::unfold((0, delay), move |(i, delay)| async move {
             if i >= count {
                 return None;
             }
@@ -79,7 +75,7 @@ impl AsyncScanner for DelayedScanner {
             tokio::time::sleep(Duration::from_millis(delay)).await;
             
             let message = ScanMessage::new(
-                MessageHeader::new(mode, 1000 + i as u64),
+                MessageHeader::new(1000 + i as u64),
                 MessageData::FileInfo {
                     path: format!("delayed_file_{}.rs", i),
                     size: (1024 * (i + 1)) as u64,
@@ -87,7 +83,7 @@ impl AsyncScanner for DelayedScanner {
                 },
             );
             
-            Some((Ok(message), (i + 1, delay, mode)))
+            Some((Ok(message), (i + 1, delay)))
         });
         
         Ok(Box::pin(stream))
@@ -118,7 +114,7 @@ async fn test_engine_without_scanners() {
         .build()
         .unwrap();
     
-    let result = engine.scan(ScanMode::FILES).await;
+    let result = engine.scan().await;
     assert!(matches!(result, Err(ScanError::Configuration(_))));
 }
 
@@ -140,7 +136,7 @@ async fn test_single_scanner_operation() {
         .build()
         .unwrap();
     
-    engine.scan(ScanMode::FILES).await.unwrap();
+    engine.scan().await.unwrap();
     
     // Wait a bit for async message production
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -149,7 +145,8 @@ async fn test_single_scanner_operation() {
     
     let messages = producer_ref.get_messages().await;
     assert_eq!(messages.len(), 5);
-    assert!(messages.iter().all(|m| m.header.scan_mode == ScanMode::FILES));
+    // All messages should have sequence numbers
+    assert!(messages.iter().all(|m| m.header.sequence > 0));
 }
 
 #[tokio::test]
@@ -169,7 +166,7 @@ async fn test_unsupported_mode() {
         .build()
         .unwrap();
     
-    let result = engine.scan(ScanMode::SECURITY).await;
+    let result = engine.scan().await;
     assert!(matches!(result, Err(ScanError::InvalidMode(_))));
 }
 
@@ -194,7 +191,7 @@ async fn test_cancellation() {
     // Start scan in background
     let engine_clone = engine.clone();
     let scan_handle = tokio::spawn(async move {
-        engine_clone.scan(ScanMode::FILES).await
+        engine_clone.scan().await
     });
     
     // Cancel after a short delay
@@ -232,7 +229,7 @@ async fn test_engine_stats() {
     assert_eq!(initial_stats.registered_scanners, 1);
     assert_eq!(initial_stats.errors, 0);
     
-    engine.scan(ScanMode::FILES).await.unwrap();
+    engine.scan().await.unwrap();
     
     let final_stats = engine.get_stats().await;
     assert_eq!(final_stats.active_tasks, 0);

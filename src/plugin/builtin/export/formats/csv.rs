@@ -20,11 +20,11 @@ pub fn export_csv(
         export_authors_csv_summary(&mut csv_content, collected_data, config, delimiter, quote_char)?;
     } else {
         // Regular data export for non-author reports
-        csv_content.push_str(&format!("timestamp{}scan_mode{}data_json\n", delimiter, delimiter));
+        csv_content.push_str(&format!("timestamp{}sequence{}data_json\n", delimiter, delimiter));
 
         for message in data_to_export {
             let timestamp = message.header.timestamp;
-            let scan_mode = format!("{:?}", message.header.scan_mode);
+            let sequence = message.header.sequence;
             let data_json = serde_json::to_string(&message.data)
                 .map_err(|e| PluginError::execution_failed(format!("JSON serialization failed: {}", e)))?;
 
@@ -38,7 +38,7 @@ pub fn export_csv(
             csv_content.push_str(&format!(
                 "{}{}{}{}{}{}{}\n", 
                 timestamp, delimiter, 
-                scan_mode, delimiter,
+                sequence, delimiter,
                 quote_char, escaped_json, quote_char
             ));
         }

@@ -6,7 +6,6 @@
 use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::messages::ScanMessage;
-use crate::scanner::modes::ScanMode;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -27,9 +26,6 @@ pub struct ProcessorStats {
 /// providing a unified interface for event-driven analysis.
 #[async_trait]
 pub trait EventProcessor: Send + Sync {
-    /// Get the scan modes this processor supports
-    fn supported_modes(&self) -> ScanMode;
-
     /// Get a unique name for this processor
     fn name(&self) -> &'static str;
 
@@ -123,13 +119,9 @@ pub trait SharedStateAccess {
 /// Helper macro for implementing EventProcessor with common patterns
 #[macro_export]
 macro_rules! impl_event_processor {
-    ($processor:ty, $name:expr, $modes:expr) => {
+    ($processor:ty, $name:expr) => {
         #[async_trait]
         impl EventProcessor for $processor {
-            fn supported_modes(&self) -> ScanMode {
-                $modes
-            }
-
             fn name(&self) -> &'static str {
                 $name
             }
@@ -163,10 +155,6 @@ mod tests {
 
     #[async_trait]
     impl EventProcessor for TestProcessor {
-        fn supported_modes(&self) -> ScanMode {
-            ScanMode::FILES
-        }
-
         fn name(&self) -> &'static str {
             "test_processor"
         }
@@ -191,7 +179,7 @@ mod tests {
         let mut processor = TestProcessor::new("test".to_string());
         
         assert_eq!(processor.name(), "test_processor");
-        assert_eq!(processor.supported_modes(), ScanMode::FILES);
+        // Event processor no longer uses scan modes
         
         // Test initialization
         processor.initialize().await.unwrap();
@@ -215,7 +203,6 @@ mod tests {
         let event = RepositoryEvent::RepositoryStarted {
             total_commits: Some(1),
             total_files: Some(1),
-            scan_modes: ScanMode::FILES,
         };
         
         let messages = processor.process_event(&event).await.unwrap();

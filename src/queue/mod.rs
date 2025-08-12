@@ -18,7 +18,6 @@
 //!
 //! ```rust
 //! use gstats::queue::{SharedMessageQueue, QueueEvent};
-//! use gstats::scanner::modes::ScanMode;
 //! use gstats::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 //!
 //! # tokio_test::block_on(async {
@@ -26,10 +25,10 @@
 //! let queue = SharedMessageQueue::new("scan-001".to_string());
 //!
 //! // Producer: Start scanning and add messages
-//! queue.start_scan(ScanMode::HISTORY).await.unwrap();
+//! queue.start_scan().await.unwrap();
 //!
 //! // Create a sample message
-//! let header = MessageHeader::new(ScanMode::HISTORY, 0);
+//! let header = MessageHeader::new(0);
 //! let data = MessageData::CommitInfo {
 //!     hash: "abc123".to_string(),
 //!     author: "John Doe".to_string(),

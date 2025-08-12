@@ -344,7 +344,6 @@ impl ExportPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::modes::ScanMode;
     use crate::scanner::messages::{MessageHeader, MessageData};
 
     fn create_test_message(scan_mode: ScanMode, data: MessageData) -> ScanMessage {

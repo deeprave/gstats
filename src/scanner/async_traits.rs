@@ -5,7 +5,6 @@
 use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::ScanMessage;
 use crate::scanner::async_engine::error::{ScanError, ScanResult};
 
@@ -18,27 +17,22 @@ pub trait AsyncScanner: Send + Sync {
     /// Get the name of this scanner
     fn name(&self) -> &str;
     
-    /// Check if this scanner supports the given mode
-    fn supports_mode(&self, mode: ScanMode) -> bool;
-    
-    /// Perform an async scan with the specified modes on the given repository path
+    /// Perform an async scan on the given repository path
     /// Returns a stream of scan messages
     /// 
     /// # Arguments
     /// * `repository_path` - Path to the git repository to scan
-    /// * `modes` - Scan modes to execute
     /// 
     /// # Repository-Owning Pattern
     /// Each scanner creates its own repository access using spawn_blocking,
     /// eliminating the need for async-safe repository sharing.
-    async fn scan_async(&self, repository_path: &std::path::Path, modes: ScanMode) -> ScanResult<ScanMessageStream>;
+    async fn scan_async(&self, repository_path: &std::path::Path) -> ScanResult<ScanMessageStream>;
     
     /// Get estimated message count for progress tracking (optional)
     /// 
     /// # Arguments
     /// * `repository_path` - Path to the git repository
-    /// * `modes` - Scan modes to estimate for
-    async fn estimate_message_count(&self, _repository_path: &std::path::Path, _modes: ScanMode) -> Option<usize> {
+    async fn estimate_message_count(&self, _repository_path: &std::path::Path) -> Option<usize> {
         None
     }
 }

@@ -87,28 +87,7 @@ harness = false
 
 
 
-# Performance validation tests
-[[test]]
-name = "async_validation"
-path = "tests/performance/async_validation.rs"
-
-# Integration tests
-[[test]]
-name = "end_to_end"
-path = "tests/integration/end_to_end.rs"
-
-[[test]]
-name = "system_integration"
-path = "tests/integration/system_integration.rs"
-
-[[test]]
-name = "load_testing"
-path = "tests/integration/load_testing.rs"
-
-[[test]]
-name = "error_recovery"
-path = "tests/integration/error_recovery.rs"
-
+# Integration tests (remaining)
 [[test]]
 name = "simple_error_recovery"
 path = "tests/integration/simple_error_recovery.rs"

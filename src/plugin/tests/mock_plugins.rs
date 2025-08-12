@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use crate::plugin::traits::*;
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::{PluginContext, PluginRequest, PluginResponse, ExecutionMetadata};
-use crate::scanner::modes::ScanMode;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 
 /// Mock plugin for testing basic plugin functionality
@@ -123,15 +122,13 @@ impl Plugin for MockPlugin {
 /// Mock scanner plugin for testing scanner-specific functionality
 pub struct MockScannerPlugin {
     base: MockPlugin,
-    supported_modes: ScanMode,
 }
 
 impl MockScannerPlugin {
     /// Create a new mock scanner plugin
-    pub fn new(name: &str, supported_modes: ScanMode, should_fail: bool) -> Self {
+    pub fn new(name: &str, should_fail: bool) -> Self {
         Self {
             base: MockPlugin::new(name, should_fail),
-            supported_modes,
         }
     }
 
@@ -171,9 +168,6 @@ impl Plugin for MockScannerPlugin {
 
 #[async_trait]
 impl ScannerPlugin for MockScannerPlugin {
-    fn supported_modes(&self) -> ScanMode {
-        self.supported_modes
-    }
 
     async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
         if self.base.should_fail {
@@ -183,7 +177,7 @@ impl ScannerPlugin for MockScannerPlugin {
         // Mock processing - just return the input data with modified timestamp
         let mut processed = data.clone();
         if let Ok(header) = bincode::deserialize::<MessageHeader>(&bincode::serialize(&processed.header).unwrap()) {
-            let new_header = MessageHeader::new(header.scan_mode, header.timestamp + 1);
+            let new_header = MessageHeader::new(header.sequence + 1);
             processed.header = new_header;
         }
 
@@ -196,7 +190,7 @@ impl ScannerPlugin for MockScannerPlugin {
         }
 
         // Mock aggregation - create a summary message
-        let header = MessageHeader::new(ScanMode::empty(), 0);
+        let header = MessageHeader::new(0);
         let data = MessageData::MetricInfo {
             file_count: results.len() as u32,
             line_count: results.len() as u64 * 100, // Mock line count
@@ -206,13 +200,9 @@ impl ScannerPlugin for MockScannerPlugin {
         Ok(ScanMessage::new(header, data))
     }
 
-    fn estimate_processing_time(&self, modes: ScanMode, item_count: usize) -> Option<std::time::Duration> {
-        if self.supported_modes.intersects(modes) {
-            // Mock estimation: 1ms per item
-            Some(std::time::Duration::from_millis(item_count as u64))
-        } else {
-            None
-        }
+    fn estimate_processing_time(&self, item_count: usize) -> Option<std::time::Duration> {
+        // Mock estimation: 1ms per item
+        Some(std::time::Duration::from_millis(item_count as u64))
     }
 
     fn config_schema(&self) -> serde_json::Value {
@@ -363,10 +353,10 @@ pub fn create_test_context() -> PluginContext {
 }
 
 /// Helper function to create a test plugin request
-pub fn create_test_request(modes: ScanMode) -> PluginRequest {
+pub fn create_test_request() -> PluginRequest {
     use crate::plugin::context::{PluginRequest, RequestPriority};
 
-    PluginRequest::new(modes)
+    PluginRequest::new()
         .with_priority(RequestPriority::Normal)
         .with_timeout(5000)
 }
@@ -390,7 +380,7 @@ mod tests {
         assert_eq!(plugin.plugin_state(), PluginState::Initialized);
 
         // Test execution
-        let request = create_test_request(ScanMode::FILES);
+        let request = create_test_request();
         let response = plugin.execute(request).await.unwrap();
         assert!(response.is_success());
         assert_eq!(plugin.execution_count(), 1);
@@ -416,7 +406,7 @@ mod tests {
         plugin.should_fail = true;
 
         // Test execution failure
-        let request = create_test_request(ScanMode::FILES);
+        let request = create_test_request();
         let result = plugin.execute(request).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), PluginError::ExecutionFailed { .. }));
@@ -428,23 +418,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_scanner_plugin() {
-        let mut plugin = MockScannerPlugin::new("scanner-plugin", ScanMode::FILES | ScanMode::HISTORY, false);
+        let mut plugin = MockScannerPlugin::new("scanner-plugin", false);
         let context = create_test_context();
 
         plugin.initialize(&context).await.unwrap();
 
         // Test supported modes
-        assert!(plugin.supported_modes().contains(ScanMode::FILES));
-        assert!(plugin.supported_modes().contains(ScanMode::HISTORY));
+        // Plugin no longer advertises supported modes
 
         // Test processing time estimation
-        let estimate = plugin.estimate_processing_time(ScanMode::FILES, 100);
+        let estimate = plugin.estimate_processing_time(100);
         assert!(estimate.is_some());
         assert_eq!(estimate.unwrap().as_millis(), 100);
 
         // Test unsupported mode estimation
-        let estimate = plugin.estimate_processing_time(ScanMode::METRICS, 100);
-        assert!(estimate.is_none());
 
         // Test config schema
         let schema = plugin.config_schema();
@@ -470,7 +457,6 @@ mod tests {
         // Test scan progress notification
         let scan_progress = ScanProgress::new(
             "test-scan".to_string(),
-            ScanMode::FILES,
             5,
             "processing".to_string()
         );
@@ -516,7 +502,7 @@ mod tests {
         for i in 0..10 {
             let plugin_clone = Arc::clone(&plugin);
             let handle = tokio::spawn(async move {
-                let request = create_test_request(ScanMode::FILES)
+                let request = create_test_request()
                     .with_parameter("index".to_string(), i);
                 plugin_clone.execute(request).await
             });
