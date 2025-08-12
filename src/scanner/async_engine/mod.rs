@@ -20,7 +20,7 @@ mod tests;
 
 // Re-export core types
 // pub use error::ScanResult;
-pub use engine::{AsyncScannerEngineBuilder, EngineStats};
+pub use engine::AsyncScannerEngineBuilder;
 // Removed unused exports: RepositoryEvent, CommitInfo, FileChangeData, FileInfo, RepositoryStats, EventFilter, ChangeType
 // Removed unused export: RepositoryEventEngine
 // Removed unused exports: EventProcessor, ProcessorRegistry, ProcessorFactory, EventProcessingCoordinator

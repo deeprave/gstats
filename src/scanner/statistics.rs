@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn test_stubbed_collector() {
-        let collector = RepositoryStatsCollector::new();
+        let _collector = RepositoryStatsCollector::new();
         
         // This test will pass with stubbed implementation
         // When reimplemented with events, this will need a proper test repository

@@ -267,13 +267,13 @@ mod tests {
 
     #[test]
     fn test_event_processing_without_modes() {
-        let commit_event = RepositoryEvent::CommitDiscovered {
+        let _commit_event = RepositoryEvent::CommitDiscovered {
             commit: create_test_commit(),
             index: 0,
         };
         
         // Events are now processed without mode filtering
-        let file_event = RepositoryEvent::FileScanned {
+        let _file_event = RepositoryEvent::FileScanned {
             file_info: create_test_file_info(),
         };
     }

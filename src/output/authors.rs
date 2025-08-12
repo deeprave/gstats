@@ -4,9 +4,9 @@ use anyhow::Result;
 use crate::display;
 
 pub async fn display_author_report(
-    data: &serde_json::Value,
-    colour_manager: &display::ColourManager,
-    compact: bool,
+    _data: &serde_json::Value,
+    _colour_manager: &display::ColourManager,
+    _compact: bool,
 ) -> Result<()> {
     // Placeholder implementation - would contain the logic from main.rs
     println!("Author report display not yet implemented");
@@ -14,9 +14,9 @@ pub async fn display_author_report(
 }
 
 pub async fn display_author_insights(
-    data: &serde_json::Map<String, serde_json::Value>,
-    colour_manager: &display::ColourManager,
-    full_data: &serde_json::Value,
+    _data: &serde_json::Map<String, serde_json::Value>,
+    _colour_manager: &display::ColourManager,
+    _full_data: &serde_json::Value,
 ) -> Result<()> {
     // Placeholder implementation - would contain the logic from main.rs
     println!("Author insights display not yet implemented");

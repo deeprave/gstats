@@ -11,7 +11,6 @@ use crate::scanner::query::QueryParams;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 use super::error::{ScanError, ScanResult};
 use super::stream::ScanMessageStream;
-use futures::StreamExt;
 use log::debug;
 use std::path::Path;
 use async_trait::async_trait;

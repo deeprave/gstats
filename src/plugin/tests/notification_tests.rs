@@ -85,7 +85,6 @@ async fn test_scan_progress_notification() {
     
     let progress = ScanProgress::new(
         "test-scan".to_string(),
-        ScanMode::FILES,
         50,
         "processing files".to_string(),
     ).with_total_items(100);
@@ -162,7 +161,7 @@ async fn test_notification_filtering_by_preferences() {
     manager.notify_queue_update(queue_update).await.unwrap();
     
     // Send scan progress (should be received)
-    let scan_progress = ScanProgress::new("test".to_string(), ScanMode::FILES, 1, "test".to_string());
+    let scan_progress = ScanProgress::new("test".to_string(), 1, "test".to_string());
     manager.notify_scan_progress(scan_progress).await.unwrap();
     
     // Send startup event (should be ignored - not in preferences)

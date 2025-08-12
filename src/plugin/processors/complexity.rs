@@ -6,7 +6,7 @@
 
 use crate::scanner::async_engine::events::{RepositoryEvent, FileInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
-use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
+use crate::scanner::async_engine::shared_state::SharedProcessorState;
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
@@ -175,7 +175,7 @@ impl ComplexityProcessor {
     fn create_complexity_messages(&self) -> Vec<ScanMessage> {
         let mut messages = Vec::new();
         
-        for (file_path, metrics) in &self.file_complexities {
+        for (_file_path, metrics) in &self.file_complexities {
             let header = MessageHeader::new(
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)

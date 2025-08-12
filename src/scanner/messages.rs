@@ -214,7 +214,7 @@ mod tests {
         let bytes = message.to_bytes();
         let deserialized = ScanMessage::from_bytes(&bytes).unwrap();
 
-        assert_eq!(deserialized.header.scan_mode, message.header.scan_mode);
+        assert_eq!(deserialized.header.sequence, message.header.sequence);
         assert_eq!(deserialized.header.timestamp, message.header.timestamp);
     }
 

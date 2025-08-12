@@ -286,7 +286,6 @@ mod tests {
         
         let event = ScanEvent::ScanStarted {
             scan_id: "test_scan".to_string(),
-            modes: crate::scanner::ScanMode::HISTORY,
         };
         
         // Should handle event without error

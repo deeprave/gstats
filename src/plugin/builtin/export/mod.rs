@@ -346,12 +346,9 @@ mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, MessageData};
 
-    fn create_test_message(scan_mode: ScanMode, data: MessageData) -> ScanMessage {
+    fn create_test_message(data: MessageData) -> ScanMessage {
         ScanMessage {
-            header: MessageHeader {
-                scan_mode,
-                timestamp: chrono::Utc::now().timestamp() as u64,
-            },
+            header: MessageHeader::new(chrono::Utc::now().timestamp() as u64),
             data,
         }
     }
@@ -388,7 +385,6 @@ mod tests {
 
             // 3. Data Processing
             plugin.add_data(create_test_message(
-                ScanMode::HISTORY,
                 MessageData::CommitInfo {
                     hash: "abc123".to_string(),
                     author: "Test Author".to_string(),

@@ -141,7 +141,7 @@ mod tests {
 
     fn create_test_message(id: u64) -> ScanMessage {
         ScanMessage::new(
-            MessageHeader::new(ScanMode::FILES, id),
+            MessageHeader::new(id),
             MessageData::FileInfo {
                 path: format!("test_{}.rs", id),
                 size: 1024,

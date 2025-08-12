@@ -185,7 +185,7 @@ mod tests {
         processor.initialize().await.unwrap();
         
         // Test event processing
-        let commit = CommitInfo {
+        let _commit = CommitInfo {
             hash: "abc123".to_string(),
             short_hash: "abc123".to_string(),
             author_name: "Test Author".to_string(),

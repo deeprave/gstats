@@ -297,14 +297,14 @@ async fn test_active_task_tracking() {
     assert_eq!(active.len(), 2);
     
     // Verify task info
-    let task_info: std::collections::HashMap<_, _> = active
+    let task_ids: Vec<crate::scanner::async_engine::task_manager::TaskId> = active
         .into_iter()
-        .map(|(id, mode, _duration)| (id, mode))
+        .map(|(id, _duration)| id)
         .collect();
     
     // Task manager should have both tasks registered
-    assert!(task_info.contains_key(&task1));
-    assert!(task_info.contains_key(&task2));
+    assert!(task_ids.iter().any(|id| id.as_str() == task1.as_str()));
+    assert!(task_ids.iter().any(|id| id.as_str() == task2.as_str()));
     
     // Wait for first task to complete
     manager.wait_for_task(&task1, None).await.unwrap();

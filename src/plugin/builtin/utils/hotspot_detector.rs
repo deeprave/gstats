@@ -4,7 +4,6 @@
 //! to the appropriate plugin module. All functionality is currently stubbed.
 
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 
 /// Configuration for hotspot detection - STUBBED
 #[derive(Debug, Clone, Serialize, Deserialize)]

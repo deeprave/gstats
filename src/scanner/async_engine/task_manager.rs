@@ -3,7 +3,7 @@
 //! Manages concurrent scanning tasks with resource limits, priority scheduling, and cancellation support.
 
 use std::sync::Arc;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::pin::Pin;
 use tokio::sync::{Semaphore, RwLock, Mutex};
 use tokio::task::JoinHandle;

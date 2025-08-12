@@ -1,10 +1,10 @@
 //! Application execution and scanner management
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use log::{info, debug, error, warn};
-use crate::{cli, config, display, plugin, scanner, notifications};
+use log::{info, debug, error};
+use crate::{cli, config, display, plugin, scanner};
 
 
 /// Resolve plugin commands using CommandMapper

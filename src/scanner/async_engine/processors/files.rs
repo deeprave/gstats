@@ -314,7 +314,7 @@ mod tests {
     async fn test_file_processor_creation() {
         let processor = FileEventProcessor::new();
         assert_eq!(processor.name(), "files");
-        assert_eq!(processor.supported_modes(), ScanMode::FILES | ScanMode::METRICS);
+        // FileEventProcessor processes file-related events
         assert_eq!(processor.file_count, 0);
         assert_eq!(processor.total_size, 0);
     }
@@ -438,7 +438,6 @@ mod tests {
         let start_event = RepositoryEvent::RepositoryStarted {
             total_commits: Some(100),
             total_files: Some(50),
-            scan_modes: ScanMode::FILES,
         };
         let messages = processor.process_event(&start_event).await.unwrap();
         assert_eq!(messages.len(), 0);

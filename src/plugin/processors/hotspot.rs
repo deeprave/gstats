@@ -6,7 +6,7 @@
 
 use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
-use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
+use crate::scanner::async_engine::shared_state::SharedProcessorState;
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::plugin::PluginResult;
 use crate::plugin::processors::change_frequency::{FileChangeStats, TimeWindow};

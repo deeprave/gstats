@@ -241,7 +241,7 @@ mod tests {
     async fn test_statistics_processor_creation() {
         let processor = StatisticsProcessor::new();
         assert_eq!(processor.name(), "StatisticsProcessor");
-        assert_eq!(processor.supported_modes(), ScanMode::all());
+        // StatisticsProcessor processes all types of events
         assert_eq!(processor.get_statistics().total_commits, 0);
         assert_eq!(processor.get_statistics().total_files, 0);
         assert_eq!(processor.get_statistics().total_authors, 0);
@@ -349,36 +349,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_statistics_processor_always_included_in_factory() {
-        use crate::scanner::async_engine::processors::ProcessorFactory;
+    async fn test_statistics_processor_processes_all_events() {
+        // Test that StatisticsProcessor can handle all types of repository events
+        let mut processor = StatisticsProcessor::new();
+        processor.initialize().await.unwrap();
         
-        // Test that StatisticsProcessor is always included regardless of scan modes
-        let test_modes = vec![
-            ScanMode::FILES,
-            ScanMode::HISTORY,
-            ScanMode::METRICS,
-            ScanMode::DEPENDENCIES,
-            ScanMode::SECURITY,
-            ScanMode::PERFORMANCE,
-            ScanMode::CHANGE_FREQUENCY,
-            ScanMode::FILES | ScanMode::HISTORY,
-            ScanMode::all(),
-            ScanMode::empty(),
-        ];
-
-        for mode in test_modes {
-            let processors = ProcessorFactory::create_processors(mode);
-            
-            // Should always have at least the StatisticsProcessor
-            assert!(!processors.is_empty(), "Should always have at least StatisticsProcessor for mode: {:?}", mode);
-            
-            // Check that StatisticsProcessor is included
-            let has_statistics_processor = processors.iter().any(|p| p.name() == "StatisticsProcessor");
-            assert!(has_statistics_processor, "StatisticsProcessor should always be included for mode: {:?}", mode);
-            
-            // Verify StatisticsProcessor supports all modes
-            let stats_processor = processors.iter().find(|p| p.name() == "StatisticsProcessor").unwrap();
-            assert!(stats_processor.supported_modes().contains(ScanMode::all()), "StatisticsProcessor should support all modes");
-        }
+        // Test file event processing
+        let file_event = RepositoryEvent::FileScanned {
+            file_info: crate::scanner::async_engine::events::FileInfo {
+                path: std::path::PathBuf::from("test.rs"),
+                relative_path: "test.rs".to_string(),
+                size: 1000,
+                extension: Some("rs".to_string()),
+                is_binary: false,
+                line_count: Some(50),
+                last_modified: None,
+            },
+        };
+        let result = processor.process_event(&file_event).await;
+        assert!(result.is_ok());
+        
+        // Test commit event processing
+        let commit = create_test_commit("abc123", "Alice", 1000000);
+        let commit_event = RepositoryEvent::CommitDiscovered { commit, index: 0 };
+        let result = processor.process_event(&commit_event).await;
+        assert!(result.is_ok());
+        
+        let stats = processor.get_statistics();
+        assert_eq!(stats.total_files, 1);
+        assert_eq!(stats.total_commits, 1);
     }
 }

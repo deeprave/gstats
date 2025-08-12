@@ -560,7 +560,6 @@ mod tests {
         // Add a test plugin
         let plugin = Box::new(MockScannerPlugin::new(
             "test-scanner", 
-            ScanMode::FILES,
             false
         ));
         
@@ -571,7 +570,7 @@ mod tests {
 
     fn create_test_message() -> ScanMessage {
         ScanMessage::new(
-            MessageHeader::new(ScanMode::FILES, 12345),
+            MessageHeader::new(12345),
             MessageData::FileInfo {
                 path: "test.rs".to_string(),
                 size: 1024,
@@ -583,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_executor_creation() {
         let registry = create_test_registry().await;
-        let executor = PluginExecutor::new(registry, ScanMode::FILES);
+        let executor = PluginExecutor::new(registry);
         
         let metrics = executor.get_metrics().await;
         assert_eq!(metrics.messages_processed, 0);
@@ -593,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_processing() {
         let registry = create_test_registry().await;
-        let executor = PluginExecutor::new(registry.clone(), ScanMode::FILES);
+        let executor = PluginExecutor::new(registry.clone());
         
         let message = create_test_message();
         let results = executor.process_message(message.clone()).await;
@@ -617,7 +616,7 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_stream() {
         let registry = create_test_registry().await;
-        let executor = Arc::new(PluginExecutor::new(registry, ScanMode::FILES));
+        let executor = Arc::new(PluginExecutor::new(registry));
         
         // Create a test stream
         let messages = vec![
@@ -642,12 +641,12 @@ mod tests {
     #[tokio::test]
     async fn test_aggregated_data_storage_and_retrieval() {
         let registry = create_test_registry().await;
-        let executor = PluginExecutor::new(registry.clone(), ScanMode::FILES);
+        let executor = PluginExecutor::new(registry.clone());
 
         // Process multiple messages to build up aggregated data
         let message1 = create_test_message();
         let message2 = ScanMessage::new(
-            MessageHeader::new(ScanMode::FILES, 12346),
+            MessageHeader::new(12346),
             MessageData::FileInfo {
                 path: "test2.rs".to_string(),
                 size: 2048,

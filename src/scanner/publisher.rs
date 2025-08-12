@@ -74,7 +74,6 @@ mod tests {
         
         let event = ScanEvent::ScanStarted {
             scan_id: "test-scan-1".to_string(),
-            modes: ScanMode::HISTORY,
         };
         
         // Should publish without error
@@ -153,7 +152,6 @@ mod tests {
         
         let event = ScanEvent::ScanStarted {
             scan_id: "test-scan-1".to_string(),
-            modes: ScanMode::FILES,
         };
         
         // Should handle publishing to non-existent subscriber gracefully

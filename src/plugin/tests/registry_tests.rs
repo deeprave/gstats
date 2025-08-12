@@ -72,7 +72,7 @@ async fn test_plugin_registry_list_plugins() {
     // Add plugins
     registry.register_plugin(Box::new(MockPlugin::new("plugin1", false))).await.unwrap();
     registry.register_plugin(Box::new(MockPlugin::new("plugin2", false))).await.unwrap();
-    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner1", ScanMode::FILES, false))).await.unwrap();
+    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner1", false))).await.unwrap();
     
     // Check list
     let plugins = registry.list_plugins();
@@ -88,8 +88,8 @@ async fn test_plugin_registry_get_plugins_by_type() {
     
     // Add different types of plugins
     registry.register_plugin(Box::new(MockPlugin::new("plugin1", false))).await.unwrap();
-    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner1", ScanMode::FILES, false))).await.unwrap();
-    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner2", ScanMode::HISTORY, false))).await.unwrap();
+    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner1", false))).await.unwrap();
+    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner2", false))).await.unwrap();
     registry.register_plugin(Box::new(MockNotificationPlugin::new("notifier1", false))).await.unwrap();
     
     // Get scanner plugins
@@ -206,7 +206,7 @@ async fn test_plugin_registry_state_transitions() {
     // Execute (changes to Running and back)
     {
         let plugin = registry.get_plugin("state-test").unwrap();
-        let request = create_test_request(ScanMode::FILES);
+        let request = create_test_request();
         plugin.execute(request).await.unwrap();
     }
     

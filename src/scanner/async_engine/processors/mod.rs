@@ -1,9 +1,7 @@
 use crate::scanner::async_engine::events::RepositoryEvent;
-use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
+use crate::scanner::async_engine::shared_state::SharedProcessorState;
 use crate::scanner::messages::ScanMessage;
-use crate::scanner::async_engine::error::ScanError;
 use crate::plugin::PluginResult;
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +13,7 @@ pub mod files;
 pub mod statistics;
 
 // Re-export the generic EventProcessor trait and related types
-pub use event_processor::{EventProcessor, ProcessorStats, ProcessorConfig, SharedStateAccess};
+pub use event_processor::{EventProcessor, ProcessorStats, SharedStateAccess};
 
 /// Processor factory for creating event processors
 /// 

@@ -10,7 +10,6 @@ use crate::plugin::{
 };
 use crate::scanner::messages::{ScanMessage, MessageHeader};
 use crate::scanner::async_engine::processors::{EventProcessor, EventProcessingCoordinator};
-use crate::scanner::async_engine::shared_state::SharedProcessorState;
 use crate::plugin::processors::{
     ChangeFrequencyProcessor as ComprehensiveChangeFrequencyProcessor,
     ComplexityProcessor as ComprehensiveComplexityProcessor,
@@ -22,7 +21,6 @@ use crate::plugin::processors::{
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::RwLock;
-use log::debug;
 
 /// Code Metrics Plugin using comprehensive event-driven processors
 pub struct MetricsPlugin {
@@ -162,8 +160,6 @@ impl ScannerPlugin for MetricsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileChangeData, ChangeType};
-    use std::time::SystemTime;
 
     #[tokio::test]
     async fn test_metrics_plugin_creation() {
@@ -175,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_plugin_comprehensive_processors() {
         let plugin = MetricsPlugin::new();
-        let processors = plugin.create_processors(ScanMode::CHANGE_FREQUENCY | ScanMode::METRICS | ScanMode::FILES);
+        let processors = plugin.create_processors();
         
         // Should create all comprehensive processors for the given modes
         assert!(processors.len() >= 6); // All 6 comprehensive processors
@@ -194,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_plugin_processors() {
         let plugin = MetricsPlugin::new();
-        let processors = plugin.create_processors(ScanMode::CHANGE_FREQUENCY | ScanMode::METRICS | ScanMode::FILES);
+        let processors = plugin.create_processors();
         
         // Should create all processors for the given modes
         assert!(processors.len() >= 5); // change_frequency, complexity, hotspot, debt_assessment, format_detection, duplication_detector

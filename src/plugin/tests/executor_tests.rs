@@ -4,7 +4,6 @@ mod tests {
     use crate::notifications::{AsyncNotificationManager, ScanEvent, NotificationManager};
     use crate::scanner::ScannerPublisher;
     use crate::plugin::{PluginExecutor, SharedPluginRegistry};
-    use crate::scanner::ScanMode;
     use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
     use crate::plugin::tests::mock_plugins::MockScannerPlugin;
     
@@ -52,27 +51,25 @@ mod tests {
         
         // Add a mock scanner plugin that will process messages
         {
-            let mock_plugin = MockScannerPlugin::new("test-scanner", ScanMode::HISTORY | ScanMode::FILES, false);
+            let mock_plugin = MockScannerPlugin::new("test-scanner", false);
             let mut registry = plugin_registry.inner().write().await;
             registry.register_plugin(Box::new(mock_plugin)).await.expect("Failed to register mock plugin");
         }
         
         let plugin_executor = PluginExecutor::with_scanner_publisher(
             plugin_registry,
-            ScanMode::HISTORY | ScanMode::FILES,
             scanner_publisher.clone(),
             "test_scan_789".to_string(),
         );
         
         // Create test messages for different data types
         let commit_message = ScanMessage {
-            header: MessageHeader {
-                scan_mode: ScanMode::HISTORY,
-                timestamp: std::time::SystemTime::now()
+            header: MessageHeader::new(
+                std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
-            },
+                    .as_secs()
+            ),
             data: MessageData::CommitInfo {
                 hash: "abc123".to_string(),
                 author: "Test Author".to_string(),
@@ -83,13 +80,12 @@ mod tests {
         };
         
         let file_message = ScanMessage {
-            header: MessageHeader {
-                scan_mode: ScanMode::FILES,
-                timestamp: std::time::SystemTime::now()
+            header: MessageHeader::new(
+                std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
-            },
+                    .as_secs()
+            ),
             data: MessageData::FileInfo {
                 path: "src/main.rs".to_string(),
                 size: 1024,
@@ -168,27 +164,25 @@ mod tests {
         
         // Add a mock scanner plugin that will process messages
         {
-            let mock_plugin = MockScannerPlugin::new("test-scanner", ScanMode::HISTORY | ScanMode::FILES, false);
+            let mock_plugin = MockScannerPlugin::new("test-scanner", false);
             let mut registry = plugin_registry.inner().write().await;
             registry.register_plugin(Box::new(mock_plugin)).await.expect("Failed to register mock plugin");
         }
         
         let plugin_executor = PluginExecutor::with_scanner_publisher(
             plugin_registry,
-            ScanMode::HISTORY | ScanMode::FILES,
             scanner_publisher.clone(),
             "test_scan_456".to_string(),
         );
         
         // Create test messages for different data types
         let commit_message = ScanMessage {
-            header: MessageHeader {
-                scan_mode: ScanMode::HISTORY,
-                timestamp: std::time::SystemTime::now()
+            header: MessageHeader::new(
+                std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
-            },
+                    .as_secs()
+            ),
             data: MessageData::CommitInfo {
                 hash: "def456".to_string(),
                 author: "Test Author 2".to_string(),
@@ -199,13 +193,12 @@ mod tests {
         };
         
         let file_message = ScanMessage {
-            header: MessageHeader {
-                scan_mode: ScanMode::FILES,
-                timestamp: std::time::SystemTime::now()
+            header: MessageHeader::new(
+                std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
-            },
+                    .as_secs()
+            ),
             data: MessageData::FileInfo {
                 path: "src/lib.rs".to_string(),
                 size: 2048,
@@ -288,20 +281,18 @@ mod tests {
         
         let plugin_executor = PluginExecutor::with_scanner_publisher(
             plugin_registry,
-            ScanMode::HISTORY | ScanMode::FILES,
             scanner_publisher.clone(),
             "test_scan_warning".to_string(),
         );
         
         // Create test message
         let test_message = ScanMessage {
-            header: MessageHeader {
-                scan_mode: ScanMode::HISTORY,
-                timestamp: std::time::SystemTime::now()
+            header: MessageHeader::new(
+                std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
-            },
+                    .as_secs()
+            ),
             data: MessageData::CommitInfo {
                 hash: "warning123".to_string(),
                 author: "Test Author".to_string(),

@@ -264,7 +264,7 @@ mod tests {
     async fn test_history_processor_creation() {
         let processor = HistoryEventProcessor::new();
         assert_eq!(processor.name(), "history");
-        assert_eq!(processor.supported_modes(), ScanMode::HISTORY);
+        // HistoryEventProcessor processes commit-related events
         assert_eq!(processor.commit_count, 0);
     }
 
@@ -273,7 +273,7 @@ mod tests {
         let query_params = QueryParams::default();
         let processor = HistoryEventProcessor::with_query_params(query_params);
         assert_eq!(processor.name(), "history");
-        assert_eq!(processor.supported_modes(), ScanMode::HISTORY);
+        // HistoryEventProcessor processes commit-related events
     }
 
     #[tokio::test]
@@ -349,7 +349,6 @@ mod tests {
         let start_event = RepositoryEvent::RepositoryStarted {
             total_commits: Some(100),
             total_files: Some(50),
-            scan_modes: ScanMode::HISTORY,
         };
         let messages = processor.process_event(&start_event).await.unwrap();
         assert_eq!(messages.len(), 0); // No messages generated for lifecycle events

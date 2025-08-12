@@ -41,7 +41,6 @@ async fn test_end_to_end_scanner_plugin_coordination() {
     // 1. Scan Started
     let scan_started = ScanEvent::ScanStarted {
         scan_id: scan_id.clone(),
-        modes: ScanMode::HISTORY | ScanMode::FILES,
     };
     notification_manager.publish(scan_started).await.unwrap();
     
@@ -174,7 +173,6 @@ async fn test_plugin_lifecycle_coordination() {
     // 1. Scan Start
     let start_event = ScanEvent::ScanStarted {
         scan_id: scan_id.clone(),
-        modes: ScanMode::HISTORY | ScanMode::FILES,
     };
     notification_manager.publish(start_event).await.unwrap();
     sleep(Duration::from_millis(5)).await;

@@ -61,9 +61,9 @@ pub fn format_compact_table(headers: &[&str], rows: &[Vec<String>]) -> String {
 }
 
 pub async fn display_plugin_reports(
-    plugin_responses: Vec<(String, serde_json::Value)>,
-    colour_manager: &display::ColourManager,
-    compact: bool,
+    _plugin_responses: Vec<(String, serde_json::Value)>,
+    _colour_manager: &display::ColourManager,
+    _compact: bool,
 ) -> Result<()> {
     // Placeholder implementation - would contain the logic from main.rs
     println!("Plugin reports display not yet implemented");
@@ -71,10 +71,10 @@ pub async fn display_plugin_reports(
 }
 
 pub async fn display_plugin_response(
-    plugin_name: &str,
-    response: &serde_json::Value,
-    colour_manager: &display::ColourManager,
-    compact: bool,
+    _plugin_name: &str,
+    _response: &serde_json::Value,
+    _colour_manager: &display::ColourManager,
+    _compact: bool,
 ) -> Result<()> {
     // Placeholder implementation - would contain the logic from main.rs
     println!("Plugin response display not yet implemented");
@@ -82,10 +82,10 @@ pub async fn display_plugin_response(
 }
 
 pub async fn display_plugin_data(
-    plugin_name: &str,
-    data: &serde_json::Value,
-    colour_manager: &display::ColourManager,
-    compact: bool,
+    _plugin_name: &str,
+    _data: &serde_json::Value,
+    _colour_manager: &display::ColourManager,
+    _compact: bool,
 ) -> Result<()> {
     // Placeholder implementation - would contain the logic from main.rs
     println!("Plugin data display not yet implemented");
@@ -93,9 +93,9 @@ pub async fn display_plugin_data(
 }
 
 pub fn create_file_statistics_summary(
-    file_stats: &crate::stats::RepositoryFileStats,
-    output_all: bool,
-    output_limit: Option<usize>,
+    _file_stats: &crate::stats::RepositoryFileStats,
+    _output_all: bool,
+    _output_limit: Option<usize>,
 ) -> serde_json::Value {
     // Placeholder implementation - would contain the logic from main.rs
     serde_json::json!({
