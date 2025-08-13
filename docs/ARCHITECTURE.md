@@ -41,14 +41,12 @@ The command-line interface provides user interaction and system configuration.
 - **Logging Configuration**: Structured output with multiple destinations
 - **Memory Controls**: Performance mode presets and custom limits
 
-```rust
-// Configuration hierarchy (highest to lowest precedence)
+#### Configuration hierarchy (highest to lowest precedence)
 1. CLI arguments (--verbose, --config-file, etc.)
 2. Environment variables ($GSTATS_CONFIG)
 3. User config (~/.config/gstats/config.toml)
 4. Project config (./.gstats.toml)
 5. Default values
-```
 
 ### 2. Scanner Engine (`src/scanner/`)
 

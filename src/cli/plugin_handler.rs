@@ -217,11 +217,19 @@ impl PluginHandler {
     
     /// Register built-in plugins with their advertised functions
     fn register_builtin_plugins(&mut self) -> PluginResult<()> {
-        use crate::plugin::builtin::{CommitsPlugin, MetricsPlugin, ExportPlugin};
-        use crate::plugin::Plugin;
+        // TEMPORARY FIX: Disable CLI plugin instance creation to prevent duplicate registrations
+        // This will be properly fixed in GS-73 with plugin activation architecture
+        // 
+        // The issue is that initialize_builtin_plugins() already registers all plugins,
+        // and creating separate instances here causes ambiguous function errors.
+        // For now, we'll skip the builtin plugin registration in CLI handler.
         
-        let mut registered = Vec::new();
+        let mut registered: Vec<String> = Vec::new();
         
+        // TODO: In GS-73, this should use the plugin registry instead of creating instances
+        debug!("Skipping CLI builtin plugin registration to prevent duplicates (see GS-73)");
+        
+        /*
         // Get exclusion list from configuration
         let excluded = if let Some(ref config) = self.plugin_config {
             &config.plugin_exclude
@@ -259,6 +267,7 @@ impl PluginHandler {
         } else {
             debug!("Excluded built-in plugin: export");
         }
+        */
         
         debug!("Registered built-in plugins: {}", registered.join(", "));
         Ok(())
@@ -392,7 +401,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         
         // Create test plugin descriptors
-        create_test_plugin_descriptor(temp_dir.path(), "test-scanner", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "test-scanner", "1.0.0", PluginType::Processing).await.unwrap();
         create_test_plugin_descriptor(temp_dir.path(), "test-notification", "2.0.0", PluginType::Notification).await.unwrap();
         
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
@@ -409,7 +418,7 @@ mod tests {
     async fn test_list_plugins() {
         let temp_dir = tempdir().unwrap();
         
-        create_test_plugin_descriptor(temp_dir.path(), "alpha-plugin", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "alpha-plugin", "1.0.0", PluginType::Processing).await.unwrap();
         create_test_plugin_descriptor(temp_dir.path(), "beta-plugin", "2.0.0", PluginType::Processing).await.unwrap();
         
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
@@ -448,16 +457,16 @@ mod tests {
     async fn test_get_plugins_by_type() {
         let temp_dir = tempdir().unwrap();
         
-        create_test_plugin_descriptor(temp_dir.path(), "scanner1", "1.0.0", PluginType::Scanner).await.unwrap();
-        create_test_plugin_descriptor(temp_dir.path(), "scanner2", "2.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "scanner1", "1.0.0", PluginType::Processing).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "scanner2", "2.0.0", PluginType::Processing).await.unwrap();
         create_test_plugin_descriptor(temp_dir.path(), "output1", "1.0.0", PluginType::Output).await.unwrap();
         
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
-        let scanners = handler.get_plugins_by_type(PluginType::Scanner).await.unwrap();
+        let scanners = handler.get_plugins_by_type(PluginType::Processing).await.unwrap();
         
-        assert_eq!(scanners.len(), 5); // 2 external + 3 builtin (all builtins are Scanner type)
+        assert_eq!(scanners.len(), 4); // 2 external + 2 builtin Processing (commits, metrics)
         for plugin in &scanners {
-            assert_eq!(plugin.plugin_type, PluginType::Scanner);
+            assert_eq!(plugin.plugin_type, PluginType::Processing);
         }
     }
 
@@ -468,7 +477,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         
         // Create an external plugin descriptor
-        create_test_plugin_descriptor(temp_dir.path(), "external-test", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "external-test", "1.0.0", PluginType::Processing).await.unwrap();
         
         let mut handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         handler.build_command_mappings().await.unwrap();
@@ -492,7 +501,7 @@ mod tests {
         let temp_dir2 = tempdir().unwrap();
         
         // Create test plugins in different directories
-        create_test_plugin_descriptor(temp_dir1.path(), "plugin1", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir1.path(), "plugin1", "1.0.0", PluginType::Processing).await.unwrap();
         create_test_plugin_descriptor(temp_dir2.path(), "plugin2", "2.0.0", PluginType::Output).await.unwrap();
         
         let config = PluginConfig {
@@ -523,7 +532,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         
         // Create two plugins
-        create_test_plugin_descriptor(temp_dir.path(), "wanted", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "wanted", "1.0.0", PluginType::Processing).await.unwrap();
         create_test_plugin_descriptor(temp_dir.path(), "unwanted", "2.0.0", PluginType::Output).await.unwrap();
         
         let config = PluginConfig {
@@ -550,7 +559,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         
         // Create two plugins
-        create_test_plugin_descriptor(temp_dir.path(), "wanted", "1.0.0", PluginType::Scanner).await.unwrap();
+        create_test_plugin_descriptor(temp_dir.path(), "wanted", "1.0.0", PluginType::Processing).await.unwrap();
         create_test_plugin_descriptor(temp_dir.path(), "unwanted", "2.0.0", PluginType::Output).await.unwrap();
         
         let config = PluginConfig {

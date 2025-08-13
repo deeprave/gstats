@@ -340,13 +340,19 @@ impl UnifiedPluginDiscovery {
             }
 
             // Create descriptor for builtin plugin
+            let plugin_type = if name == "export" {
+                crate::plugin::traits::PluginType::Output
+            } else {
+                crate::plugin::traits::PluginType::Processing // Default for commits, metrics
+            };
+            
             let info = crate::plugin::traits::PluginInfo::new(
                 name.to_string(),
                 "1.0.0".to_string(),
                 20250727, // Current API version
                 format!("Built-in {} plugin", name),
                 "gstats team".to_string(),
-                crate::plugin::traits::PluginType::Scanner, // Default type
+                plugin_type,
             );
 
             let descriptor = crate::plugin::traits::PluginDescriptor {

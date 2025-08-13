@@ -63,12 +63,13 @@ impl AsyncScanner for EventDrivenScanner {
             
             let mut messages = Vec::new();
             let mut message_index = 0u64;
-            
+
+            let head = repo.head_commit()
+                .map_err(|e| ScanError::Repository(format!("Failed to get head: {}", e)))?;
+            let head_id = head.id;
+
             // Extract commit data - scanner now emits ALL repository data
             {
-                let head_id = repo.head_id()
-                    .map_err(|e| ScanError::Repository(format!("Failed to get head: {}", e)))?;
-                
                 let walk = repo.rev_walk([head_id]);
                 let commits = walk.all()
                     .map_err(|e| ScanError::Repository(format!("Commit walk error: {}", e)))?;
@@ -114,8 +115,6 @@ impl AsyncScanner for EventDrivenScanner {
             
             // Extract file data - scanner now emits ALL repository data
             {
-                let head = repo.head_commit()
-                    .map_err(|e| ScanError::Repository(format!("Failed to get head commit: {}", e)))?;
                 let tree = head.tree()
                     .map_err(|e| ScanError::Repository(format!("Failed to get tree: {}", e)))?;
                 

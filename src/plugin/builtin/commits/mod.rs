@@ -3,7 +3,7 @@
 //! Built-in plugin for analyzing git commit history and statistics.
 
 use crate::plugin::{
-    Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
+    Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginFunction}
 };
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
@@ -28,7 +28,7 @@ impl CommitsPlugin {
             crate::scanner::version::get_api_version() as u32,
             "Analyzes git commit history and provides commit statistics".to_string(),
             "gstats built-in".to_string(),
-            PluginType::Scanner,
+            PluginType::Processing,
         )
         .with_capability(
             "commit_analysis".to_string(),
@@ -342,79 +342,6 @@ impl Plugin for CommitsPlugin {
     }
 }
 
-#[async_trait]
-impl ScannerPlugin for CommitsPlugin {
-
-    async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
-        if !self.initialized {
-            return Err(PluginError::invalid_state("Plugin not initialized"));
-        }
-
-        // For this implementation, we'll create a mutable copy for processing
-        let mut processor = self.clone_for_processing();
-        processor.process_commit(data)?;
-
-        // Return the original message plus any derived messages
-        let mut results = vec![data.clone()];
-        
-        // Add commit analysis result if this is a commit message
-        if matches!(data.data, MessageData::CommitInfo { .. }) {
-            let analysis = processor.generate_commit_analysis(data)?;
-            results.push(analysis);
-        }
-
-        Ok(results)
-    }
-
-    async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage> {
-        if !self.initialized {
-            return Err(PluginError::invalid_state("Plugin not initialized"));
-        }
-
-        // Aggregate commit statistics from multiple scan messages
-        let mut aggregated = CommitsPlugin::new();
-        aggregated.initialized = true;
-
-        for message in &results {
-            if matches!(message.data, MessageData::CommitInfo { .. }) {
-                aggregated.process_commit(message)?;
-            }
-        }
-
-        aggregated.generate_summary()
-    }
-
-    fn estimate_processing_time(&self, item_count: usize) -> Option<std::time::Duration> {
-        // Estimate ~1ms per commit for processing
-        Some(std::time::Duration::from_millis(item_count as u64))
-    }
-
-    fn config_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "max_authors": {
-                    "type": "integer",
-                    "description": "Maximum number of authors to track",
-                    "default": 1000,
-                    "minimum": 1
-                },
-                "include_merge_commits": {
-                    "type": "boolean",
-                    "description": "Whether to include merge commits in statistics",
-                    "default": true
-                },
-                "author_email_domains": {
-                    "type": "array",
-                    "description": "Filter authors by email domains",
-                    "items": {"type": "string"},
-                    "default": []
-                }
-            }
-        })
-    }
-}
-
 impl CommitsPlugin {
     /// Clone for processing (workaround for mutable operations in immutable context)
     fn clone_for_processing(&self) -> Self {
@@ -506,7 +433,7 @@ mod tests {
     async fn test_commits_plugin_creation() {
         let plugin = CommitsPlugin::new();
         assert_eq!(plugin.plugin_info().name, "commits");
-        assert_eq!(plugin.plugin_info().plugin_type, PluginType::Scanner);
+        assert_eq!(plugin.plugin_info().plugin_type, PluginType::Processing);
         assert!(!plugin.initialized);
     }
 
@@ -531,44 +458,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_commits_plugin_process_scan_data() {
+    async fn test_commits_plugin_execution() {
         let mut plugin = CommitsPlugin::new();
         let context = create_test_context();
         plugin.initialize(&context).await.unwrap();
 
-        let commit = create_test_commit_message(
-            "alice@example.com",
-            "abc123",
-            "Fix bug in scanner module"
-        );
+        let request = PluginRequest::new()
+            .with_parameter("test".to_string(), "value".to_string());
 
-        let results = plugin.process_scan_data(&commit).await.unwrap();
-        assert_eq!(results.len(), 2); // Original + analysis
-        assert_eq!(results[0], commit);
-        assert!(matches!(results[1].data, MessageData::MetricInfo { .. }));
-    }
-
-    #[tokio::test]
-    async fn test_commits_plugin_aggregate_results() {
-        let mut plugin = CommitsPlugin::new();
-        let context = create_test_context();
-        plugin.initialize(&context).await.unwrap();
-
-        let commits = vec![
-            create_test_commit_message("alice@example.com", "abc123", "Fix bug"),
-            create_test_commit_message("bob@example.com", "def456", "Add feature"),
-            create_test_commit_message("alice@example.com", "ghi789", "Update docs"),
-        ];
-
-        let summary = plugin.aggregate_results(commits).await.unwrap();
-        assert!(matches!(summary.data, MessageData::MetricInfo { .. }));
-        
-        if let MessageData::MetricInfo { file_count, line_count, .. } = summary.data {
-            assert_eq!(line_count, 3); // Total commits
-            assert_eq!(file_count, 2); // Total authors
-        } else {
-            panic!("Expected MetricInfo data");
-        }
+        let response = plugin.execute(request).await.unwrap();
+        assert!(response.is_success());
     }
 
     #[tokio::test]
@@ -609,27 +508,6 @@ mod tests {
         assert!(plugin.author_stats.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_commits_plugin_processing_time_estimation() {
-        let plugin = CommitsPlugin::new();
-        
-        // Test processing time estimation
-        let time = plugin.estimate_processing_time(100);
-        assert!(time.is_some());
-        assert_eq!(time.unwrap().as_millis(), 100);
-    }
-
-    #[tokio::test]
-    async fn test_commits_plugin_config_schema() {
-        let plugin = CommitsPlugin::new();
-        let schema = plugin.config_schema();
-        
-        assert!(schema.is_object());
-        assert!(schema.get("properties").is_some());
-        assert!(schema["properties"].get("max_authors").is_some());
-        assert!(schema["properties"].get("include_merge_commits").is_some());
-    }
-    
     #[tokio::test]
     async fn test_commits_plugin_handles_scan_data_ready() {
         use crate::notifications::ScanEvent;

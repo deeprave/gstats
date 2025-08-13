@@ -7,7 +7,6 @@
 //! 
 //! ```no_run
 //! use gstats::plugin::{Plugin, PluginRegistry, PluginInfo};
-//! use gstats::scanner::modes::ScanMode;
 //! 
 //! // Plugin registry for managing plugins
 //! let mut registry = PluginRegistry::new();
@@ -34,7 +33,7 @@ pub mod priority_queue;
 pub mod tests;
 
 // Re-export core types for easier access
-pub use traits::{Plugin, ScannerPlugin};
+pub use traits::Plugin;
 pub use error::{PluginError, PluginResult};
 pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType};
 

@@ -5,10 +5,9 @@
 //! plugin processors module for advanced analysis capabilities.
 
 use crate::plugin::{
-    Plugin, ScannerPlugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
+    Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::PluginType
 };
-use crate::scanner::messages::{ScanMessage, MessageHeader};
 use crate::scanner::async_engine::processors::{EventProcessor, EventProcessingCoordinator};
 use crate::plugin::processors::{
     ChangeFrequencyProcessor as ComprehensiveChangeFrequencyProcessor,
@@ -137,25 +136,6 @@ impl Plugin for MetricsPlugin {
     }
 }
 
-#[async_trait]
-impl ScannerPlugin for MetricsPlugin {
-
-    async fn process_scan_data(&self, _data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
-        // TODO: Process scan data through processors
-        Ok(vec![])
-    }
-
-    async fn aggregate_results(&self, _results: Vec<ScanMessage>) -> PluginResult<ScanMessage> {
-        // TODO: Aggregate results from processors
-        let header = MessageHeader::new(0);
-        let data = crate::scanner::messages::MessageData::MetricInfo {
-            file_count: 0,
-            line_count: 0,
-            complexity: 0.0,
-        };
-        Ok(ScanMessage::new(header, data))
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -9,7 +9,6 @@ use tokio::sync::RwLock;
 use futures::{Stream, StreamExt};
 use crate::scanner::messages::{ScanMessage, MessageData};
 use crate::scanner::async_engine::error::{ScanError, ScanResult};
-use crate::notifications::traits::Publisher;
 use crate::plugin::{
     PluginResult, SharedPluginRegistry, PluginRegistry
 };
@@ -73,131 +72,26 @@ impl PluginExecutor {
     /// Process a single message through all applicable plugins
     pub async fn process_message(&self, message: ScanMessage) -> Vec<ScanMessage> {
         let start_time = std::time::Instant::now();
-        let mut all_results = vec![message.clone()];
+        let mut all_results = Vec::new();
 
         // Get scanner plugins that support current scan mode
-        let plugin_names = match self.get_applicable_plugins().await {
+        let _plugin_names = match self.get_applicable_plugins().await {
             Ok(plugins) => plugins,
             Err(e) => {
                 log::error!("Failed to get plugins: {}", e);
-                return all_results;
+                return vec![message];
             }
         };
 
-        // Process message through each scanner plugin
-        for plugin_name in plugin_names {
-            log::debug!("Processing message through plugin: {}", plugin_name);
-
-            // Get the plugin from registry
-            let registry = self.registry.read().await;
-            if let Some(plugin) = registry.get_plugin(&plugin_name) {
-                // Try to downcast to ScannerPlugin
-                if let Some(scanner_plugin) = plugin.as_scanner_plugin() {
-                    // All plugins now process all messages (no mode filtering)
-                        match scanner_plugin.process_scan_data(&message).await {
-                            Ok(processed_messages) => {
-                                log::debug!("Plugin {} processed message, got {} results",
-                                           plugin_name, processed_messages.len());
-
-                                // Store processed messages for aggregation
-                                let message_count = {
-                                    let mut aggregated = self.aggregated_data.write().await;
-                                    let plugin_data = aggregated.entry(plugin_name.clone()).or_insert_with(Vec::new);
-                                    plugin_data.extend(processed_messages.clone());
-                                    plugin_data.len()
-                                };
-
-                                // Emit ScanDataReady event if scanner publisher is available
-                                if let Some(ref publisher) = self.scanner_publisher {
-                                    let data_type = self.determine_data_type(&message.data);
-                                    if let Err(e) = publisher.publish(crate::notifications::ScanEvent::scan_data_ready(
-                                        self.scan_id.clone(),
-                                        data_type,
-                                        message_count,
-                                    )).await {
-                                        log::warn!("Failed to publish ScanDataReady event for plugin {}: {}", plugin_name, e);
-                                        
-                                        // Emit ScanWarning event for notification failure
-                                        let warning_msg = format!("Failed to publish ScanDataReady event for plugin '{}': {}", plugin_name, e);
-                                        
-                                        // Collect warning for final reporting
-                                        self.add_warning(warning_msg.clone()).await;
-                                        
-                                        let warning_event = crate::notifications::ScanEvent::warning(
-                                            self.scan_id.clone(),
-                                            warning_msg,
-                                            true, // recoverable - data processing can continue
-                                        );
-                                        
-                                        if let Err(warn_err) = publisher.publish(warning_event).await {
-                                            log::error!("Failed to publish ScanWarning event for notification failure: {}", warn_err);
-                                        }
-                                    }
-                                }
-
-                                all_results.extend(processed_messages);
-                            }
-                            Err(e) => {
-                                log::error!("Plugin {} failed to process message: {}", plugin_name, e);
-                                let mut metrics = self.metrics.write().await;
-                                metrics.errors += 1;
-                                
-                                // Determine if this is a fatal error that should stop processing
-                                let is_fatal = self.is_fatal_plugin_error(&e);
-                                
-                                // Emit ScanError event for plugin processing failure
-                                if let Some(ref scanner_publisher) = self.scanner_publisher {
-                                    let error_msg = format!("Plugin '{}' failed to process message: {}", plugin_name, e);
-                                    let error_event = crate::notifications::ScanEvent::error(
-                                        self.scan_id.clone(),
-                                        error_msg,
-                                        is_fatal,
-                                    );
-                                    
-                                    if let Err(publish_err) = scanner_publisher.publish(error_event).await {
-                                        log::error!("Failed to publish ScanError event for plugin failure: {}", publish_err);
-                                    } else {
-                                        log::debug!("Published ScanError event for plugin {} processing failure (fatal: {})", plugin_name, is_fatal);
-                                    }
-                                }
-                                
-                                // If fatal error, we could potentially stop processing here
-                                // For now, continue with other plugins but log the severity
-                                if is_fatal {
-                                    log::error!("Fatal error in plugin {}, continuing with remaining plugins", plugin_name);
-                                }
-                            }
-                        }
-                } else {
-                    log::trace!("Plugin {} is not a ScannerPlugin", plugin_name);
-                }
-            } else {
-                log::warn!("Plugin {} not found in registry", plugin_name);
-                
-                // Emit ScanWarning event for missing plugin
-                if let Some(ref scanner_publisher) = self.scanner_publisher {
-                    let warning_msg = format!("Plugin '{}' not found in registry during message processing", plugin_name);
-                    
-                    // Collect warning for final reporting
-                    self.add_warning(warning_msg.clone()).await;
-                    
-                    let event = crate::notifications::ScanEvent::warning(
-                        self.scan_id.clone(),
-                        warning_msg,
-                        true, // recoverable - processing can continue
-                    );
-                    
-                    if let Err(e) = scanner_publisher.publish(event).await {
-                        log::error!("Failed to publish ScanWarning event for missing plugin {}: {}", plugin_name, e);
-                    }
-                }
-            }
-
-            // Update metrics
-            let mut metrics = self.metrics.write().await;
-            metrics.plugin_executions += 1;
-        }
-
+        // Note: ScannerPlugin processing has been removed as part of GS-72
+        // Plugins now only execute via Plugin.execute() method
+        // The scanner streams events directly to the queue without plugin processing during scanning
+        
+        log::debug!("Message processing through ScannerPlugin removed - streaming to queue instead");
+        
+        // Return the original message (no processing during scanning)
+        all_results.push(message);
+        
         // Update processing metrics
         let processing_time = start_time.elapsed();
         let mut metrics = self.metrics.write().await;
@@ -208,20 +102,11 @@ impl PluginExecutor {
     }
 
     /// Get plugins that support the current scan modes
+    /// Note: Returns empty list as ScannerPlugin processing has been removed (GS-72)
     async fn get_applicable_plugins(&self) -> PluginResult<Vec<String>> {
-        let registry = self.registry.read().await;
-        let scanner_plugin_names = registry.get_plugins_by_type(crate::plugin::traits::PluginType::Scanner);
-        
-        let mut applicable = Vec::new();
-        for name in scanner_plugin_names {
-            if let Some(_plugin) = registry.get_plugin(&name) {
-                // Try to downcast to ScannerPlugin to check modes
-                // For now, just add all scanner plugins
-                applicable.push(name);
-            }
-        }
-        
-        Ok(applicable)
+        // ScannerPlugin processing removed - plugins now only execute via Plugin.execute()
+        // Scanner streams events directly to queue without plugin processing during scanning
+        Ok(Vec::new())
     }
 
     /// Determine data type from message data for ScanDataReady events
@@ -252,96 +137,14 @@ impl PluginExecutor {
         self.metrics.read().await.clone()
     }
 
-    /// Finalize scanning by calling aggregate_results() on all ScannerPlugins
+    /// Finalize scanning - ScannerPlugin aggregation removed (GS-72)
+    /// Plugins now handle their own data processing via Plugin.execute()
     pub async fn finalize_scanning(&self) -> PluginResult<HashMap<String, ScanMessage>> {
-        let mut final_aggregated = HashMap::new();
-
-        // Get all plugins that have aggregated data
-        let aggregated_data = self.aggregated_data.read().await;
-        let plugin_names: Vec<String> = aggregated_data.keys().cloned().collect();
-        drop(aggregated_data); // Release the lock
-
-        for plugin_name in plugin_names {
-            log::debug!("Finalizing aggregated data for plugin: {}", plugin_name);
-
-            // Get the plugin and its aggregated data
-            let registry = self.registry.read().await;
-            if let Some(plugin) = registry.get_plugin(&plugin_name) {
-                if let Some(scanner_plugin) = plugin.as_scanner_plugin() {
-                    // Get the aggregated data for this plugin
-                    let aggregated_data = self.aggregated_data.read().await;
-                    if let Some(plugin_data) = aggregated_data.get(&plugin_name) {
-                        if !plugin_data.is_empty() {
-                            match scanner_plugin.aggregate_results(plugin_data.clone()).await {
-                                Ok(aggregated_message) => {
-                                    log::debug!("Plugin {} aggregated {} messages into final result",
-                                               plugin_name, plugin_data.len());
-                                    final_aggregated.insert(plugin_name.clone(), aggregated_message.clone());
-                                    
-                                    // Emit DataReady event when processed data is available for export
-                                    if let Some(ref scanner_publisher) = self.scanner_publisher {
-                                        let data_type = self.determine_data_type(&aggregated_message.data);
-                                        let event = crate::notifications::ScanEvent::data_ready(
-                                            self.scan_id.clone(),
-                                            plugin_name.clone(),
-                                            data_type,
-                                        );
-                                        
-                                        if let Err(e) = scanner_publisher.publish(event).await {
-                                            log::warn!("Failed to publish DataReady event for plugin {}: {}", plugin_name, e);
-                                            
-                                            // Emit ScanWarning event for notification failure
-                                            let warning_msg = format!("Failed to publish DataReady event for plugin '{}': {}", plugin_name, e);
-                                            
-                                            // Collect warning for final reporting
-                                            self.add_warning(warning_msg.clone()).await;
-                                            
-                                            let warning_event = crate::notifications::ScanEvent::warning(
-                                                self.scan_id.clone(),
-                                                warning_msg,
-                                                true, // recoverable - export coordination can continue
-                                            );
-                                            
-                                            if let Err(warn_err) = scanner_publisher.publish(warning_event).await {
-                                                log::error!("Failed to publish ScanWarning event for notification failure: {}", warn_err);
-                                            }
-                                        } else {
-                                            log::debug!("Published DataReady event for plugin {} with processed data", plugin_name);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!("Plugin {} failed to aggregate results: {}", plugin_name, e);
-                                    
-                                    // Emit ScanError event for unrecoverable plugin failure
-                                    if let Some(ref scanner_publisher) = self.scanner_publisher {
-                                        let error_msg = format!("Plugin '{}' failed to aggregate results: {}", plugin_name, e);
-                                        let error_event = crate::notifications::ScanEvent::error(
-                                            self.scan_id.clone(),
-                                            error_msg,
-                                            true, // fatal - plugin aggregation failure prevents completion
-                                        );
-                                        
-                                        if let Err(publish_err) = scanner_publisher.publish(error_event).await {
-                                            log::error!("Failed to publish ScanError event for plugin failure: {}", publish_err);
-                                        } else {
-                                            log::debug!("Published ScanError event for plugin {} aggregation failure", plugin_name);
-                                        }
-                                    }
-                                    
-                                    return Err(e);
-                                }
-                            }
-                        } else {
-                            log::debug!("Plugin {} has no data to aggregate", plugin_name);
-                        }
-                    }
-                }
-            }
-        }
-
-        log::info!("Finalized scanning with {} plugins having aggregated data", final_aggregated.len());
-        Ok(final_aggregated)
+        log::debug!("Finalizing scanning - ScannerPlugin aggregation removed");
+        
+        // Return empty map since ScannerPlugin processing has been removed
+        // Plugins now process data via Plugin.execute() method instead
+        Ok(HashMap::new())
     }
 
     /// Get aggregated data for a specific plugin (for use in plugin execute methods)
@@ -550,16 +353,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::tests::mock_plugins::MockScannerPlugin;
+    use crate::plugin::tests::mock_plugins::MockPlugin;
     use crate::scanner::messages::{MessageHeader, MessageData};
     use futures::stream;
 
     async fn create_test_registry() -> SharedPluginRegistry {
         let registry = SharedPluginRegistry::new();
         
-        // Add a test plugin
-        let plugin = Box::new(MockScannerPlugin::new(
-            "test-scanner", 
+        // Add a test plugin (using MockPlugin instead of MockScannerPlugin)
+        let plugin = Box::new(MockPlugin::new(
+            "test-plugin", 
             false
         ));
         
@@ -597,20 +400,17 @@ mod tests {
         let message = create_test_message();
         let results = executor.process_message(message.clone()).await;
 
-        // Should have original message plus processed messages from ScannerPlugin
-        // MockScannerPlugin.process_scan_data() returns 1 processed message
-        // So we expect: original (1) + processed (1) = 2 total
-        assert_eq!(results.len(), 2, "Expected original message + 1 processed message from ScannerPlugin");
+        // With ScannerPlugin processing removed (GS-72), we only get the original message back
+        // Scanner now streams events directly to queue without plugin processing during scanning
+        assert_eq!(results.len(), 1, "Expected only original message since ScannerPlugin processing removed");
 
-        // First message should be the original
+        // Message should be the original unchanged
         assert_eq!(results[0], message);
-
-        // Second message should be the processed one (with modified timestamp)
-        assert_ne!(results[1], message, "Processed message should be different from original");
 
         let metrics = executor.get_metrics().await;
         assert_eq!(metrics.messages_processed, 1);
-        assert_eq!(metrics.plugin_executions, 1);
+        // plugin_executions should be 0 since no ScannerPlugin processing occurs
+        assert_eq!(metrics.plugin_executions, 0);
     }
 
     #[tokio::test]
@@ -643,6 +443,10 @@ mod tests {
         let registry = create_test_registry().await;
         let executor = PluginExecutor::new(registry.clone());
 
+    async fn test_aggregated_data_storage_and_retrieval() {
+        let registry = create_test_registry().await;
+        let executor = PluginExecutor::new(registry.clone());
+
         // Process multiple messages to build up aggregated data
         let message1 = create_test_message();
         let message2 = ScanMessage::new(
@@ -658,24 +462,22 @@ mod tests {
         let results1 = executor.process_message(message1.clone()).await;
         let results2 = executor.process_message(message2.clone()).await;
 
-        // Verify messages were processed
-        assert!(results1.len() >= 1);
-        assert!(results2.len() >= 1);
+        // With ScannerPlugin processing removed, we only get original messages back
+        assert_eq!(results1.len(), 1);
+        assert_eq!(results2.len(), 1);
 
-        // Check that aggregated data was stored
-        let aggregated_data = executor.get_aggregated_data("test-scanner").await;
-        assert!(aggregated_data.is_some(), "Aggregated data should be stored for test-scanner plugin");
+        // Check that no aggregated data is stored (ScannerPlugin processing removed)
+        let aggregated_data = executor.get_aggregated_data("test-plugin").await;
+        assert!(aggregated_data.is_none(), "No aggregated data should be stored since ScannerPlugin processing removed");
 
-        let data = aggregated_data.unwrap();
-        assert!(data.len() >= 2, "Should have aggregated data from both processed messages");
-
-        // Test finalization
+        // Test finalization returns empty map
         let final_aggregated = executor.finalize_scanning().await.unwrap();
-        assert!(final_aggregated.contains_key("test-scanner"), "Should have final aggregated data for test-scanner");
+        assert!(final_aggregated.is_empty(), "Should have empty final aggregated data since ScannerPlugin processing removed");
 
-        // Test cleanup
+        // Test cleanup (should be no-op now)
         executor.clear_aggregated_data().await;
-        let cleared_data = executor.get_aggregated_data("test-scanner").await;
-        assert!(cleared_data.is_none(), "Aggregated data should be cleared");
+        let cleared_data = executor.get_aggregated_data("test-plugin").await;
+        assert!(cleared_data.is_none(), "No aggregated data to clear");
+    }
     }
 }

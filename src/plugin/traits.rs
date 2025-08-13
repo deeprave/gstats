@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use crate::scanner::messages::ScanMessage;
 use super::error::{PluginError, PluginResult};
 use super::context::{PluginContext, PluginRequest, PluginResponse};
 
@@ -63,33 +62,6 @@ pub trait Plugin: Send + Sync {
         None
     }
 
-    /// Downcast to ScannerPlugin if this plugin implements it
-    fn as_scanner_plugin(&self) -> Option<&dyn ScannerPlugin> {
-        None // Default implementation - plugins that implement ScannerPlugin should override this
-    }
-}
-
-/// Scanner-specific plugin capabilities extending the base Plugin trait
-#[async_trait]
-pub trait ScannerPlugin: Plugin {
-    
-    /// Process scan data and return processed messages
-    async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>>;
-    
-    /// Aggregate multiple scan results into a summary
-    async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage>;
-    
-    /// Estimate processing time for given item count
-    fn estimate_processing_time(&self, item_count: usize) -> Option<std::time::Duration> {
-        // Default implementation returns None (unknown)
-        let _ = item_count;
-        None
-    }
-    
-    /// Get scanner-specific configuration schema
-    fn config_schema(&self) -> serde_json::Value {
-        serde_json::json!({}) // Default empty schema
-    }
 }
 
 /// Notification capabilities for plugins that respond to system events
@@ -204,9 +176,6 @@ pub struct PluginCapability {
 /// Plugin type classification
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginType {
-    /// Scanner plugin for data collection
-    Scanner,
-    
     /// Notification plugin for event handling
     Notification,
     

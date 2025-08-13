@@ -27,7 +27,7 @@ impl MockPlugin {
             20250727,
             "Mock plugin for testing".to_string(),
             "Test Author".to_string(),
-            PluginType::Scanner,
+            PluginType::Processing,
         );
 
         Self {
@@ -138,13 +138,13 @@ impl Plugin for MockPlugin {
     }
 }
 
-/// Mock scanner plugin for testing scanner-specific functionality
-pub struct MockScannerPlugin {
+/// Mock processing plugin for testing processing-specific functionality
+pub struct MockProcessingPlugin {
     base: MockPlugin,
 }
 
-impl MockScannerPlugin {
-    /// Create a new mock scanner plugin
+impl MockProcessingPlugin {
+    /// Create a new mock processing plugin
     pub fn new(name: &str, should_fail: bool) -> Self {
         Self {
             base: MockPlugin::new(name, should_fail),
@@ -158,7 +158,7 @@ impl MockScannerPlugin {
 }
 
 #[async_trait]
-impl Plugin for MockScannerPlugin {
+impl Plugin for MockProcessingPlugin {
     fn plugin_info(&self) -> &PluginInfo {
         self.base.plugin_info()
     }
@@ -179,63 +179,10 @@ impl Plugin for MockScannerPlugin {
         self.base.plugin_state()
     }
 
-    /// Override to provide ScannerPlugin access
-    fn as_scanner_plugin(&self) -> Option<&dyn ScannerPlugin> {
-        Some(self)
-    }
+
 }
 
-#[async_trait]
-impl ScannerPlugin for MockScannerPlugin {
 
-    async fn process_scan_data(&self, data: &ScanMessage) -> PluginResult<Vec<ScanMessage>> {
-        if self.base.should_fail {
-            return Err(PluginError::execution_failed("Mock scan processing failure"));
-        }
-
-        // Mock processing - just return the input data with modified timestamp
-        let mut processed = data.clone();
-        if let Ok(header) = bincode::deserialize::<MessageHeader>(&bincode::serialize(&processed.header).unwrap()) {
-            let new_header = MessageHeader::new(header.sequence + 1);
-            processed.header = new_header;
-        }
-
-        Ok(vec![processed])
-    }
-
-    async fn aggregate_results(&self, results: Vec<ScanMessage>) -> PluginResult<ScanMessage> {
-        if self.base.should_fail {
-            return Err(PluginError::execution_failed("Mock aggregation failure"));
-        }
-
-        // Mock aggregation - create a summary message
-        let header = MessageHeader::new(0);
-        let data = MessageData::MetricInfo {
-            file_count: results.len() as u32,
-            line_count: results.len() as u64 * 100, // Mock line count
-            complexity: results.len() as f64 * 1.5,  // Mock complexity
-        };
-
-        Ok(ScanMessage::new(header, data))
-    }
-
-    fn estimate_processing_time(&self, item_count: usize) -> Option<std::time::Duration> {
-        // Mock estimation: 1ms per item
-        Some(std::time::Duration::from_millis(item_count as u64))
-    }
-
-    fn config_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "mock_setting": {
-                    "type": "string",
-                    "description": "Mock configuration setting"
-                }
-            }
-        })
-    }
-}
 
 /// Mock notification plugin for testing notification functionality
 pub struct MockNotificationPlugin {
@@ -436,25 +383,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mock_scanner_plugin() {
-        let mut plugin = MockScannerPlugin::new("scanner-plugin", false);
+    async fn test_mock_processing_plugin() {
+        let mut plugin = MockProcessingPlugin::new("processing-plugin", false);
         let context = create_test_context();
 
         plugin.initialize(&context).await.unwrap();
 
-        // Test supported modes
-        // Plugin no longer advertises supported modes
-
-        // Test processing time estimation
-        let estimate = plugin.estimate_processing_time(100);
-        assert!(estimate.is_some());
-        assert_eq!(estimate.unwrap().as_millis(), 100);
-
-        // Test unsupported mode estimation
-
-        // Test config schema
-        let schema = plugin.config_schema();
-        assert!(schema.is_object());
+        // Test basic plugin functionality
+        assert_eq!(plugin.plugin_info().name, "processing-plugin");
+        assert_eq!(plugin.plugin_info().plugin_type, PluginType::Processing);
+        
+        // Test execution
+        let request = create_test_request();
+        let response = plugin.execute(request).await.unwrap();
+        assert!(response.is_success());
     }
 
     #[tokio::test]

@@ -21,7 +21,7 @@ async fn test_plugins_ordered_by_priority() {
     registry.register_plugin(Box::new(plugin_high)).await.unwrap();
     
     // Get plugins by type - should be ordered by priority (high to low)
-    let plugin_names = registry.get_plugins_by_type(PluginType::Scanner);
+    let plugin_names = registry.get_plugins_by_type(PluginType::Processing);
     
     // Should be in priority order: 10, 5, 1, 0
     assert_eq!(plugin_names.len(), 4);
@@ -46,7 +46,7 @@ async fn test_plugins_with_equal_priority() {
     registry.register_plugin(Box::new(plugin_c)).await.unwrap();
     
     // Get plugins by type
-    let plugin_names = registry.get_plugins_by_type(PluginType::Scanner);
+    let plugin_names = registry.get_plugins_by_type(PluginType::Processing);
     
     // All should have same priority, but order should be consistent
     assert_eq!(plugin_names.len(), 3);
@@ -90,7 +90,7 @@ fn test_plugin_info_priority_builder() {
         1,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_priority(15);
     
     assert_eq!(info.priority, 15);

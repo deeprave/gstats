@@ -35,8 +35,28 @@ pub async fn resolve_single_plugin_command(
             }
         }
         Err(e) => {
-            error!("Failed to resolve command '{}': {}", command, e);
-            Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e))
+            // TEMPORARY FALLBACK: Since CLI handler doesn't register functions (see GS-73),
+            // assume the command is a builtin plugin name
+            debug!("Command resolution failed, trying fallback for builtin plugins: {}", e);
+            
+            match command {
+                "commits" | "commit" | "history" => {
+                    debug!("Fallback: Resolved '{}' to 'commits' plugin", command);
+                    Ok("commits".to_string())
+                }
+                "metrics" | "metric" => {
+                    debug!("Fallback: Resolved '{}' to 'metrics' plugin", command);
+                    Ok("metrics".to_string())
+                }
+                "export" => {
+                    debug!("Fallback: Resolved '{}' to 'export' plugin", command);
+                    Ok("export".to_string())
+                }
+                _ => {
+                    error!("Failed to resolve command '{}': {}", command, e);
+                    Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e))
+                }
+            }
         }
     }
 }

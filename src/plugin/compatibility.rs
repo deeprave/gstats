@@ -317,7 +317,7 @@ mod tests {
             20250727,
             "Test".to_string(),
             "Author".to_string(),
-            PluginType::Scanner,
+            PluginType::Processing,
         ).with_dependency("dep".to_string(), "1.0.0".to_string(), false);
         
         let dep = PluginInfo::new(
@@ -326,7 +326,7 @@ mod tests {
             20250727,
             "Dependency".to_string(),
             "Author".to_string(),
-            PluginType::Scanner,
+            PluginType::Processing,
         );
         
         let available = vec![dep];

@@ -35,7 +35,7 @@ fn test_check_plugin_compatibility_success() {
         20250727,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let result = checker.check_plugin_compatibility(&plugin_info);
@@ -52,7 +52,7 @@ fn test_check_plugin_compatibility_failure() {
         20240727, // Different major version
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let result = checker.check_plugin_compatibility(&plugin_info);
@@ -70,7 +70,7 @@ fn test_validate_dependencies_no_deps() {
         20250727,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let available_plugins = vec![];
@@ -88,7 +88,7 @@ fn test_validate_dependencies_satisfied() {
         20250727,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_dependency(
         "dependency-plugin".to_string(),
         "1.0.0".to_string(),
@@ -101,7 +101,7 @@ fn test_validate_dependencies_satisfied() {
         20250727,
         "Dependency plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let available_plugins = vec![dependency_info];
@@ -119,7 +119,7 @@ fn test_validate_dependencies_missing() {
         20250727,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_dependency(
         "missing-plugin".to_string(),
         "1.0.0".to_string(),
@@ -142,7 +142,7 @@ fn test_validate_dependencies_optional_missing() {
         20250727,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_dependency(
         "optional-plugin".to_string(),
         "1.0.0".to_string(),
@@ -164,7 +164,7 @@ fn test_validate_dependencies_version_mismatch() {
         20250727,
         "Test plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_dependency(
         "dependency-plugin".to_string(),
         "^2.0.0".to_string(), // Requires version 2.x
@@ -177,7 +177,7 @@ fn test_validate_dependencies_version_mismatch() {
         20250727,
         "Dependency plugin".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let available_plugins = vec![dependency_info];
@@ -229,7 +229,7 @@ fn test_check_all_plugins() {
         20250727,
         "Plugin 1".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let plugin2 = PluginInfo::new(
@@ -238,7 +238,7 @@ fn test_check_all_plugins() {
         20240727, // Incompatible version
         "Plugin 2".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     let plugins = vec![plugin1, plugin2];
@@ -260,7 +260,7 @@ fn test_circular_dependency_detection() {
         20250727,
         "Plugin A".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_dependency("plugin-b".to_string(), "1.0.0".to_string(), false);
     
     // Plugin B depends on A (circular)
@@ -270,7 +270,7 @@ fn test_circular_dependency_detection() {
         20250727,
         "Plugin B".to_string(),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     ).with_dependency("plugin-a".to_string(), "1.0.0".to_string(), false);
     
     let available_plugins = vec![plugin_a.clone(), plugin_b];

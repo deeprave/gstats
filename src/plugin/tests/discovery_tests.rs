@@ -210,7 +210,7 @@ async fn test_discover_plugins_filter_by_type() {
     let temp_dir = tempfile::tempdir().unwrap();
     
     // Create descriptors for different plugin types
-    let scanner_desc = create_test_descriptor_with_type("scanner-plugin", "1.0.0", PluginType::Scanner);
+    let scanner_desc = create_test_descriptor_with_type("scanner-plugin", "1.0.0", PluginType::Processing);
     let notification_desc = create_test_descriptor_with_type("notification-plugin", "1.0.0", PluginType::Notification);
     
     let scanner_path = temp_dir.path().join("scanner.yaml");
@@ -222,7 +222,7 @@ async fn test_discover_plugins_filter_by_type() {
     let discovery = FileBasedDiscovery::new(temp_dir.path()).unwrap();
     
     // Test filtering by scanner type
-    let scanner_plugins = discovery.discover_plugins_by_type(PluginType::Scanner).await.unwrap();
+    let scanner_plugins = discovery.discover_plugins_by_type(PluginType::Processing).await.unwrap();
     assert_eq!(scanner_plugins.len(), 1);
     assert_eq!(scanner_plugins[0].info.name, "scanner-plugin");
     
@@ -305,7 +305,7 @@ async fn test_plugin_discovery_error_handling() {
 
 /// Helper function to create a test plugin descriptor
 fn create_test_descriptor(name: &str, version: &str) -> PluginDescriptor {
-    create_test_descriptor_with_type(name, version, PluginType::Scanner)
+    create_test_descriptor_with_type(name, version, PluginType::Processing)
 }
 
 /// Helper function to create a test plugin descriptor with specific type
@@ -323,7 +323,7 @@ fn create_test_descriptor_with_api(name: &str, version: &str, api_version: u32) 
         api_version,
         format!("Test plugin: {}", name),
         "Test Author".to_string(),
-        PluginType::Scanner,
+        PluginType::Processing,
     );
     
     PluginDescriptor {
@@ -463,7 +463,7 @@ async fn test_unified_discovery_external_plugins_only() {
     let temp_dir = tempdir().unwrap();
     
     // Create external plugin
-    let external_plugin = create_test_plugin_yaml("external-scanner", "1.0.0", PluginType::Scanner);
+    let external_plugin = create_test_plugin_yaml("external-scanner", "1.0.0", PluginType::Processing);
     let external_path = temp_dir.path().join("external-scanner.yaml");
     fs::write(&external_path, external_plugin).await.unwrap();
     
@@ -551,7 +551,7 @@ async fn test_unified_discovery_multiple_external_plugins_same_name() {
     fs::create_dir(&subdir).await.unwrap();
     
     // Create two external plugins with same name in different locations
-    let plugin1 = create_test_plugin_yaml("duplicate", "1.0.0", PluginType::Scanner);
+    let plugin1 = create_test_plugin_yaml("duplicate", "1.0.0", PluginType::Processing);
     let plugin1_path = temp_dir.path().join("duplicate.yaml");
     fs::write(&plugin1_path, plugin1).await.unwrap();
     
@@ -580,7 +580,7 @@ async fn test_unified_discovery_external_exclusion() {
     let temp_dir = tempdir().unwrap();
     
     // Create external plugins
-    let wanted_plugin = create_test_plugin_yaml("wanted", "1.0.0", PluginType::Scanner);
+    let wanted_plugin = create_test_plugin_yaml("wanted", "1.0.0", PluginType::Processing);
     let wanted_path = temp_dir.path().join("wanted.yaml");
     fs::write(&wanted_path, wanted_plugin).await.unwrap();
     

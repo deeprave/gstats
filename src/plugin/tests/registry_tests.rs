@@ -72,7 +72,7 @@ async fn test_plugin_registry_list_plugins() {
     // Add plugins
     registry.register_plugin(Box::new(MockPlugin::new("plugin1", false))).await.unwrap();
     registry.register_plugin(Box::new(MockPlugin::new("plugin2", false))).await.unwrap();
-    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner1", false))).await.unwrap();
+    registry.register_plugin(Box::new(MockProcessingPlugin::new("scanner1", false))).await.unwrap();
     
     // Check list
     let plugins = registry.list_plugins();
@@ -88,12 +88,12 @@ async fn test_plugin_registry_get_plugins_by_type() {
     
     // Add different types of plugins
     registry.register_plugin(Box::new(MockPlugin::new("plugin1", false))).await.unwrap();
-    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner1", false))).await.unwrap();
-    registry.register_plugin(Box::new(MockScannerPlugin::new("scanner2", false))).await.unwrap();
+    registry.register_plugin(Box::new(MockProcessingPlugin::new("scanner1", false))).await.unwrap();
+    registry.register_plugin(Box::new(MockProcessingPlugin::new("scanner2", false))).await.unwrap();
     registry.register_plugin(Box::new(MockNotificationPlugin::new("notifier1", false))).await.unwrap();
     
     // Get scanner plugins
-    let scanners = registry.get_plugins_by_type(PluginType::Scanner);
+    let scanners = registry.get_plugins_by_type(PluginType::Processing);
     assert_eq!(scanners.len(), 3); // MockPlugin also reports as Scanner type
     
     // Get notification plugins
