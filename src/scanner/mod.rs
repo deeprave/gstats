@@ -43,6 +43,9 @@ pub mod plugin_scanner;
 pub mod statistics;
 pub mod publisher;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export core types for easier access
 pub use config::ScannerConfig;
 pub use traits::{MessageProducer, CallbackMessageProducer};

@@ -203,11 +203,14 @@ pub enum PluginState {
     /// Plugin is loaded but not initialized
     Loaded,
     
-    /// Plugin is initialized and ready
+    /// Plugin is initialized and ready (idle)
     Initialized,
     
     /// Plugin is currently executing
     Running,
+    
+    /// Plugin is actively processing work (GS-65 coordination state)
+    Processing,
     
     /// Plugin is in error state
     Error(String),

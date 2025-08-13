@@ -13,6 +13,7 @@ use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
 use crate::scanner::statistics::RepositoryStatistics;
 use super::task_manager::TaskManager;
 use super::error::{ScanError, ScanResult};
+use crate::plugin::SharedPluginRegistry;
 
 /// Core async scanner engine
 pub struct AsyncScannerEngine {
@@ -36,6 +37,9 @@ pub struct AsyncScannerEngine {
     
     /// Registered scanners
     scanners: Vec<Arc<dyn AsyncScanner>>,
+    
+    /// Optional plugin registry for coordination during shutdown
+    plugin_registry: Option<SharedPluginRegistry>,
 }
 
 impl AsyncScannerEngine {
@@ -85,6 +89,7 @@ impl AsyncScannerEngine {
             task_manager,
             message_producer,
             scanners: Vec::new(),
+            plugin_registry: None,
         })
     }
     
@@ -137,12 +142,18 @@ impl AsyncScannerEngine {
             task_manager,
             message_producer,
             scanners: Vec::new(),
+            plugin_registry: None,
         })
     }
     
     /// Register a scanner with the engine
     pub fn register_scanner(&mut self, scanner: Arc<dyn AsyncScanner>) {
         self.scanners.push(scanner);
+    }
+    
+    /// Set the plugin registry for shutdown coordination
+    pub fn set_plugin_registry(&mut self, registry: SharedPluginRegistry) {
+        self.plugin_registry = Some(registry);
     }
     
     /// Execute scan with specified modes
@@ -241,6 +252,86 @@ impl AsyncScannerEngine {
         self.task_manager.cancel_all().await;
     }
     
+    /// Graceful shutdown with plugin coordination
+    /// 
+    /// Performs a coordinated shutdown that ensures all active plugins complete
+    /// their current work before the scanner exits. This prevents data loss and
+    /// ensures proper cleanup of plugin resources.
+    /// 
+    /// The shutdown process:
+    /// 1. Cancels all active scanner tasks to stop new work
+    /// 2. Waits for all active plugins to transition to idle states
+    /// 3. Returns success when coordination is complete or timeout is reached
+    /// 
+    /// If no plugin registry is configured, this method completes immediately
+    /// after canceling scanner tasks, maintaining backward compatibility.
+    /// 
+    /// # Arguments
+    /// * `timeout` - Maximum duration to wait for plugin coordination
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Shutdown completed successfully with all plugins idle
+    /// * `Err(ScanError::Task)` - Plugin coordination failed or timed out
+    /// 
+    /// # Examples
+    /// ```ignore
+    /// use std::time::Duration;
+    /// 
+    /// // Graceful shutdown with 30-second timeout
+    /// match engine.graceful_shutdown(Duration::from_secs(30)).await {
+    ///     Ok(()) => log::info!("Scanner shutdown completed successfully"),
+    ///     Err(e) => log::warn!("Scanner shutdown error: {}", e),
+    /// }
+    /// ```
+    pub async fn graceful_shutdown(&self, timeout: std::time::Duration) -> ScanResult<()> {
+        
+        log::info!("Starting graceful shutdown with timeout: {:?}", timeout);
+        
+        // Cancel all active scans first
+        self.cancel().await;
+        
+        // Wait for plugin coordination if registry is available
+        if let Some(ref registry) = self.plugin_registry {
+            log::debug!("Waiting for plugin coordination during shutdown");
+            
+            // Create custom wait loop that doesn't hold locks for extended periods
+            let start = tokio::time::Instant::now();
+            let poll_interval = std::time::Duration::from_millis(10);
+            
+            loop {
+                let all_idle = {
+                    let registry_inner = registry.inner().read().await;
+                    registry_inner.are_all_active_plugins_idle()
+                };
+                
+                if all_idle {
+                    log::info!("All plugins are idle - graceful shutdown complete");
+                    return Ok(());
+                }
+                
+                if start.elapsed() >= timeout {
+                    // Get list of still-processing plugins for error message
+                    let processing_plugins = {
+                        let registry_inner = registry.inner().read().await;
+                        registry_inner.get_active_processing_plugins()
+                    };
+                    
+                    let error_msg = format!(
+                        "Plugin coordination failed during shutdown: Timed out waiting for plugins to become idle. Still processing: {:?}",
+                        processing_plugins
+                    );
+                    log::warn!("{}", error_msg);
+                    return Err(ScanError::task(error_msg));
+                }
+                
+                tokio::time::sleep(poll_interval).await;
+            }
+        } else {
+            log::debug!("No plugin registry - skipping plugin coordination");
+            Ok(())
+        }
+    }
+    
     /// Get engine statistics
     pub async fn get_stats(&self) -> EngineStats {
         EngineStats {
@@ -311,6 +402,7 @@ pub struct AsyncScannerEngineBuilder {
     message_producer: Option<Arc<dyn MessageProducer + Send + Sync>>,
     scanners: Vec<Arc<dyn AsyncScanner>>,
     runtime: Option<Arc<tokio::runtime::Runtime>>,
+    plugin_registry: Option<SharedPluginRegistry>,
 }
 
 impl AsyncScannerEngineBuilder {
@@ -322,6 +414,7 @@ impl AsyncScannerEngineBuilder {
             message_producer: None,
             scanners: Vec::new(),
             runtime: None,
+            plugin_registry: None,
         }
     }
     
@@ -361,6 +454,34 @@ impl AsyncScannerEngineBuilder {
         self
     }
     
+    /// Set the plugin registry for coordination during shutdown
+    /// 
+    /// Configures the scanner engine to coordinate with plugins during graceful
+    /// shutdown. When set, the engine will wait for all active plugins to complete
+    /// their work before allowing shutdown to proceed.
+    /// 
+    /// This is optional - if not set, the scanner will perform immediate shutdown
+    /// without plugin coordination.
+    /// 
+    /// # Arguments
+    /// * `registry` - Shared plugin registry for coordination
+    /// 
+    /// # Examples
+    /// ```ignore
+    /// let registry = SharedPluginRegistry::new();
+    /// // ... register plugins ...
+    /// 
+    /// let engine = AsyncScannerEngineBuilder::new()
+    ///     .repository_path("/path/to/repo")
+    ///     .message_producer(producer)
+    ///     .plugin_registry(registry)  // Enable coordination
+    ///     .build()?;
+    /// ```
+    pub fn plugin_registry(mut self, registry: SharedPluginRegistry) -> Self {
+        self.plugin_registry = Some(registry);
+        self
+    }
+    
     /// Build the engine
     pub fn build(self) -> ScanResult<AsyncScannerEngine> {
         let repository_path = self.repository_path
@@ -385,6 +506,11 @@ impl AsyncScannerEngineBuilder {
         
         for scanner in self.scanners {
             engine.register_scanner(scanner);
+        }
+        
+        // Set plugin registry if provided
+        if let Some(registry) = self.plugin_registry {
+            engine.set_plugin_registry(registry);
         }
         
         Ok(engine)

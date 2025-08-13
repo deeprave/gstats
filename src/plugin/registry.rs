@@ -24,6 +24,9 @@ pub struct PluginRegistry {
     /// Plugin activation status
     active: HashMap<String, bool>,
     
+    /// Plugin coordination states (GS-65)
+    states: HashMap<String, crate::plugin::traits::PluginState>,
+    
     /// Plugin subscribers for notification management
     subscribers: HashMap<String, Arc<PluginSubscriber>>,
     
@@ -38,6 +41,7 @@ impl PluginRegistry {
             plugins: HashMap::new(),
             initialized: HashMap::new(),
             active: HashMap::new(),
+            states: HashMap::new(),
             subscribers: HashMap::new(),
             notification_manager: None,
         }
@@ -51,6 +55,7 @@ impl PluginRegistry {
             plugins: HashMap::new(),
             initialized: HashMap::new(),
             active: HashMap::new(),
+            states: HashMap::new(),
             subscribers: HashMap::new(),
             notification_manager: Some((*notification_manager).clone()),
         }
@@ -180,6 +185,168 @@ impl PluginRegistry {
                 if is_active { Some(name.clone()) } else { None }
             })
             .collect()
+    }
+
+    /// Get list of active plugins that are still processing
+    pub fn get_active_processing_plugins(&self) -> Vec<String> {
+        self.get_active_plugins()
+            .into_iter()
+            .filter(|name| {
+                let state = self.states.get(name)
+                    .unwrap_or(&crate::plugin::traits::PluginState::Initialized);
+                matches!(
+                    state,
+                    crate::plugin::traits::PluginState::Processing | 
+                    crate::plugin::traits::PluginState::Running
+                )
+            })
+            .collect()
+    }
+
+    /// Transition a plugin to a new state (GS-65 coordination)
+    /// 
+    /// This method updates a plugin's coordination state for lifecycle management.
+    /// It's primarily used during plugin execution to signal when plugins are
+    /// actively processing work versus idle and ready for shutdown.
+    /// 
+    /// # Arguments
+    /// * `name` - The name of the plugin to transition
+    /// * `new_state` - The new state to transition to
+    /// 
+    /// # States
+    /// * `Processing` - Plugin is actively working on tasks
+    /// * `Initialized` - Plugin is idle and ready for shutdown
+    /// * `Error(msg)` - Plugin encountered an error (treated as idle for shutdown)
+    /// 
+    /// # Examples
+    /// ```ignore
+    /// // Signal that plugin is starting work
+    /// registry.transition_plugin_state("my-plugin", PluginState::Processing).await?;
+    /// 
+    /// // Signal that plugin finished work
+    /// registry.transition_plugin_state("my-plugin", PluginState::Initialized).await?;
+    /// ```
+    pub async fn transition_plugin_state(&mut self, name: &str, new_state: crate::plugin::traits::PluginState) -> PluginResult<()> {
+        if !self.plugins.contains_key(name) {
+            return Err(PluginError::plugin_not_found(name));
+        }
+        
+        log::debug!("Plugin '{}' state transition: {:?} -> {:?}", 
+            name, 
+            self.states.get(name).unwrap_or(&crate::plugin::traits::PluginState::Unloaded),
+            new_state
+        );
+        
+        self.states.insert(name.to_string(), new_state);
+        Ok(())
+    }
+
+    /// Check if all active plugins are idle (not processing work)
+    /// 
+    /// Returns `true` if all currently active plugins are in states that don't
+    /// block system shutdown. This includes plugins in `Initialized`, `Loaded`,
+    /// `Unloaded`, `ShuttingDown`, and `Error` states. Only `Processing` and
+    /// `Running` states are considered non-idle.
+    /// 
+    /// Inactive plugins are ignored completely, as they don't participate in
+    /// work processing and shouldn't block shutdown.
+    /// 
+    /// # Returns
+    /// * `true` - All active plugins are idle, safe to shutdown
+    /// * `false` - One or more active plugins are still processing work
+    /// 
+    /// # Examples
+    /// ```ignore
+    /// if registry.are_all_active_plugins_idle() {
+    ///     println!("Safe to shutdown - no plugins are processing");
+    /// } else {
+    ///     println!("Still waiting for plugins to finish work");
+    /// }
+    /// ```
+    pub fn are_all_active_plugins_idle(&self) -> bool {
+        let active_plugins = self.get_active_plugins();
+        
+        for plugin_name in active_plugins {
+            let state = self.states.get(&plugin_name)
+                .unwrap_or(&crate::plugin::traits::PluginState::Initialized);
+            
+            match state {
+                crate::plugin::traits::PluginState::Processing => {
+                    log::debug!("Plugin '{}' is still processing - not idle", plugin_name);
+                    return false;
+                }
+                crate::plugin::traits::PluginState::Running => {
+                    log::debug!("Plugin '{}' is still running - not idle", plugin_name);
+                    return false;
+                }
+                // Error state is considered "done" - doesn't block shutdown
+                // Initialized, Loaded, Unloaded, ShuttingDown are all considered idle
+                _ => continue,
+            }
+        }
+        
+        log::debug!("All active plugins are idle");
+        true
+    }
+
+    /// Wait for all active plugins to become idle with timeout
+    /// 
+    /// This method polls the plugin states until all active plugins transition
+    /// to idle states or the timeout is reached. It's designed for coordinated
+    /// system shutdown where the system needs to wait for plugins to complete
+    /// their current work before exiting.
+    /// 
+    /// The method polls every 10ms and provides detailed error information
+    /// including which specific plugins are still processing when timeouts occur.
+    /// 
+    /// # Arguments
+    /// * `timeout` - Maximum duration to wait for plugins to become idle
+    /// 
+    /// # Returns
+    /// * `Ok(())` - All active plugins became idle within the timeout
+    /// * `Err(PluginError::Timeout)` - Timeout reached with plugins still processing
+    /// 
+    /// # Examples
+    /// ```ignore
+    /// use std::time::Duration;
+    /// 
+    /// // Wait up to 5 seconds for plugins to finish
+    /// match registry.wait_for_all_plugins_idle(Duration::from_secs(5)).await {
+    ///     Ok(()) => println!("All plugins are idle, safe to exit"),
+    ///     Err(e) => eprintln!("Timeout waiting for plugins: {}", e),
+    /// }
+    /// ```
+    pub async fn wait_for_all_plugins_idle(&self, timeout: std::time::Duration) -> PluginResult<()> {
+        use tokio::time::{sleep, Instant};
+        
+        let start = Instant::now();
+        let poll_interval = std::time::Duration::from_millis(10);
+        
+        loop {
+            if self.are_all_active_plugins_idle() {
+                log::debug!("All active plugins are idle - coordination complete");
+                return Ok(());
+            }
+            
+            if start.elapsed() >= timeout {
+                let active_processing: Vec<String> = self.get_active_plugins()
+                    .into_iter()
+                    .filter(|name| {
+                        matches!(
+                            self.states.get(name).unwrap_or(&crate::plugin::traits::PluginState::Initialized),
+                            crate::plugin::traits::PluginState::Processing | crate::plugin::traits::PluginState::Running
+                        )
+                    })
+                    .collect();
+                
+                return Err(PluginError::timeout(format!(
+                    "Timed out waiting for plugins to become idle. Still processing: {:?}", 
+                    active_processing
+                )));
+            }
+            
+            sleep(poll_interval).await;
+        }
     }
     
     /// Auto-activate plugins marked with load_by_default = true
