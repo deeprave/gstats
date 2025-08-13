@@ -71,7 +71,8 @@ impl ExportPlugin {
             "template_export".to_string(),
             "Custom output formatting using Tera templates (Jinja2-compatible)".to_string(),
             "1.0.0".to_string(),
-        );
+        )
+        .with_load_by_default(true);
 
         Self {
             info,
@@ -734,6 +735,23 @@ impl Plugin for ExportPlugin {
 
     async fn cleanup(&mut self) -> PluginResult<()> {
         Ok(())
+    }
+    
+    /// Get all functions this plugin can handle
+    fn advertised_functions(&self) -> Vec<crate::plugin::traits::PluginFunction> {
+        vec![
+            crate::plugin::traits::PluginFunction {
+                name: "export".to_string(),
+                aliases: vec!["exp".to_string(), "out".to_string()],
+                description: "Export scan results to various formats".to_string(),
+                is_default: true,
+            }
+        ]
+    }
+    
+    /// Get the default function name
+    fn default_function(&self) -> Option<&str> {
+        Some("export")
     }
 }
 

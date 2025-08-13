@@ -107,6 +107,21 @@ impl PluginHandler {
         })
     }
     
+    /// Create a new plugin handler with an existing registry
+    /// This allows the handler to use plugins from a pre-populated registry
+    /// instead of creating duplicate instances
+    pub fn with_registry(registry: SharedPluginRegistry) -> PluginResult<Self> {
+        let discovery = Box::new(UnifiedPluginDiscovery::new(Some("plugins".into()), Vec::new())?);
+        let command_mapper = CommandMapper::new();
+        
+        Ok(Self {
+            _registry: registry,
+            discovery,
+            command_mapper,
+            plugin_config: None,
+        })
+    }
+    
     /// Discover and register all available plugins
     pub async fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
         debug!("Discovering plugins in directory: {}", self.discovery.plugin_directory().display());
@@ -199,12 +214,19 @@ impl PluginHandler {
         // Clear existing mappings
         self.command_mapper = CommandMapper::new();
         
-        // Register built-in plugins
-        self.register_builtin_plugins()?;
+        // Register built-in plugins using registry (only active plugins)
+        self.register_builtin_plugins().await?;
         
         // Discover and register external plugins
         let descriptors = self.discover_plugins().await?;
         for descriptor in descriptors {
+            // Skip builtin plugins to avoid duplicate registration
+            // Builtin plugins should only be registered via the registry
+            if descriptor.info.name == "commits" || descriptor.info.name == "metrics" || descriptor.info.name == "export" {
+                debug!("Skipping builtin plugin '{}' from external discovery", descriptor.info.name);
+                continue;
+            }
+            
             // For now, register external plugins with basic capability mapping
             // This will be enhanced when external plugins implement function advertisement
             let functions = self.extract_functions_from_descriptor(&descriptor);
@@ -215,21 +237,8 @@ impl PluginHandler {
         Ok(())
     }
     
-    /// Register built-in plugins with their advertised functions
-    fn register_builtin_plugins(&mut self) -> PluginResult<()> {
-        // TEMPORARY FIX: Disable CLI plugin instance creation to prevent duplicate registrations
-        // This will be properly fixed in GS-73 with plugin activation architecture
-        // 
-        // The issue is that initialize_builtin_plugins() already registers all plugins,
-        // and creating separate instances here causes ambiguous function errors.
-        // For now, we'll skip the builtin plugin registration in CLI handler.
-        
-        let mut registered: Vec<String> = Vec::new();
-        
-        // TODO: In GS-73, this should use the plugin registry instead of creating instances
-        debug!("Skipping CLI builtin plugin registration to prevent duplicates (see GS-73)");
-        
-        /*
+    /// Register built-in plugins with their advertised functions using the registry
+    async fn register_builtin_plugins(&mut self) -> PluginResult<()> {
         // Get exclusion list from configuration
         let excluded = if let Some(ref config) = self.plugin_config {
             &config.plugin_exclude
@@ -238,36 +247,27 @@ impl PluginHandler {
             &Vec::new()
         };
         
-        // Register CommitsPlugin functions
-        if !excluded.contains(&"commits".to_string()) {
-            let commits_plugin = CommitsPlugin::new();
-            let commits_functions = commits_plugin.advertised_functions();
-            self.command_mapper.register_plugin("commits", commits_functions);
-            registered.push("commits");
-        } else {
-            debug!("Excluded built-in plugin: commits");
-        }
+        let mut registered: Vec<String> = Vec::new();
         
-        // Register MetricsPlugin functions  
-        if !excluded.contains(&"metrics".to_string()) {
-            let metrics_plugin = MetricsPlugin::new();
-            let metrics_functions = metrics_plugin.advertised_functions();
-            self.command_mapper.register_plugin("metrics", metrics_functions);
-            registered.push("metrics");
-        } else {
-            debug!("Excluded built-in plugin: metrics");
-        }
+        // Use the registry to get ONLY ACTIVE plugins and their functions
+        let registry = self._registry.inner().read().await;
+        let active_plugins = registry.get_active_plugins();
         
-        // Register ExportPlugin functions
-        if !excluded.contains(&"export".to_string()) {
-            let export_plugin = ExportPlugin::new();
-            let export_functions = export_plugin.advertised_functions();
-            self.command_mapper.register_plugin("export", export_functions);
-            registered.push("export");
-        } else {
-            debug!("Excluded built-in plugin: export");
+        for plugin_name in active_plugins {
+            // Skip if plugin is excluded by configuration
+            if excluded.contains(&plugin_name) {
+                debug!("Excluded built-in plugin: {}", plugin_name);
+                continue;
+            }
+            
+            // Get the plugin from registry and extract its functions
+            if let Some(plugin) = registry.get_plugin(&plugin_name) {
+                let functions = plugin.advertised_functions();
+                self.command_mapper.register_plugin(&plugin_name, functions);
+                registered.push(plugin_name.clone());
+                debug!("Registered active plugin: {}", plugin_name);
+            }
         }
-        */
         
         debug!("Registered built-in plugins: {}", registered.join(", "));
         Ok(())

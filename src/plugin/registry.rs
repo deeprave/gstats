@@ -21,6 +21,9 @@ pub struct PluginRegistry {
     /// Plugin initialization status
     initialized: HashMap<String, bool>,
     
+    /// Plugin activation status
+    active: HashMap<String, bool>,
+    
     /// Plugin subscribers for notification management
     subscribers: HashMap<String, Arc<PluginSubscriber>>,
     
@@ -34,6 +37,7 @@ impl PluginRegistry {
         Self {
             plugins: HashMap::new(),
             initialized: HashMap::new(),
+            active: HashMap::new(),
             subscribers: HashMap::new(),
             notification_manager: None,
         }
@@ -46,6 +50,7 @@ impl PluginRegistry {
         Self {
             plugins: HashMap::new(),
             initialized: HashMap::new(),
+            active: HashMap::new(),
             subscribers: HashMap::new(),
             notification_manager: Some((*notification_manager).clone()),
         }
@@ -70,6 +75,7 @@ impl PluginRegistry {
         // Store plugin first
         self.plugins.insert(name.clone(), plugin);
         self.initialized.insert(name.clone(), false);
+        self.active.insert(name.clone(), true); // Original register_plugin activates by default
         
         // Create plugin subscriber for notification handling
         // We'll create a simple subscriber that references the plugin by name
@@ -100,9 +106,105 @@ impl PluginRegistry {
         }
         
         self.plugins.insert(name.clone(), plugin);
-        self.initialized.insert(name, false);
+        self.initialized.insert(name.clone(), false);
+        self.active.insert(name, false); // Register as inactive by default
         
         Ok(())
+    }
+    
+    /// Register a plugin as inactive (loaded but not processing events)
+    pub async fn register_plugin_inactive(&mut self, plugin: Box<dyn Plugin>) -> PluginResult<()> {
+        let name = plugin.plugin_info().name.clone();
+        
+        if self.plugins.contains_key(&name) {
+            return Err(PluginError::plugin_already_registered(&name));
+        }
+        
+        // Store plugin first
+        self.plugins.insert(name.clone(), plugin);
+        self.initialized.insert(name.clone(), false);
+        self.active.insert(name.clone(), false); // Mark as inactive
+        
+        // Create plugin subscriber for notification handling
+        let subscriber = Arc::new(PluginSubscriber::new_with_name(name.clone()));
+        
+        // Subscribe to notifications if manager is available
+        if let Some(ref mut notification_manager) = self.notification_manager {
+            notification_manager.subscribe(subscriber.clone()).await
+                .map_err(|e| PluginError::NotificationFailed { 
+                    message: format!("Failed to subscribe plugin '{}' to notifications: {}", name, e) 
+                })?;
+            
+            log::debug!("Plugin '{}' registered as inactive and subscribed to scanner events", name);
+        }
+        
+        // Store subscriber
+        self.subscribers.insert(name, subscriber);
+        
+        Ok(())
+    }
+    
+    /// Activate a plugin for processing events
+    pub async fn activate_plugin(&mut self, name: &str) -> PluginResult<()> {
+        if !self.plugins.contains_key(name) {
+            return Err(PluginError::plugin_not_found(name));
+        }
+        
+        self.active.insert(name.to_string(), true);
+        log::debug!("Plugin '{}' activated", name);
+        
+        Ok(())
+    }
+    
+    /// Deactivate a plugin (stop processing events)
+    pub async fn deactivate_plugin(&mut self, name: &str) -> PluginResult<()> {
+        if !self.plugins.contains_key(name) {
+            return Err(PluginError::plugin_not_found(name));
+        }
+        
+        self.active.insert(name.to_string(), false);
+        log::debug!("Plugin '{}' deactivated", name);
+        
+        Ok(())
+    }
+    
+    /// Check if a plugin is active
+    pub fn is_plugin_active(&self, name: &str) -> bool {
+        self.active.get(name).copied().unwrap_or(false)
+    }
+    
+    /// Get list of active plugin names
+    pub fn get_active_plugins(&self) -> Vec<String> {
+        self.active.iter()
+            .filter_map(|(name, &is_active)| {
+                if is_active { Some(name.clone()) } else { None }
+            })
+            .collect()
+    }
+    
+    /// Auto-activate plugins marked with load_by_default = true
+    pub async fn auto_activate_default_plugins(&mut self) -> PluginResult<()> {
+        let plugins_to_activate: Vec<String> = self.plugins.iter()
+            .filter_map(|(name, plugin)| {
+                if plugin.plugin_info().load_by_default {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        for plugin_name in plugins_to_activate {
+            self.activate_plugin(&plugin_name).await?;
+            log::debug!("Auto-activated plugin '{}' (load_by_default = true)", plugin_name);
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if a plugin exists in the registry  
+    pub fn has_plugin(&self, name: &str) -> bool {
+        self.plugins.contains_key(name)
     }
     
     /// Unregister a plugin with notification cleanup
@@ -130,6 +232,7 @@ impl PluginRegistry {
         
         self.subscribers.remove(name);
         self.initialized.remove(name);
+        self.active.remove(name);
         Ok(())
     }
     

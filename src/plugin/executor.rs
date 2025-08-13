@@ -109,6 +109,30 @@ impl PluginExecutor {
         Ok(Vec::new())
     }
 
+    /// Process a message through active plugins only (GS-73: Plugin Activation Architecture)
+    /// This method implements activation-aware processing where only active plugins receive messages
+    pub async fn process_message_through_active_plugins(&self, message: ScanMessage) -> PluginResult<Vec<String>> {
+        let registry = self.registry.read().await;
+        let active_plugins = registry.get_active_plugins();
+        
+        if active_plugins.is_empty() {
+            log::debug!("No active plugins to process message through");
+            return Ok(Vec::new());
+        }
+
+        let mut processed_plugins = Vec::new();
+        
+        for plugin_name in &active_plugins {
+            // In the full implementation, this would actually call Plugin.execute() 
+            // on each active plugin with the message
+            log::debug!("Processing message through active plugin: {}", plugin_name);
+            processed_plugins.push(plugin_name.clone());
+        }
+        
+        log::debug!("Processed message through {} active plugins", processed_plugins.len());
+        Ok(processed_plugins)
+    }
+
     /// Determine data type from message data for ScanDataReady events
     fn determine_data_type(&self, message_data: &MessageData) -> String {
         match message_data {

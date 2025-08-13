@@ -54,6 +54,12 @@ impl MockPlugin {
         self
     }
     
+    /// Set whether plugin should be activated by default
+    pub fn with_load_by_default(mut self, load_by_default: bool) -> Self {
+        self.info.load_by_default = load_by_default;
+        self
+    }
+    
     /// Add a capability to this plugin
     pub fn with_capability(mut self, name: &str, description: &str) -> Self {
         self.info.capabilities.push(PluginCapability {

@@ -161,20 +161,29 @@ pub async fn initialize_builtin_plugins(
     
     debug!("Initializing builtin plugins");
     
-    // Metrics Plugin  
-    let metrics_plugin = Box::new(plugin::builtin::metrics::MetricsPlugin::new());
-    plugin_registry.register_plugin(metrics_plugin).await
-        .with_context(|| "Failed to register metrics plugin")?;
-    
-    // Commits Plugin
-    let commits_plugin = Box::new(plugin::builtin::commits::CommitsPlugin::new());
-    plugin_registry.register_plugin(commits_plugin).await
-        .with_context(|| "Failed to register commits plugin")?;
-    
-    // Export Plugin
-    let export_plugin = Box::new(plugin::builtin::export::ExportPlugin::new());
-    plugin_registry.register_plugin(export_plugin).await
-        .with_context(|| "Failed to register export plugin")?;
+    // Register all plugins as inactive first
+    {
+        let mut registry = plugin_registry.inner().write().await;
+        
+        // Metrics Plugin  
+        let metrics_plugin = Box::new(plugin::builtin::metrics::MetricsPlugin::new());
+        registry.register_plugin_inactive(metrics_plugin).await
+            .with_context(|| "Failed to register metrics plugin")?;
+        
+        // Commits Plugin
+        let commits_plugin = Box::new(plugin::builtin::commits::CommitsPlugin::new());
+        registry.register_plugin_inactive(commits_plugin).await
+            .with_context(|| "Failed to register commits plugin")?;
+        
+        // Export Plugin
+        let export_plugin = Box::new(plugin::builtin::export::ExportPlugin::new());
+        registry.register_plugin_inactive(export_plugin).await
+            .with_context(|| "Failed to register export plugin")?;
+        
+        // Auto-activate plugins marked with load_by_default = true
+        registry.auto_activate_default_plugins().await
+            .with_context(|| "Failed to auto-activate default plugins")?;
+    }
     
     info!("Builtin plugins initialized successfully");
     Ok(())

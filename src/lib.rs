@@ -1,6 +1,7 @@
 // Allow dead code during development phase
 #![allow(dead_code)]
 
+pub mod app;
 pub mod cli;
 pub mod config;
 pub mod display;

@@ -136,6 +136,10 @@ pub struct PluginInfo {
     
     /// Plugin execution priority (higher values = higher priority, default = 0)
     pub priority: i32,
+    
+    /// Whether this plugin should be activated by default (default = false)
+    /// Export plugins typically set this to true
+    pub load_by_default: bool,
 }
 
 /// Plugin dependency specification
@@ -367,6 +371,7 @@ impl PluginInfo {
             plugin_type,
             license: None,
             priority: 5, // Default priority
+            load_by_default: false, // Default to manual activation
         }
     }
     
@@ -408,6 +413,12 @@ impl PluginInfo {
     /// Set plugin execution priority
     pub fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
+        self
+    }
+    
+    /// Set whether plugin should be activated by default
+    pub fn with_load_by_default(mut self, load_by_default: bool) -> Self {
+        self.load_by_default = load_by_default;
         self
     }
     

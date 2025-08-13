@@ -12,5 +12,8 @@ pub mod contextual_help;
 pub mod help_formatter;
 pub mod global_flags;
 
+#[cfg(test)]
+pub mod tests;
+
 pub use args::Args;
 pub use global_flags::filter_global_flags;

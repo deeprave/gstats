@@ -96,3 +96,44 @@ fn test_plugin_info_priority_builder() {
     assert_eq!(info.priority, 15);
     assert_eq!(info.name, "test-plugin");
 }
+
+#[test]
+fn test_plugin_info_load_by_default_builder() {
+    // Test default value (should be false)
+    let info_default = PluginInfo::new(
+        "test-plugin".to_string(),
+        "1.0.0".to_string(),
+        1,
+        "Test plugin".to_string(),
+        "Test Author".to_string(),
+        PluginType::Processing,
+    );
+    
+    assert_eq!(info_default.load_by_default, false);
+    
+    // Test setting to true (e.g., for export plugin)
+    let info_auto_load = PluginInfo::new(
+        "export-plugin".to_string(),
+        "1.0.0".to_string(),
+        1,
+        "Export plugin".to_string(),
+        "Test Author".to_string(),
+        PluginType::Processing,
+    ).with_load_by_default(true);
+    
+    assert_eq!(info_auto_load.load_by_default, true);
+    assert_eq!(info_auto_load.name, "export-plugin");
+    
+    // Test setting to false explicitly
+    let info_manual_load = PluginInfo::new(
+        "commits-plugin".to_string(),
+        "1.0.0".to_string(),
+        1,
+        "Commits plugin".to_string(),
+        "Test Author".to_string(),
+        PluginType::Processing,
+    ).with_load_by_default(false);
+    
+    assert_eq!(info_manual_load.load_by_default, false);
+    assert_eq!(info_manual_load.name, "commits-plugin");
+}
