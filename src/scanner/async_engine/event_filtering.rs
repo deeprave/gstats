@@ -1,6 +1,5 @@
 use crate::scanner::async_engine::events::RepositoryEvent;
 use crate::scanner::query::QueryParams;
-use std::collections::HashSet;
 use log::{debug, info};
 
 /// Advanced event filtering system for optimizing event processing
@@ -8,9 +7,6 @@ use log::{debug, info};
 pub struct AdvancedEventFilter {
     /// Base event filter
     base_filter: crate::scanner::async_engine::events::EventFilter,
-    
-    /// Processor-specific routing rules
-    processor_routing: ProcessorRoutingRules,
     
     /// Event batching configuration
     batching_config: EventBatchingConfig,
@@ -22,21 +18,6 @@ pub struct AdvancedEventFilter {
     stats: FilteringStats,
 }
 
-/// Rules for routing events to specific processors
-#[derive(Debug, Clone)]
-pub struct ProcessorRoutingRules {
-    /// Events that should only go to history processors
-    history_only_events: HashSet<&'static str>,
-    
-    /// Events that should only go to file processors
-    file_only_events: HashSet<&'static str>,
-    
-    /// Events that should only go to change frequency processors
-    change_frequency_only_events: HashSet<&'static str>,
-    
-    /// Events that should be broadcast to all processors
-    broadcast_events: HashSet<&'static str>,
-}
 
 /// Configuration for event batching
 #[derive(Debug, Clone)]
@@ -91,10 +72,6 @@ pub struct MemoryPressureActions {
 pub struct FilteringStats {
     pub total_events_processed: usize,
     pub events_filtered_out: usize,
-    pub events_routed_to_history: usize,
-    pub events_routed_to_files: usize,
-    pub events_routed_to_change_frequency: usize,
-    pub events_broadcast: usize,
     pub batches_created: usize,
     pub memory_pressure_events: usize,
     pub cache_cleanups_triggered: usize,
@@ -107,7 +84,6 @@ impl AdvancedEventFilter {
         
         Self {
             base_filter,
-            processor_routing: ProcessorRoutingRules::default(),
             batching_config: EventBatchingConfig::default(),
             memory_monitor: MemoryPressureMonitor::default(),
             stats: FilteringStats::default(),
@@ -124,7 +100,6 @@ impl AdvancedEventFilter {
         
         Self {
             base_filter,
-            processor_routing: ProcessorRoutingRules::default(),
             batching_config,
             memory_monitor,
             stats: FilteringStats::default(),
@@ -135,28 +110,7 @@ impl AdvancedEventFilter {
     pub fn should_process_event(&mut self, event: &RepositoryEvent) -> FilterDecision {
         self.stats.total_events_processed += 1;
 
-        // First apply base filtering based on event type
-        let should_include = match event {
-            RepositoryEvent::CommitDiscovered { commit, .. } => {
-                self.base_filter.should_include_commit(commit)
-            }
-            RepositoryEvent::FileScanned { file_info } => {
-                self.base_filter.should_include_file(file_info)
-            }
-            RepositoryEvent::FileChanged { change_data, commit_context, .. } => {
-                self.base_filter.should_include_file_change(change_data, commit_context)
-            }
-            RepositoryEvent::RepositoryStarted { .. } |
-            RepositoryEvent::RepositoryCompleted { .. } |
-            RepositoryEvent::ScanError { .. } => true, // Always include lifecycle events
-        };
-
-        if !should_include {
-            self.stats.events_filtered_out += 1;
-            return FilterDecision::Skip;
-        }
-
-        // Check memory pressure
+        // Check memory pressure - only performance-related filtering allowed
         if self.memory_monitor.enable_monitoring && self.is_under_memory_pressure() {
             if self.should_skip_under_pressure(event) {
                 self.stats.events_filtered_out += 1;
@@ -165,54 +119,11 @@ impl AdvancedEventFilter {
             }
         }
 
-        // Determine processor routing
-        let routing = self.determine_processor_routing(event);
-        self.update_routing_stats(&routing);
-
-        FilterDecision::Process { routing }
+        // All events should be processed (no content-based filtering after event creation)
+        // No routing decisions made by scanner - processors handle their own event filtering
+        FilterDecision::Process
     }
 
-    /// Determine which processors should receive this event
-    fn determine_processor_routing(&self, event: &RepositoryEvent) -> ProcessorRouting {
-        let event_type = event.event_type();
-
-        // Check for specific routing rules
-        if self.processor_routing.history_only_events.contains(&event_type) {
-            return ProcessorRouting::HistoryOnly;
-        }
-
-        if self.processor_routing.file_only_events.contains(&event_type) {
-            return ProcessorRouting::FileOnly;
-        }
-
-        if self.processor_routing.change_frequency_only_events.contains(&event_type) {
-            return ProcessorRouting::ChangeFrequencyOnly;
-        }
-
-        if self.processor_routing.broadcast_events.contains(&event_type) {
-            return ProcessorRouting::Broadcast;
-        }
-
-        // Default routing based on event type - now processes all events
-        match event {
-            RepositoryEvent::CommitDiscovered { .. } => {
-                ProcessorRouting::HistoryAndChangeFrequency
-            }
-            RepositoryEvent::FileScanned { .. } => {
-                ProcessorRouting::FileOnly
-            }
-            RepositoryEvent::FileChanged { .. } => {
-                ProcessorRouting::ChangeFrequencyOnly
-            }
-            RepositoryEvent::RepositoryStarted { .. } | 
-            RepositoryEvent::RepositoryCompleted { .. } => {
-                ProcessorRouting::Broadcast
-            }
-            RepositoryEvent::ScanError { .. } => {
-                ProcessorRouting::Broadcast
-            }
-        }
-    }
 
     /// Check if system is under memory pressure
     fn is_under_memory_pressure(&self) -> bool {
@@ -239,20 +150,6 @@ impl AdvancedEventFilter {
         }
     }
 
-    /// Update routing statistics
-    fn update_routing_stats(&mut self, routing: &ProcessorRouting) {
-        match routing {
-            ProcessorRouting::HistoryOnly => self.stats.events_routed_to_history += 1,
-            ProcessorRouting::FileOnly => self.stats.events_routed_to_files += 1,
-            ProcessorRouting::ChangeFrequencyOnly => self.stats.events_routed_to_change_frequency += 1,
-            ProcessorRouting::HistoryAndChangeFrequency => {
-                self.stats.events_routed_to_history += 1;
-                self.stats.events_routed_to_change_frequency += 1;
-            }
-            ProcessorRouting::Broadcast => self.stats.events_broadcast += 1,
-            ProcessorRouting::None => {} // No routing
-        }
-    }
 
     /// Update memory usage estimate
     pub fn update_memory_usage(&mut self, bytes: usize) {
@@ -312,56 +209,11 @@ pub enum FilterDecision {
     /// Skip due to memory pressure
     SkipDueToMemoryPressure,
     
-    /// Process this event with specific routing
-    Process { routing: ProcessorRouting },
+    /// Process this event (no routing decisions made by scanner)
+    Process,
 }
 
-/// Routing decision for processors
-#[derive(Debug, Clone, PartialEq)]
-pub enum ProcessorRouting {
-    /// Send only to history processors
-    HistoryOnly,
-    
-    /// Send only to file processors
-    FileOnly,
-    
-    /// Send only to change frequency processors
-    ChangeFrequencyOnly,
-    
-    /// Send to both history and change frequency processors
-    HistoryAndChangeFrequency,
-    
-    /// Broadcast to all active processors
-    Broadcast,
-    
-    /// Don't send to any processors
-    None,
-}
 
-impl Default for ProcessorRoutingRules {
-    fn default() -> Self {
-        let mut history_only = HashSet::new();
-        history_only.insert("CommitDiscovered");
-
-        let mut file_only = HashSet::new();
-        file_only.insert("FileScanned");
-
-        let mut change_frequency_only = HashSet::new();
-        change_frequency_only.insert("FileChanged");
-
-        let mut broadcast = HashSet::new();
-        broadcast.insert("RepositoryStarted");
-        broadcast.insert("RepositoryCompleted");
-        broadcast.insert("ScanError");
-
-        Self {
-            history_only_events: history_only,
-            file_only_events: file_only,
-            change_frequency_only_events: change_frequency_only,
-            broadcast_events: broadcast,
-        }
-    }
-}
 
 impl Default for EventBatchingConfig {
     fn default() -> Self {
@@ -400,7 +252,8 @@ impl Default for MemoryPressureActions {
 mod tests {
     use super::*;
     use crate::scanner::async_engine::events::{CommitInfo, FileInfo};
-    use std::time::SystemTime;
+    use crate::scanner::query::{DateRange, AuthorFilter};
+    use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
     fn create_test_commit() -> CommitInfo {
         CommitInfo {
@@ -441,65 +294,8 @@ mod tests {
         assert!(filter.memory_monitor.enable_monitoring);
     }
 
-    #[test]
-    fn test_processor_routing_commit_event() {
-        let query_params = QueryParams::default();
-        let mut filter = AdvancedEventFilter::new(query_params);
-        
-        let commit = create_test_commit();
-        let event = RepositoryEvent::CommitDiscovered { commit, index: 0 };
-        
-        let decision = filter.should_process_event(&event);
-        match decision {
-            FilterDecision::Process { routing } => {
-                assert_eq!(routing, ProcessorRouting::HistoryOnly);
-            }
-            _ => panic!("Expected Process decision"),
-        }
-        
-        assert_eq!(filter.stats.events_routed_to_history, 1);
-        assert_eq!(filter.stats.events_routed_to_change_frequency, 0);
-    }
 
-    #[test]
-    fn test_processor_routing_file_event() {
-        let query_params = QueryParams::default();
-        let mut filter = AdvancedEventFilter::new(query_params);
-        
-        let file = create_test_file();
-        let event = RepositoryEvent::FileScanned { file_info: file };
-        
-        let decision = filter.should_process_event(&event);
-        match decision {
-            FilterDecision::Process { routing } => {
-                assert_eq!(routing, ProcessorRouting::FileOnly);
-            }
-            _ => panic!("Expected Process decision"),
-        }
-        
-        assert_eq!(filter.stats.events_routed_to_files, 1);
-    }
 
-    #[test]
-    fn test_broadcast_routing() {
-        let query_params = QueryParams::default();
-        let mut filter = AdvancedEventFilter::new(query_params);
-        
-        let event = RepositoryEvent::RepositoryStarted {
-            total_commits: Some(100),
-            total_files: Some(50),
-        };
-        
-        let decision = filter.should_process_event(&event);
-        match decision {
-            FilterDecision::Process { routing } => {
-                assert_eq!(routing, ProcessorRouting::Broadcast);
-            }
-            _ => panic!("Expected Process decision"),
-        }
-        
-        assert_eq!(filter.stats.events_broadcast, 1);
-    }
 
     #[test]
     fn test_memory_pressure_handling() {
@@ -552,9 +348,7 @@ mod tests {
         
         let stats = filter.get_stats();
         assert_eq!(stats.total_events_processed, 2);
-        assert_eq!(stats.events_routed_to_history, 1);
-        assert_eq!(stats.events_routed_to_change_frequency, 0); // CommitDiscovered now routes to HistoryOnly
-        assert_eq!(stats.events_routed_to_files, 1);
+        // No routing statistics tracked anymore - all events are simply processed
     }
 
     #[test]
@@ -572,5 +366,84 @@ mod tests {
         // Reset stats
         filter.reset_stats();
         assert_eq!(filter.get_stats().total_events_processed, 0);
+    }
+
+    #[test]
+    fn test_no_post_event_content_filtering() {
+        // Test that events are not filtered based on content after creation
+        // This test should fail until post-event filtering is removed
+        
+        let mut query_params = QueryParams::default();
+        // Set very restrictive filters that should NOT affect post-event processing
+        query_params.date_range = Some(DateRange {
+            start: Some(UNIX_EPOCH + Duration::from_secs(9999999999)), // Far future
+            end: None,
+        });
+        query_params.authors = AuthorFilter {
+            include: vec!["nonexistent_author".to_string()],
+            exclude: vec![],
+        };
+        
+        let mut filter = AdvancedEventFilter::new(query_params);
+        
+        // Create events that would normally be filtered out by content
+        let old_commit = create_test_commit(); // This has old timestamp and different author
+        let commit_event = RepositoryEvent::CommitDiscovered { commit: old_commit, index: 0 };
+        
+        let file = create_test_file();
+        let file_event = RepositoryEvent::FileScanned { file_info: file };
+        
+        // Process events - should NOT be filtered by content since they're already created
+        let commit_decision = filter.should_process_event(&commit_event);
+        let file_decision = filter.should_process_event(&file_event);
+        
+        // Events should be processed regardless of query_params content filters
+        // because post-event filtering should be removed
+        match commit_decision {
+            FilterDecision::Process => {}, // Expected after removing post-event filtering
+            FilterDecision::Skip => panic!("Post-event content filtering still exists - commit should be processed"),
+            FilterDecision::SkipDueToMemoryPressure => panic!("Unexpected memory pressure during test"),
+        }
+        
+        match file_decision {
+            FilterDecision::Process => {}, // Expected after removing post-event filtering  
+            FilterDecision::Skip => panic!("Post-event content filtering still exists - file should be processed"),
+            FilterDecision::SkipDueToMemoryPressure => panic!("Unexpected memory pressure during test"),
+        }
+        
+        let stats = filter.get_stats();
+        assert_eq!(stats.total_events_processed, 2, "All events should be processed without content filtering");
+    }
+
+    #[test]
+    fn test_no_processor_routing_decisions() {
+        // Test that no processor routing decisions are made
+        // Scanner now simply processes events without routing decisions
+        
+        let query_params = QueryParams::default();
+        let mut filter = AdvancedEventFilter::new(query_params);
+        
+        let commit = create_test_commit();
+        let event = RepositoryEvent::CommitDiscovered { commit, index: 0 };
+        
+        let decision = filter.should_process_event(&event);
+        
+        // After removing routing, the decision should be a simple Process
+        match decision {
+            FilterDecision::Process => {
+                // Success - no routing information, just process the event
+            },
+            FilterDecision::Skip => {
+                panic!("Events should be processed, not skipped");
+            },
+            FilterDecision::SkipDueToMemoryPressure => {
+                panic!("Unexpected memory pressure during test");
+            }
+        }
+        
+        // Verify that no routing statistics are tracked
+        let stats = filter.get_stats();
+        assert_eq!(stats.total_events_processed, 1);
+        // No routing fields should exist in stats anymore
     }
 }
