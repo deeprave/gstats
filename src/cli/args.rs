@@ -83,6 +83,27 @@ pub struct Args {
     /// Configuration section name
     #[arg(long, value_name = "SECTION")]
     pub config_name: Option<String>,
+    
+    // ============ BRANCH SELECTION FLAGS ============
+    
+    /// Specify the branch to scan (overrides automatic branch detection)
+    /// Examples: -b main, --branch develop, --branch feature/new-auth
+    #[arg(short = 'b', long = "branch", value_name = "BRANCH", help = "Git branch to scan (overrides automatic detection)")]
+    pub branch: Option<String>,
+    
+    /// Display the selected branch and exit (no scanning)
+    #[arg(long = "show-branch", help = "Show which branch would be scanned and exit")]
+    pub show_branch: bool,
+    
+    /// Specify fallback branches in priority order (comma-separated)
+    /// Example: --fallback-branch "main,master,develop"
+    #[arg(long = "fallback-branch", value_name = "LIST", help = "Comma-separated fallback branch list")]
+    pub fallback_branch: Option<String>,
+    
+    /// Specify remote for branch detection (overrides config and auto-detection)
+    /// Examples: --remote origin, --remote upstream
+    #[arg(long = "remote", value_name = "REMOTE", help = "Git remote for branch detection (overrides auto-detection)")]
+    pub remote: Option<String>,
 
     // ============ FILTERING FLAGS ============
     
@@ -352,6 +373,10 @@ mod tests {
             list_formats: false,
             export_config: None,
             plugin_directory: None,
+            branch: None,
+            show_branch: false,
+            fallback_branch: None,
+            remote: None,
         }
     }
 
@@ -616,5 +641,46 @@ mod tests {
         // Test that plugin_directory defaults to None
         let args = create_test_args();
         assert_eq!(args.plugin_directory, None);
+    }
+
+    // ===== GS-75 Phase 2: Branch Selection CLI Tests (RED) =====
+    
+    #[test]
+    fn test_cli_branch_arguments_parsing() {
+        // This should fail until CLI branch arguments are implemented
+        let args = Args {
+            branch: Some("develop".to_string()),
+            show_branch: true,
+            fallback_branch: Some("main,master,trunk".to_string()),
+            remote: Some("upstream".to_string()),
+            ..create_test_args()
+        };
+        assert_eq!(args.branch, Some("develop".to_string()));
+        assert!(args.show_branch);
+        assert_eq!(args.fallback_branch, Some("main,master,trunk".to_string()));
+        assert_eq!(args.remote, Some("upstream".to_string()));
+    }
+    
+    #[test]
+    fn test_branch_arguments_default_values() {
+        // Branch arguments should default to None/false
+        let args = create_test_args();
+        assert!(args.branch.is_none());
+        assert!(!args.show_branch);
+        assert!(args.fallback_branch.is_none());
+        assert!(args.remote.is_none());
+    }
+    
+    #[test]
+    fn test_branch_arguments_validation() {
+        // Branch arguments should pass basic CLI validation
+        let args = Args {
+            branch: Some("feature/branch-detection".to_string()),
+            show_branch: false,
+            fallback_branch: Some("main,master".to_string()),
+            remote: Some("origin".to_string()),
+            ..create_test_args()
+        };
+        assert!(validate_args(&args).is_ok());
     }
 }

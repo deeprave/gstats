@@ -9,5 +9,6 @@ pub use initialization::{
 };
 pub use execution::{
     handle_plugin_commands,
+    handle_show_branch_command,
     run_scanner
 };

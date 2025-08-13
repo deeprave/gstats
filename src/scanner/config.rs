@@ -11,6 +11,12 @@ pub struct ScannerConfig {
     pub queue_size: usize,
     /// Maximum number of threads for async operations
     pub max_threads: Option<usize>,
+    /// Default branch to use if available
+    pub default_branch: Option<String>,
+    /// List of fallback branches in priority order
+    pub branch_fallbacks: Vec<String>,
+    /// Default remote to use for remote branch detection
+    pub default_remote: Option<String>,
 }
 
 /// Configuration builder for fluent API
@@ -19,6 +25,9 @@ pub struct ScannerConfigBuilder {
     max_memory_bytes: usize,
     queue_size: usize,
     max_threads: Option<usize>,
+    default_branch: Option<String>,
+    branch_fallbacks: Vec<String>,
+    default_remote: Option<String>,
 }
 
 /// Configuration validation error
@@ -40,6 +49,14 @@ impl Default for ScannerConfig {
             max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
             queue_size: 1000,
             max_threads: None, // Use system default (num_cpus)
+            default_branch: None,
+            branch_fallbacks: vec![
+                "main".to_string(),
+                "master".to_string(),
+                "develop".to_string(),
+                "trunk".to_string(),
+            ],
+            default_remote: None,
         }
     }
 }
@@ -51,6 +68,14 @@ impl ScannerConfig {
             max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
             queue_size: 1000,
             max_threads: None,
+            default_branch: None,
+            branch_fallbacks: vec![
+                "main".to_string(),
+                "master".to_string(),
+                "develop".to_string(),
+                "trunk".to_string(),
+            ],
+            default_remote: None,
         }
     }
     
@@ -129,12 +154,33 @@ impl ScannerConfigBuilder {
         self
     }
 
+    /// Set default branch
+    pub fn with_default_branch(mut self, branch: String) -> Self {
+        self.default_branch = Some(branch);
+        self
+    }
+
+    /// Set branch fallbacks
+    pub fn with_branch_fallbacks(mut self, fallbacks: Vec<String>) -> Self {
+        self.branch_fallbacks = fallbacks;
+        self
+    }
+
+    /// Set default remote
+    pub fn with_default_remote(mut self, remote: String) -> Self {
+        self.default_remote = Some(remote);
+        self
+    }
+
     /// Build the configuration
     pub fn build(self) -> Result<ScannerConfig, ConfigError> {
         let config = ScannerConfig {
             max_memory_bytes: self.max_memory_bytes,
             queue_size: self.queue_size,
             max_threads: self.max_threads,
+            default_branch: self.default_branch,
+            branch_fallbacks: self.branch_fallbacks,
+            default_remote: self.default_remote,
         };
         config.validate()?;
         Ok(config)
@@ -199,5 +245,28 @@ mod tests {
             .build()
             .expect("Failed to build config");
         assert_eq!(config.memory_display(), "2.0 GB");
+    }
+
+    #[test]
+    fn test_branch_configuration_defaults() {
+        let config = ScannerConfig::default();
+        assert!(config.default_branch.is_none());
+        assert_eq!(config.branch_fallbacks, vec!["main", "master", "develop", "trunk"]);
+        assert!(config.default_remote.is_none());
+    }
+
+    #[test]
+    fn test_branch_configuration_builder() {
+        let config = ScannerConfig::new()
+            .with_default_branch("develop".to_string())
+            .with_branch_fallbacks(vec!["develop".to_string(), "main".to_string()])
+            .with_default_remote("upstream".to_string())
+            .build()
+            .expect("Failed to build config");
+        
+        // These should fail until branch fields are implemented
+        assert_eq!(config.default_branch, Some("develop".to_string()));
+        assert_eq!(config.branch_fallbacks, vec!["develop", "main"]);
+        assert_eq!(config.default_remote, Some("upstream".to_string()));
     }
 }

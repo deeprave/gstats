@@ -5,8 +5,6 @@
 
 use super::error::{PluginError, PluginResult};
 use super::traits::{PluginDescriptor, PluginType};
-use crate::app::initialization::initialize_builtin_plugins;
-use crate::plugin::SharedPluginRegistry;
 use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::fs;

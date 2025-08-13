@@ -18,6 +18,8 @@ pub struct QueryParams {
     pub limit: Option<usize>,
     /// Author filters
     pub authors: AuthorFilter,
+    /// Branch to scan (if None, uses default branch detection)
+    pub branch: Option<String>,
 }
 
 /// Date range specification
@@ -96,6 +98,8 @@ pub enum QueryValidationError {
     EmptyFilePath,
     #[error("Empty author name provided")]
     EmptyAuthor,
+    #[error("Empty branch name provided")]
+    EmptyBranch,
 }
 
 impl Default for QueryParams {
@@ -105,6 +109,7 @@ impl Default for QueryParams {
             file_paths: FilePathFilter::default(),
             limit: None,
             authors: AuthorFilter::default(),
+            branch: None,
         }
     }
 }
@@ -146,6 +151,16 @@ impl QueryParams {
     /// Get the effective limit, returning None if no limit is set
     pub fn effective_limit(&self) -> Option<usize> {
         self.limit
+    }
+    
+    /// Check if this query has a branch constraint
+    pub fn has_branch(&self) -> bool {
+        self.branch.is_some()
+    }
+    
+    /// Get the effective branch, returning None if no branch is set
+    pub fn effective_branch(&self) -> Option<&str> {
+        self.branch.as_deref()
     }
 
     /// Validate query parameters for consistency
@@ -190,6 +205,13 @@ impl QueryParams {
             }
         }
 
+        // Validate branch
+        if let Some(ref branch) = self.branch {
+            if branch.is_empty() {
+                return Err(QueryValidationError::EmptyBranch);
+            }
+        }
+
         Ok(())
     }
 
@@ -209,6 +231,7 @@ mod tests {
         assert!(params.limit.is_none());
         assert!(params.authors.include.is_empty());
         assert!(params.authors.exclude.is_empty());
+        assert!(params.branch.is_none());
     }
 
     #[test]
@@ -262,5 +285,42 @@ mod tests {
         assert!(unbounded_end.contains(start_time));
         assert!(unbounded_end.contains(middle_time));
         assert!(unbounded_end.contains(after_time));
+    }
+
+    #[test] 
+    fn test_query_params_with_branch_field() {
+        let mut params = QueryParams::default();
+        // This should fail until branch field is implemented
+        assert!(params.branch.is_none());
+        
+        params.branch = Some("develop".to_string());
+        assert_eq!(params.branch, Some("develop".to_string()));
+    }
+
+    #[test]
+    fn test_branch_validation() {
+        let params = QueryParams {
+            branch: Some("".to_string()), // Empty branch should fail validation
+            ..Default::default()
+        };
+        
+        // This should fail until branch validation is implemented
+        let result = params.validate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), QueryValidationError::EmptyBranch);
+    }
+
+    #[test]
+    fn test_query_params_branch_convenience_methods() {
+        let params_without_branch = QueryParams::default();
+        assert!(!params_without_branch.has_branch());
+        assert_eq!(params_without_branch.effective_branch(), None);
+
+        let params_with_branch = QueryParams {
+            branch: Some("main".to_string()),
+            ..Default::default()
+        };
+        assert!(params_with_branch.has_branch());
+        assert_eq!(params_with_branch.effective_branch(), Some("main"));
     }
 }

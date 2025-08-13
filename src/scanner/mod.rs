@@ -39,6 +39,7 @@ pub mod filters;
 pub mod query;
 pub mod async_engine;
 pub mod async_traits;
+pub mod branch_detection;
 pub mod plugin_scanner;
 pub mod statistics;
 pub mod publisher;

@@ -43,6 +43,11 @@ impl HelpFormatter {
         self.write_main_options(&mut output);
         writeln!(output).unwrap();
         
+        // Branch selection options (GS-75)
+        writeln!(output, "{}", self.colour_manager.info("BRANCH SELECTION:")).unwrap();
+        self.write_branch_options(&mut output);
+        writeln!(output).unwrap();
+        
         // Filtering options
         writeln!(output, "{}", self.colour_manager.info("FILTERING OPTIONS:")).unwrap();
         self.write_filtering_options(&mut output);
@@ -293,6 +298,21 @@ impl HelpFormatter {
         }
     }
     
+    /// Write branch selection options (GS-75 Phase 6)
+    fn write_branch_options(&self, output: &mut String) {
+        let options = vec![
+            ("-b, --branch <BRANCH>", "Git branch to scan (overrides automatic detection)"),
+            ("--show-branch", "Show which branch would be scanned and exit"),
+            ("--fallback-branch <LIST>", "Comma-separated fallback branch list"),
+            ("--remote <REMOTE>", "Git remote for branch detection (overrides auto-detection)"),
+        ];
+        
+        for (option, desc) in options {
+            let (flag_part, arg_part) = self.parse_option(option);
+            writeln!(output, "{}", self.format_option_line(&flag_part, &arg_part, desc)).unwrap();
+        }
+    }
+    
     /// Write performance options
     fn write_performance_options(&self, output: &mut String) {
         let options = vec![
@@ -331,6 +351,9 @@ impl HelpFormatter {
             ("gstats commits", "Use plugin's default function"),
             ("gstats authors", "Use function if unambiguous"),
             ("gstats commits:authors", "Explicit plugin:function syntax"),
+            ("gstats --show-branch", "Show which branch would be scanned"),
+            ("gstats -b develop commits", "Scan specific branch"),
+            ("gstats --remote upstream commits", "Use specific remote for branch detection"),
             ("gstats --plugins", "Show detailed plugin information"),
         ];
         

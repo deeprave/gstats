@@ -125,6 +125,13 @@ fn run() -> Result<()> {
         });
     }
     
+    // Handle --show-branch command
+    if args.show_branch {
+        return runtime.block_on(async {
+            app::handle_show_branch_command(&args, &config_manager).await
+        });
+    }
+    
     // Resolve repository path (scanner will validate it's a git repository)
     let repo_path = resolve_repository_path(args.repository.as_deref())?;
     

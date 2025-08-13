@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use log::{info, debug, error};
 use crate::{cli, config, display, plugin, scanner};
+use crate::scanner::branch_detection::BranchDetection;
 
 
 /// Resolve plugin commands using CommandMapper
@@ -197,7 +198,7 @@ pub async fn run_scanner(
     
     // Convert CLI args to scanner config and query params
     let scanner_config = cli::converter::args_to_scanner_config(&args, Some(&config_manager))?;
-    let query_params = cli::converter::args_to_query_params(&args)?;
+    let query_params = cli::converter::args_to_query_params(&args, Some(&config_manager))?;
     
     debug!("Scanner configuration: {:?}", scanner_config);
     debug!("Query parameters: {:?}", query_params);
@@ -277,6 +278,73 @@ pub async fn run_scanner(
         }
         Err(e) => {
             error!("Scanner execution failed: {}", e);
+            return Err(e.into());
+        }
+    }
+    
+    Ok(())
+}
+
+/// Handle --show-branch command
+pub async fn handle_show_branch_command(
+    args: &cli::Args,
+    config_manager: &config::ConfigManager,
+) -> Result<()> {
+    // Resolve repository path (same logic as main.rs)
+    let repo_path = match args.repository.as_deref() {
+        Some(path) => {
+            // Expand tilde if present
+            let expanded_path = if path.starts_with("~") {
+                if let Some(home_dir) = dirs::home_dir() {
+                    home_dir.join(path.strip_prefix("~/").unwrap_or(&path[1..]))
+                } else {
+                    PathBuf::from(path)
+                }
+            } else {
+                PathBuf::from(path)
+            };
+            
+            // Return canonical path if possible, otherwise just the expanded path
+            expanded_path.canonicalize()
+                .unwrap_or(expanded_path)
+        }
+        None => {
+            // Use current directory
+            std::env::current_dir()?
+        }
+    };
+    
+    // Create colour manager for progress display
+    let colour_manager = super::initialization::create_colour_manager(args, config_manager);
+    let progress = display::ProgressIndicator::new(colour_manager.clone());
+    
+    // Show repository information
+    progress.status(display::StatusType::Info, &format!("Repository: {}", repo_path.display()));
+    
+    // Get CLI branch parameters
+    let cli_branch = args.branch.as_deref();
+    let cli_remote = args.remote.as_deref(); 
+    let cli_fallbacks: Option<Vec<String>> = args.fallback_branch.as_ref()
+        .map(|s| s.split(',').map(|s| s.trim().to_string()).collect());
+    
+    // Create branch detection
+    let branch_detection = BranchDetection::new();
+    
+    // Detect the branch
+    match branch_detection.detect_branch(&repo_path, cli_branch, cli_remote, cli_fallbacks.as_deref()) {
+        Ok(branch_result) => {
+            progress.status(display::StatusType::Info, &format!(
+                "Selected branch: {} ({})",
+                branch_result.branch_name,
+                branch_result.selection_source.debug()
+            ));
+            progress.status(display::StatusType::Info, &format!(
+                "Commit ID: {}",
+                branch_result.commit_id
+            ));
+        }
+        Err(e) => {
+            progress.status(display::StatusType::Warning, &format!("Branch detection failed: {}", e));
             return Err(e.into());
         }
     }

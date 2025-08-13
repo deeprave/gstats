@@ -88,10 +88,11 @@ pub fn args_to_scanner_config(args: &crate::cli::Args, config_manager: Option<&c
 }
 
 
-/// Convert CLI arguments to QueryParams
+/// Convert CLI arguments to QueryParams with ConfigManager integration
 /// 
 /// This function takes the parsed CLI arguments and converts them into the QueryParams
-/// structure expected by the GS-24 filtering system.
+/// structure expected by the GS-24 filtering system. CLI arguments take priority over
+/// config file settings.
 /// 
 /// # Examples
 /// 
@@ -101,9 +102,9 @@ pub fn args_to_scanner_config(args: &crate::cli::Args, config_manager: Option<&c
 /// 
 /// // Args would typically be created by clap CLI parsing
 /// // let args = Args::parse(); // from clap
-/// // let query_params = args_to_query_params(&args)?;
+/// // let query_params = args_to_query_params(&args, Some(&config_manager))?;
 /// ```
-pub fn args_to_query_params(args: &crate::cli::Args) -> Result<QueryParams, CliError> {
+pub fn args_to_query_params(args: &crate::cli::Args, config_manager: Option<&crate::config::ConfigManager>) -> Result<QueryParams, CliError> {
     // Convert date arguments
     let date_range = convert_date_arguments(&args.since, &args.until)?;
     
@@ -116,11 +117,23 @@ pub fn args_to_query_params(args: &crate::cli::Args) -> Result<QueryParams, CliE
     // Validate limit
     let scan_limit = validate_scan_limit(args.scan_limit)?;
     
+    // GS-75 Phase 4: Branch configuration priority
+    // Priority: CLI --branch > config default-branch > None
+    let branch = args.branch.clone()
+        .or_else(|| {
+            config_manager.and_then(|cm| {
+                cm.get_scanner_config()
+                    .ok()
+                    .and_then(|config| config.default_branch)
+            })
+        });
+    
     Ok(QueryParams {
         date_range,
         file_paths,
         limit: scan_limit,
         authors,
+        branch,
     })
 }
 
@@ -343,6 +356,10 @@ mod tests {
             plugins_help: false,
             export_config: None,
             list_formats: false,
+            branch: None,
+            show_branch: false,
+            fallback_branch: None,
+            remote: None,
         }
     }
 
@@ -493,9 +510,13 @@ mod tests {
             plugins_help: false,
             export_config: None,
             list_formats: false,
+            branch: None,
+            show_branch: false,
+            fallback_branch: None,
+            remote: None,
         };
         
-        let result = args_to_query_params(&args).unwrap();
+        let result = args_to_query_params(&args, None).unwrap();
         
         assert!(result.date_range.is_some());
         assert!(!result.file_paths.include.is_empty());
@@ -509,7 +530,7 @@ mod tests {
     fn test_args_to_query_params_minimal() {
         let args = create_test_args();
         
-        let result = args_to_query_params(&args).unwrap();
+        let result = args_to_query_params(&args, None).unwrap();
         
         assert!(result.date_range.is_none());
         assert!(result.file_paths.include.is_empty());
@@ -517,6 +538,60 @@ mod tests {
         assert!(result.authors.include.is_empty());
         assert!(result.authors.exclude.is_empty());
         assert!(result.limit.is_none());
+        assert!(result.branch.is_none());
+    }
+
+    // GS-75 Phase 4: Branch Configuration Integration Tests
+    #[test]
+    fn test_args_to_query_params_branch_from_cli() {
+        let mut args = create_test_args();
+        args.branch = Some("develop".to_string());
+        
+        let result = args_to_query_params(&args, None).unwrap();
+        
+        // CLI branch should be used when provided
+        assert_eq!(result.branch, Some("develop".to_string()));
+    }
+
+    #[test]
+    fn test_args_to_query_params_branch_from_config() {
+        use crate::config::{ConfigManager, Configuration};
+        use std::collections::HashMap;
+        
+        // Create config with default branch setting
+        let mut config = Configuration::new();
+        let mut scanner_section = HashMap::new();
+        scanner_section.insert("default-branch".to_string(), "config-branch".to_string());
+        config.insert("scanner".to_string(), scanner_section);
+        
+        let config_manager = ConfigManager::from_config(config);
+        let args = create_test_args(); // No CLI branch specified
+        
+        let result = args_to_query_params(&args, Some(&config_manager)).unwrap();
+        
+        // Config branch should be used when no CLI branch provided
+        assert_eq!(result.branch, Some("config-branch".to_string()));
+    }
+
+    #[test]
+    fn test_args_to_query_params_branch_cli_overrides_config() {
+        use crate::config::{ConfigManager, Configuration};
+        use std::collections::HashMap;
+        
+        // Create config with default branch setting
+        let mut config = Configuration::new();
+        let mut scanner_section = HashMap::new();
+        scanner_section.insert("default-branch".to_string(), "config-branch".to_string());
+        config.insert("scanner".to_string(), scanner_section);
+        
+        let config_manager = ConfigManager::from_config(config);
+        let mut args = create_test_args();
+        args.branch = Some("cli-branch".to_string()); // CLI branch specified
+        
+        let result = args_to_query_params(&args, Some(&config_manager)).unwrap();
+        
+        // CLI branch should override config branch
+        assert_eq!(result.branch, Some("cli-branch".to_string()));
     }
 
     #[test]
@@ -624,6 +699,10 @@ mod tests {
                 plugins_help: false,
                 export_config: None,
                 list_formats: false,
+                branch: None,
+                show_branch: false,
+                fallback_branch: None,
+                remote: None,
             };
             
             let result = args_to_scanner_config(&args, None).unwrap();
@@ -810,6 +889,10 @@ mod tests {
             plugins_help: false,
             export_config: None,
             list_formats: false,
+            branch: None,
+            show_branch: false,
+            fallback_branch: None,
+            remote: None,
         };
         
         let result = args_to_scanner_config(&args, None);
@@ -863,6 +946,10 @@ mod tests {
             plugins_help: false,
             export_config: None,
             list_formats: false,
+            branch: None,
+            show_branch: false,
+            fallback_branch: None,
+            remote: None,
         };
         
         let result = args_to_scanner_config(&args, None);

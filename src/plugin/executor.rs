@@ -111,7 +111,7 @@ impl PluginExecutor {
 
     /// Process a message through active plugins only (GS-73: Plugin Activation Architecture)
     /// This method implements activation-aware processing where only active plugins receive messages
-    pub async fn process_message_through_active_plugins(&self, message: ScanMessage) -> PluginResult<Vec<String>> {
+    pub async fn process_message_through_active_plugins(&self, _message: ScanMessage) -> PluginResult<Vec<String>> {
         let registry = self.registry.read().await;
         let active_plugins = registry.get_active_plugins();
         

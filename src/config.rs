@@ -181,6 +181,24 @@ impl ConfigManager {
             }
         }
         
+        // GS-75 Phase 4: Branch Configuration Support
+        // Handle default-branch setting
+        if let Some(default_branch) = self.get_value("scanner", "default-branch") {
+            config.default_branch = Some(default_branch.clone());
+        }
+        
+        // Handle branch-fallbacks array
+        if let Some(fallbacks_str) = self.get_value("scanner", "branch-fallbacks") {
+            let fallbacks = self.parse_toml_array(fallbacks_str);
+            // Allow empty arrays to override defaults
+            config.branch_fallbacks = fallbacks;
+        }
+        
+        // Handle default-remote setting
+        if let Some(default_remote) = self.get_value("scanner", "default-remote") {
+            config.default_remote = Some(default_remote.clone());
+        }
+        
         // Validate final configuration
         config.validate()
             .with_context(|| "Scanner configuration validation failed")?;
@@ -430,6 +448,26 @@ impl ConfigManager {
         } else {
             output.push_str("# performance-mode = false\n");
         }
+        
+        // GS-75 Phase 4: Branch configuration settings
+        if let Some(default_branch) = self.get_value("scanner", "default-branch") {
+            output.push_str(&format!("default-branch = \"{}\"\n", default_branch));
+        } else {
+            output.push_str("# default-branch = \"develop\"\n");
+        }
+        
+        if let Some(fallbacks) = self.get_value("scanner", "branch-fallbacks") {
+            output.push_str(&format!("branch-fallbacks = {}\n", fallbacks));
+        } else {
+            output.push_str("# branch-fallbacks = [\"main\", \"master\", \"develop\", \"trunk\"]\n");
+        }
+        
+        if let Some(default_remote) = self.get_value("scanner", "default-remote") {
+            output.push_str(&format!("default-remote = \"{}\"\n", default_remote));
+        } else {
+            output.push_str("# default-remote = \"origin\"\n");
+        }
+        
         output.push('\n');
         
         // Plugins configuration section
@@ -823,6 +861,133 @@ queue-size = 3000
         
         assert_eq!(scanner_config.max_memory_bytes, 1024 * 1024 * 1024); // 1GB
         assert_eq!(scanner_config.queue_size, 3000);
+    }
+
+    // GS-75 Phase 4: Branch Configuration Tests (RED)
+    #[test]
+    fn test_scanner_config_branch_settings_from_toml() {
+        let toml_content = r#"
+[scanner]
+default-branch = "develop"
+branch-fallbacks = ["main", "master", "develop", "trunk"]
+default-remote = "upstream"
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        // These should fail until branch configuration parsing is implemented
+        assert_eq!(scanner_config.default_branch, Some("develop".to_string()));
+        assert_eq!(scanner_config.branch_fallbacks, vec!["main", "master", "develop", "trunk"]);
+        assert_eq!(scanner_config.default_remote, Some("upstream".to_string()));
+    }
+
+    #[test]
+    fn test_scanner_config_branch_settings_defaults() {
+        let manager = ConfigManager {
+            config: Configuration::new(),
+            _config_file_path: None,
+            selected_section: None,
+        };
+        
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        // These should use defaults when not specified in config
+        assert_eq!(scanner_config.default_branch, None);
+        assert_eq!(scanner_config.branch_fallbacks, vec!["main", "master", "develop", "trunk"]);
+        assert_eq!(scanner_config.default_remote, None);
+    }
+
+    #[test]
+    fn test_scanner_config_partial_branch_settings() {
+        let toml_content = r#"
+[scanner]
+default-branch = "develop"
+# Leave fallbacks and remote as defaults
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        // Only default-branch should be set, others should use defaults
+        assert_eq!(scanner_config.default_branch, Some("develop".to_string()));
+        assert_eq!(scanner_config.branch_fallbacks, vec!["main", "master", "develop", "trunk"]);
+        assert_eq!(scanner_config.default_remote, None);
+    }
+
+    #[test]
+    fn test_scanner_config_empty_branch_fallbacks() {
+        let toml_content = r#"
+[scanner]
+branch-fallbacks = []
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        // Should handle empty branch fallbacks array
+        assert_eq!(scanner_config.branch_fallbacks, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_scanner_config_mixed_branch_and_performance() {
+        let toml_content = r#"
+[scanner]
+default-branch = "develop"
+default-remote = "upstream"
+performance-mode = true
+max-threads = 8
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let scanner_config = manager.get_scanner_config().unwrap();
+        
+        // Should handle mixed branch and performance settings
+        assert_eq!(scanner_config.default_branch, Some("develop".to_string()));
+        assert_eq!(scanner_config.default_remote, Some("upstream".to_string()));
+        assert_eq!(scanner_config.max_threads, Some(8));
+        // Performance mode presets
+        assert_eq!(scanner_config.max_memory_bytes, 256 * 1024 * 1024); // 256MB
+        assert_eq!(scanner_config.queue_size, 5000);
+    }
+
+    #[test]
+    fn test_export_complete_config_with_branch_settings() {
+        let toml_content = r#"
+[scanner]
+default-branch = "develop"
+branch-fallbacks = ["develop", "main"]
+default-remote = "upstream"
+max-memory = "128MB"
+"#;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        fs::write(&temp_file, toml_content).unwrap();
+        
+        let manager = ConfigManager::load_from_file(temp_file.path().to_path_buf()).unwrap();
+        let exported = manager.export_complete_config().unwrap();
+        
+        // Check that branch settings are present in export
+        assert!(exported.contains("default-branch = \"develop\""));
+        assert!(exported.contains("branch-fallbacks = [\"develop\", \"main\"]"));
+        assert!(exported.contains("default-remote = \"upstream\""));
+        assert!(exported.contains("max-memory = \"128MB\""));
+        
+        // Should not have commented defaults for set values
+        assert!(!exported.contains("# default-branch = "));
+        assert!(!exported.contains("# default-remote = "));
     }
 
     #[test]
