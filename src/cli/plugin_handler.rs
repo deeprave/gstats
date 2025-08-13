@@ -590,21 +590,24 @@ mod tests {
             plugin_exclude: vec!["commits".to_string(), "export".to_string()], // Exclude built-in plugins
         };
         
-        let mut handler = PluginHandler::with_plugin_config(config).unwrap();
-        handler.build_command_mappings().await.unwrap();
+        let handler = PluginHandler::with_plugin_config(config).unwrap();
+        let plugins = handler.discover_plugins().await.unwrap();
         
-        let mappings = handler.get_function_mappings();
-        
-        // Should only have metrics plugin functions, not commits or export
-        let plugin_names: Vec<String> = mappings.iter()
-            .map(|m| m.plugin_name.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
+        // Should only have metrics plugin, not commits or export (which are excluded)
+        let plugin_names: Vec<String> = plugins.iter()
+            .map(|p| p.info.name.clone())
             .collect();
         
-        assert!(plugin_names.contains(&"metrics".to_string()));
-        assert!(!plugin_names.contains(&"commits".to_string()));
-        assert!(!plugin_names.contains(&"export".to_string()));
+        println!("DEBUG: Found plugin names: {:?}", plugin_names);
+        println!("DEBUG: Total plugins: {}", plugins.len());
+        for plugin in &plugins {
+            println!("DEBUG: Plugin - name: {}, type: {:?}", 
+                plugin.info.name, plugin.info.plugin_type);
+        }
+        
+        assert!(plugin_names.contains(&"metrics".to_string()), "metrics plugin should be discovered");
+        assert!(!plugin_names.contains(&"commits".to_string()), "commits plugin should be excluded");
+        assert!(!plugin_names.contains(&"export".to_string()), "export plugin should be excluded");
     }
 
 }

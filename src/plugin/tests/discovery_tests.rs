@@ -8,6 +8,7 @@ use crate::plugin::error::PluginError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;
+use tempfile::tempdir;
 
 #[tokio::test]
 async fn test_file_based_discovery_creation() {
@@ -356,6 +357,96 @@ config: {{}}
     )
 }
 
+// Test that load_by_default field is properly optional and works when specified
+#[tokio::test]
+async fn test_load_by_default_field_handling() {
+    let temp_dir = tempdir().unwrap();
+    
+    // Test plugin without load_by_default (should default to false)
+    let plugin_without_field = format!(
+        r#"info:
+  name: "test-without-field"
+  version: "1.0.0"
+  api_version: 20250727
+  description: "Test plugin without load_by_default"
+  author: "Test Author"
+  url: null
+  dependencies: []
+  capabilities: []
+  plugin_type: Processing
+  license: null
+  priority: 5
+file_path: null
+entry_point: main
+config: {{}}
+"#
+    );
+    
+    // Test plugin with explicit load_by_default: true
+    let plugin_with_true = format!(
+        r#"info:
+  name: "test-with-true"
+  version: "1.0.0"
+  api_version: 20250727
+  description: "Test plugin with load_by_default true"
+  author: "Test Author"
+  url: null
+  dependencies: []
+  capabilities: []
+  plugin_type: Output
+  license: null
+  priority: 5
+  load_by_default: true
+file_path: null
+entry_point: main
+config: {{}}
+"#
+    );
+    
+    fs::write(temp_dir.path().join("without-field.yaml"), plugin_without_field).await.unwrap();
+    fs::write(temp_dir.path().join("with-true.yaml"), plugin_with_true).await.unwrap();
+    
+    let discovery = FileBasedDiscovery::new(temp_dir.path()).unwrap();
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    assert_eq!(plugins.len(), 2);
+    
+    let without_field = plugins.iter().find(|p| p.info.name == "test-without-field").unwrap();
+    let with_true = plugins.iter().find(|p| p.info.name == "test-with-true").unwrap();
+    
+    // Plugin without field should default to false
+    assert!(!without_field.info.load_by_default);
+    
+    // Plugin with explicit true should be true
+    assert!(with_true.info.load_by_default);
+}
+
+// Test that builtin export plugin has load_by_default: true
+#[tokio::test]
+async fn test_builtin_export_plugin_load_by_default() {
+    use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
+    
+    // Create discovery with no external directory to get only builtin plugins
+    let discovery = UnifiedPluginDiscovery::new(None, Vec::new()).unwrap();
+    let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Find the export plugin
+    let export_plugin = plugins.iter().find(|p| p.info.name == "export").expect("Export plugin should exist");
+    
+    // Export plugin should have load_by_default: true since it's an Output plugin
+    assert!(export_plugin.info.load_by_default, "Export plugin should have load_by_default: true");
+    assert_eq!(export_plugin.info.plugin_type, PluginType::Output);
+    
+    // Other plugins should have load_by_default: false
+    let commits_plugin = plugins.iter().find(|p| p.info.name == "commits").expect("Commits plugin should exist");
+    assert!(!commits_plugin.info.load_by_default, "Commits plugin should have load_by_default: false");
+    assert_eq!(commits_plugin.info.plugin_type, PluginType::Processing);
+    
+    let metrics_plugin = plugins.iter().find(|p| p.info.name == "metrics").expect("Metrics plugin should exist");
+    assert!(!metrics_plugin.info.load_by_default, "Metrics plugin should have load_by_default: false");
+    assert_eq!(metrics_plugin.info.plugin_type, PluginType::Processing);
+}
+
 // Tests for UnifiedPluginDiscovery
 // Following TDD methodology - these tests should initially fail
 
@@ -465,13 +556,26 @@ async fn test_unified_discovery_external_plugins_only() {
     // Create external plugin
     let external_plugin = create_test_plugin_yaml("external-scanner", "1.0.0", PluginType::Processing);
     let external_path = temp_dir.path().join("external-scanner.yaml");
+    println!("DEBUG: External plugin YAML content:\n{}", external_plugin);
     fs::write(&external_path, external_plugin).await.unwrap();
+    println!("DEBUG: Written external plugin to: {:?}", external_path);
     
     // Exclude ALL builtin plugins
     let excluded_plugins = vec!["commits".to_string(), "metrics".to_string(), "export".to_string()];
+    println!("DEBUG: Creating discovery with temp dir: {:?}", temp_dir.path());
+    println!("DEBUG: Temp dir exists: {}", temp_dir.path().exists());
     let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
+    
+    // Debug output
+    println!("DEBUG: Found {} plugins", plugins.len());
+    for plugin in &plugins {
+        println!("DEBUG: Plugin - name: {}, type: {:?}, file_path: {:?}", 
+            plugin.info.name, plugin.info.plugin_type, plugin.file_path);
+    }
+    println!("DEBUG: Temp dir: {:?}", temp_dir.path());
+    println!("DEBUG: External plugin file exists: {}", external_path.exists());
     
     // Should find only the external plugin
     assert_eq!(plugins.len(), 1);

@@ -5,6 +5,8 @@
 
 use super::error::{PluginError, PluginResult};
 use super::traits::{PluginDescriptor, PluginType};
+use crate::app::initialization::initialize_builtin_plugins;
+use crate::plugin::SharedPluginRegistry;
 use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::fs;
@@ -346,14 +348,19 @@ impl UnifiedPluginDiscovery {
                 crate::plugin::traits::PluginType::Processing // Default for commits, metrics
             };
             
-            let info = crate::plugin::traits::PluginInfo::new(
+            let mut info = crate::plugin::traits::PluginInfo::new(
                 name.to_string(),
                 "1.0.0".to_string(),
                 20250727, // Current API version
                 format!("Built-in {} plugin", name),
                 "gstats team".to_string(),
-                plugin_type,
+                plugin_type.clone(),
             );
+            
+            // Output plugins should be loaded by default
+            if plugin_type == crate::plugin::traits::PluginType::Output {
+                info = info.with_load_by_default(true);
+            }
 
             let descriptor = crate::plugin::traits::PluginDescriptor {
                 info,

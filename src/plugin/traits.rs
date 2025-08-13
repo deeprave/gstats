@@ -139,6 +139,7 @@ pub struct PluginInfo {
     
     /// Whether this plugin should be activated by default (default = false)
     /// Export plugins typically set this to true
+    #[serde(default)]
     pub load_by_default: bool,
 }
 
