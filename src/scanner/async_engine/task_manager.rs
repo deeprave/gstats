@@ -11,7 +11,6 @@ use tokio_util::sync::CancellationToken;
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
 use std::cmp::Ordering;
-// Removed queue dependency - using local memory pressure enum
 use super::error::{ScanError, ScanResult, TaskError};
 
 /// Memory pressure levels for task prioritization
@@ -289,7 +288,6 @@ impl TaskManager {
         let pending_tasks = Arc::clone(&self.pending_tasks);
         let semaphore_clone = Arc::clone(&self.semaphore);
         let constraints = self.constraints.clone();
-        // Removed queue_ref - no longer needed
         let task_id_clone = task_id.clone();
         
         // Spawn the actual task

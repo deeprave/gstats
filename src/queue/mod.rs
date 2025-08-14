@@ -52,16 +52,19 @@ pub mod error;
 pub mod notifications;
 pub mod shared_queue;
 pub mod memory;
-pub mod consumer;
-pub mod intermediate;
+pub mod multi_consumer;
+pub mod queue_consumer;
 
 // Re-export main types for convenience
 pub use error::{QueueError, QueueResult};
 pub use notifications::{QueueEvent, QueueEventNotifier};
 pub use shared_queue::SharedMessageQueue;
-pub use memory::{QueueMemoryStats, MemoryMonitor};
-pub use consumer::{PollingConsumer, EventDrivenConsumer, QueuePollingConsumer, QueueEventConsumer, PluginConsumer};
-pub use intermediate::{IntermediateData, DataTransformer, FileChangeData, ChangeType, FrequencyMetrics};
+pub use memory::MemoryMonitor;
+pub use multi_consumer::{
+    MultiConsumerQueue, MultiConsumerConfig, QueueStatistics, ConsumerSummary, 
+    BackpressureReason
+};
+pub use queue_consumer::QueueConsumer;
 
 /// Queue system version for compatibility tracking
 pub const QUEUE_API_VERSION: u32 = 1;

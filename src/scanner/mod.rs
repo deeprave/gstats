@@ -5,7 +5,7 @@
 //! 
 //! # Example Usage
 //! 
-//! ```no_run
+//! ```rust,no_run
 //! use gstats::scanner::{ScannerConfig, get_api_version};
 //! use gstats::scanner::query::{QueryParams, DateRange, FilePathFilter, AuthorFilter};
 //! use std::time::{SystemTime, Duration};
@@ -21,12 +21,13 @@
 //!     .build()
 //!     .unwrap();
 //! 
-//! // Build query parameters
+//! // Build query parameters  
 //! let query = QueryParams {
 //!     date_range: Some(DateRange::from(SystemTime::now() - Duration::from_secs(86400 * 7))),
 //!     file_paths: FilePathFilter::default(),
 //!     limit: Some(100),
 //!     authors: AuthorFilter::default(),
+//!     ..Default::default()
 //! };
 //! ```
 
@@ -40,7 +41,6 @@ pub mod query;
 pub mod async_engine;
 pub mod async_traits;
 pub mod branch_detection;
-pub mod plugin_scanner;
 pub mod statistics;
 pub mod publisher;
 
@@ -49,12 +49,10 @@ mod tests;
 
 // Re-export core types for easier access
 pub use config::ScannerConfig;
-pub use traits::{MessageProducer, CallbackMessageProducer};
+pub use traits::MessageProducer;
 pub use version::{get_api_version, is_api_compatible};
 pub use query::QueryParams;
 pub use async_engine::AsyncScannerEngineBuilder;
-pub use plugin_scanner::PluginScannerBuilder;
-pub use publisher::ScannerPublisher;
 
 use anyhow::Result;
 

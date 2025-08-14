@@ -165,6 +165,11 @@ pub async fn initialize_builtin_plugins(
     {
         let mut registry = plugin_registry.inner().write().await;
         
+        // Debug Plugin - for testing queue message flow
+        let debug_plugin = Box::new(plugin::builtin::debug::DebugPlugin::new());
+        registry.register_plugin_inactive(debug_plugin).await
+            .with_context(|| "Failed to register debug plugin")?;
+        
         // Metrics Plugin  
         let metrics_plugin = Box::new(plugin::builtin::metrics::MetricsPlugin::new());
         registry.register_plugin_inactive(metrics_plugin).await

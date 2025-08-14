@@ -13,9 +13,3 @@ pub mod format_detection;
 pub mod hotspot_detector;
 
 // Re-export main types and functions for convenience
-// Removed unused wildcard exports - these utilities are only used internally
-// pub use complexity_calculator::*;
-// pub use debt_assessor::*;
-// pub use duplication_detector::*;
-// pub use format_detection::*;
-// pub use hotspot_detector::*;

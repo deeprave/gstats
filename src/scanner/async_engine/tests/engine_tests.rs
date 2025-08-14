@@ -34,16 +34,12 @@ impl TestMessageProducer {
     }
 }
 
+#[async_trait]
 impl MessageProducer for TestMessageProducer {
-    fn produce_message(&self, message: ScanMessage) {
-        let messages = Arc::clone(&self.messages);
-        let count = Arc::clone(&self.count);
-        
-        // Use blocking task for async operation in sync context
-        tokio::task::spawn(async move {
-            messages.lock().await.push(message);
-            count.fetch_add(1, Ordering::Relaxed);
-        });
+    async fn produce_message(&self, message: ScanMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.messages.lock().await.push(message);
+        self.count.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
     
     fn get_producer_name(&self) -> &str {

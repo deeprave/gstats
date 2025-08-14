@@ -183,8 +183,6 @@ impl ProgressIndicator {
         result
     }
     
-    // Removed unused progress method - no current usage found
-    
     /// Start a spinner animation
     pub fn start_spinner(&self, message: &str) -> SpinnerHandle {
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -306,8 +304,6 @@ impl OperationTracker {
         let message = format!("{} (completed in {:.1}s)", self.message, duration.as_secs_f64());
         self.indicator.status(StatusType::Success, &message);
     }
-    
-    // Removed unused methods: error, warning, progress - no current usage found
 }
 
 #[cfg(test)]

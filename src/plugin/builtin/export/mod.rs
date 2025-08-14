@@ -8,12 +8,15 @@ pub mod config;
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginArgumentParser, PluginArgDefinition}
+    PluginResult, PluginError, traits::{PluginType, PluginArgumentParser, PluginArgDefinition, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences}
 };
+use crate::queue::{QueueConsumer, QueueEvent};
 use crate::plugin::builtin::utils::format_detection::{FormatDetector, FormatDetectionResult};
 use crate::scanner::messages::ScanMessage;
 use async_trait::async_trait;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use serde_json::json;
 
 pub use config::{ExportConfig, ExportFormat};
@@ -23,17 +26,20 @@ pub use template_engine::TemplateEngine;
 pub struct ExportPlugin {
     info: PluginInfo,
     initialized: bool,
-    export_config: ExportConfig,
-    collected_data: Vec<ScanMessage>,
-    template_engine: TemplateEngine,
+    export_config: Arc<RwLock<ExportConfig>>,
+    collected_data: Arc<RwLock<Vec<ScanMessage>>>,
+    template_engine: Arc<RwLock<TemplateEngine>>,
     format_detector: FormatDetector,
     // Plugin coordination fields
-    collected_plugins: std::collections::HashMap<String, String>, // plugin_id -> data_type
-    expected_plugins: std::collections::HashSet<String>, // Expected plugin IDs
-    scan_id: Option<String>, // Current scan ID
-    export_triggered: bool, // Whether export has been triggered for current scan
-    export_completed: bool, // Whether export has been completed
-    incremental_data: std::collections::HashMap<String, String>, // plugin_id -> incremental data
+    collected_plugins: Arc<RwLock<std::collections::HashMap<String, String>>>, // plugin_id -> data_type
+    expected_plugins: Arc<RwLock<std::collections::HashSet<String>>>, // Expected plugin IDs
+    scan_id: Arc<RwLock<Option<String>>>, // Current scan ID
+    export_triggered: Arc<RwLock<bool>>, // Whether export has been triggered for current scan
+    export_completed: Arc<RwLock<bool>>, // Whether export has been completed
+    incremental_data: Arc<RwLock<std::collections::HashMap<String, String>>>, // plugin_id -> incremental data
+    // Consumer plugin fields
+    consuming: Arc<RwLock<bool>>,
+    consumer: Arc<RwLock<Option<QueueConsumer>>>,
 }
 
 impl ExportPlugin {
@@ -77,20 +83,23 @@ impl ExportPlugin {
         Self {
             info,
             initialized: false,
-            export_config: ExportConfig::default(),
-            collected_data: Vec::new(),
-            template_engine: TemplateEngine::new(),
+            export_config: Arc::new(RwLock::new(ExportConfig::default())),
+            collected_data: Arc::new(RwLock::new(Vec::new())),
+            template_engine: Arc::new(RwLock::new(TemplateEngine::new())),
             format_detector: FormatDetector::new(),
             // Initialize coordination fields
-            collected_plugins: std::collections::HashMap::new(),
-            expected_plugins: std::collections::HashSet::from_iter(vec![
+            collected_plugins: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            expected_plugins: Arc::new(RwLock::new(std::collections::HashSet::from_iter(vec![
                 "commits".to_string(),
                 "metrics".to_string(),
-            ]),
-            scan_id: None,
-            export_triggered: false,
-            export_completed: false,
-            incremental_data: std::collections::HashMap::new(),
+            ]))),
+            scan_id: Arc::new(RwLock::new(None)),
+            export_triggered: Arc::new(RwLock::new(false)),
+            export_completed: Arc::new(RwLock::new(false)),
+            incremental_data: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            // Initialize consumer plugin fields
+            consuming: Arc::new(RwLock::new(false)),
+            consumer: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -104,23 +113,33 @@ impl ExportPlugin {
                           plugin_id, data_type, scan_id);
                 
                 // Set or verify scan ID
-                if let Some(ref current_scan_id) = self.scan_id {
-                    if *current_scan_id != scan_id {
-                        log::warn!("ExportPlugin received DataReady for different scan ID: {} (current: {})", 
-                                  scan_id, current_scan_id);
+                {
+                    let mut scan_id_guard = self.scan_id.write().await;
+                    if let Some(ref current_scan_id) = *scan_id_guard {
+                        if *current_scan_id != scan_id {
+                            log::warn!("ExportPlugin received DataReady for different scan ID: {} (current: {})", 
+                                      scan_id, current_scan_id);
+                        }
+                    } else {
+                        *scan_id_guard = Some(scan_id.clone());
                     }
-                } else {
-                    self.scan_id = Some(scan_id.clone());
                 }
                 
                 // Track collected plugin data
-                self.collected_plugins.insert(plugin_id.clone(), data_type.clone());
+                {
+                    let mut collected = self.collected_plugins.write().await;
+                    collected.insert(plugin_id.clone(), data_type.clone());
+                }
                 
+                let collected_count = {
+                    let collected = self.collected_plugins.read().await;
+                    collected.len()
+                };
                 log::debug!("ExportPlugin collected data from plugin '{}' (type: {}). Total plugins: {}", 
-                           plugin_id, data_type, self.collected_plugins.len());
+                           plugin_id, data_type, collected_count);
                 
                 // Check if all expected plugins have reported
-                if self.all_expected_plugins_ready() {
+                if self.all_expected_plugins_ready().await {
                     log::info!("ExportPlugin: All expected plugins ready for scan {}, triggering export", scan_id);
                     self.trigger_export_if_ready().await?;
                 }
@@ -136,19 +155,25 @@ impl ExportPlugin {
     }
     
     /// Check if the plugin is waiting for more plugins to report DataReady
-    pub fn is_waiting_for_plugins(&self) -> bool {
-        !self.collected_plugins.is_empty() || !self.expected_plugins.is_empty()
+    pub async fn is_waiting_for_plugins(&self) -> bool {
+        let collected = self.collected_plugins.read().await;
+        let expected = self.expected_plugins.read().await;
+        !collected.is_empty() || !expected.is_empty()
     }
     
     /// Get the count of plugins that have reported DataReady
-    pub fn get_collected_plugin_count(&self) -> usize {
-        self.collected_plugins.len()
+    pub async fn get_collected_plugin_count(&self) -> usize {
+        let collected = self.collected_plugins.read().await;
+        collected.len()
     }
     
     /// Check if all expected plugins have reported DataReady
-    pub fn all_expected_plugins_ready(&self) -> bool {
-        for expected_plugin in &self.expected_plugins {
-            if !self.collected_plugins.contains_key(expected_plugin) {
+    pub async fn all_expected_plugins_ready(&self) -> bool {
+        let expected = self.expected_plugins.read().await;
+        let collected = self.collected_plugins.read().await;
+        
+        for expected_plugin in expected.iter() {
+            if !collected.contains_key(expected_plugin) {
                 return false;
             }
         }
@@ -156,35 +181,59 @@ impl ExportPlugin {
     }
     
     /// Set the expected plugins for coordination
-    pub fn set_expected_plugins(&mut self, plugins: std::collections::HashSet<String>) {
-        self.expected_plugins = plugins;
+    pub async fn set_expected_plugins(&self, plugins: std::collections::HashSet<String>) {
+        let mut expected = self.expected_plugins.write().await;
+        *expected = plugins;
     }
     
     /// Reset coordination state for a new scan
-    pub fn reset_coordination_state(&mut self) {
-        self.collected_plugins.clear();
-        self.scan_id = None;
-        self.export_triggered = false;
-        self.export_completed = false;
-        self.incremental_data.clear();
+    pub async fn reset_coordination_state(&self) {
+        {
+            let mut collected = self.collected_plugins.write().await;
+            collected.clear();
+        }
+        {
+            let mut scan_id = self.scan_id.write().await;
+            *scan_id = None;
+        }
+        {
+            let mut triggered = self.export_triggered.write().await;
+            *triggered = false;
+        }
+        {
+            let mut completed = self.export_completed.write().await;
+            *completed = false;
+        }
+        {
+            let mut incremental = self.incremental_data.write().await;
+            incremental.clear();
+        }
     }
     
     /// Check if export should be triggered (all expected plugins ready and not already triggered)
-    pub fn should_trigger_export(&self) -> bool {
-        self.all_expected_plugins_ready() && !self.export_triggered
+    pub async fn should_trigger_export(&self) -> bool {
+        let triggered = self.export_triggered.read().await;
+        self.all_expected_plugins_ready().await && !*triggered
     }
     
     /// Trigger export if all conditions are met
-    pub async fn trigger_export_if_ready(&mut self) -> PluginResult<()> {
-        if self.should_trigger_export() {
-            log::info!("ExportPlugin: Triggering export for scan {:?}", self.scan_id);
+    pub async fn trigger_export_if_ready(&self) -> PluginResult<()> {
+        if self.should_trigger_export().await {
+            let scan_id = {
+                let scan_id_guard = self.scan_id.read().await;
+                scan_id_guard.clone()
+            };
+            log::info!("ExportPlugin: Triggering export for scan {:?}", scan_id);
             
             // TODO: Implement actual export rendering logic
             // TODO: Fetch processed data from analysis plugins
             // TODO: Render final export output
             
-            self.export_triggered = true;
-            log::info!("ExportPlugin: Export completed for scan {:?}", self.scan_id);
+            {
+                let mut triggered = self.export_triggered.write().await;
+                *triggered = true;
+            }
+            log::info!("ExportPlugin: Export completed for scan {:?}", scan_id);
             
             Ok(())
         } else {
@@ -193,10 +242,13 @@ impl ExportPlugin {
     }
     
     /// Task 4.3: Update incremental rendering with partial data
-    pub async fn update_incremental_rendering(&mut self, plugin_id: &str, data: &str) -> PluginResult<()> {
+    pub async fn update_incremental_rendering(&self, plugin_id: &str, data: &str) -> PluginResult<()> {
         log::debug!("ExportPlugin: Updating incremental rendering for plugin '{}'", plugin_id);
         
-        self.incremental_data.insert(plugin_id.to_string(), data.to_string());
+        {
+            let mut incremental = self.incremental_data.write().await;
+            incremental.insert(plugin_id.to_string(), data.to_string());
+        }
         
         // TODO: Implement actual incremental rendering logic
         // TODO: Update partial export output
@@ -206,20 +258,34 @@ impl ExportPlugin {
     }
     
     /// Check if plugin has incremental data
-    pub fn has_incremental_data(&self, plugin_id: &str) -> bool {
-        self.incremental_data.contains_key(plugin_id)
+    pub async fn has_incremental_data(&self, plugin_id: &str) -> bool {
+        let incremental = self.incremental_data.read().await;
+        incremental.contains_key(plugin_id)
     }
     
     /// Task 4.4: Notify export completion for cleanup coordination
-    pub async fn notify_export_completion(&mut self) -> PluginResult<()> {
-        if self.export_triggered && !self.export_completed {
-            log::info!("ExportPlugin: Notifying export completion for scan {:?}", self.scan_id);
+    pub async fn notify_export_completion(&self) -> PluginResult<()> {
+        let (triggered, completed) = {
+            let triggered_guard = self.export_triggered.read().await;
+            let completed_guard = self.export_completed.read().await;
+            (*triggered_guard, *completed_guard)
+        };
+        
+        if triggered && !completed {
+            let scan_id = {
+                let scan_id_guard = self.scan_id.read().await;
+                scan_id_guard.clone()
+            };
+            log::info!("ExportPlugin: Notifying export completion for scan {:?}", scan_id);
             
             // TODO: Emit ExportCompleted event
             // TODO: Notify other plugins that export is done
             // TODO: Signal cleanup coordination
             
-            self.export_completed = true;
+            {
+                let mut completed_guard = self.export_completed.write().await;
+                *completed_guard = true;
+            }
             
             Ok(())
         } else {
@@ -228,46 +294,66 @@ impl ExportPlugin {
     }
     
     /// Task 4.4: Cleanup after export completion
-    pub async fn cleanup_after_export(&mut self) -> PluginResult<()> {
-        if self.export_completed {
+    pub async fn cleanup_after_export(&self) -> PluginResult<()> {
+        let completed = {
+            let completed_guard = self.export_completed.read().await;
+            *completed_guard
+        };
+        
+        if completed {
             log::debug!("ExportPlugin: Cleaning up after export completion");
             
             // Clear collected data to free memory
-            self.collected_data.clear();
-            self.incremental_data.clear();
+            {
+                let mut data = self.collected_data.write().await;
+                data.clear();
+            }
+            {
+                let mut incremental = self.incremental_data.write().await;
+                incremental.clear();
+            }
             
             // TODO: Close file handles
             // TODO: Clean up temporary files
             // TODO: Release resources
             
-            log::info!("ExportPlugin: Cleanup completed for scan {:?}", self.scan_id);
+            let scan_id = {
+                let scan_id_guard = self.scan_id.read().await;
+                scan_id_guard.clone()
+            };
+            log::info!("ExportPlugin: Cleanup completed for scan {:?}", scan_id);
         }
         
         Ok(())
     }
 
     /// Configure export settings
-    pub fn configure(&mut self, format: ExportFormat, output_path: &str) -> PluginResult<()> {
-        self.export_config.output_format = format;
-        self.export_config.output_path = output_path.to_string();
+    pub async fn configure(&self, format: ExportFormat, output_path: &str) -> PluginResult<()> {
+        let mut config = self.export_config.write().await;
+        config.output_format = format;
+        config.output_path = output_path.to_string();
         Ok(())
     }
 
     /// Add data for export
-    pub fn add_data(&mut self, message: ScanMessage) -> PluginResult<()> {
+    pub async fn add_data(&self, message: ScanMessage) -> PluginResult<()> {
         // Always collect all data - limit is applied during export in get_data_to_export()
-        self.collected_data.push(message);
+        let mut data = self.collected_data.write().await;
+        data.push(message);
         Ok(())
     }
 
     /// Get data to export with limit applied
-    fn get_data_to_export(&self) -> Vec<&ScanMessage> {
-        if let Some(max_entries) = self.export_config.max_entries {
-            self.collected_data.iter().take(max_entries).collect()
-        } else if self.export_config.output_all {
-            self.collected_data.iter().collect()
+    async fn get_data_to_export(&self) -> Vec<ScanMessage> {
+        let config = self.export_config.read().await;
+        let data = self.collected_data.read().await;
+        
+        if let Some(max_entries) = config.max_entries {
+            data.iter().take(max_entries).cloned().collect()
+        } else if config.output_all {
+            data.clone()
         } else {
-            self.collected_data.iter().take(10).collect() // Default limit
+            data.iter().take(10).cloned().collect() // Default limit
         }
     }
 
@@ -278,38 +364,52 @@ impl ExportPlugin {
         }
 
         // If template is specified, use template with the detected format
-        if self.export_config.template_file.is_some() {
-            return self.export_template();
+        {
+            let config = self.export_config.read().await;
+            if config.template_file.is_some() {
+                return self.export_template().await;
+            }
         }
 
-        let data_to_export = self.get_data_to_export();
+        let data_to_export = self.get_data_to_export().await;
 
-        // Otherwise use built-in formatters
-        match self.export_config.output_format {
-            ExportFormat::Json => formats::json::export_json(&self.export_config, &self.collected_data, &data_to_export, &self.info),
-            ExportFormat::Csv => formats::csv::export_csv(&self.export_config, &self.collected_data, &data_to_export),
-            ExportFormat::Xml => formats::xml::export_xml(&self.export_config, &self.collected_data, &data_to_export, &self.info),
-            ExportFormat::Yaml => formats::yaml::export_yaml(&self.export_config, &self.collected_data, &data_to_export, &self.info),
-            ExportFormat::Html => formats::html::export_html(&self.export_config, &self.collected_data, &data_to_export, &self.info),
-            ExportFormat::Markdown => formats::markdown::export_markdown(&self.export_config, &self.collected_data, &data_to_export, &self.info),
+        let (config, all_data) = {
+            let config_guard = self.export_config.read().await;
+            let data_guard = self.collected_data.read().await;
+            (config_guard.clone(), data_guard.clone())
+        };
+
+        // Otherwise use built-in formatters  
+        let data_refs: Vec<&ScanMessage> = data_to_export.iter().collect();
+        match config.output_format {
+            ExportFormat::Json => formats::json::export_json(&config, &all_data, &data_refs, &self.info),
+            ExportFormat::Csv => formats::csv::export_csv(&config, &all_data, &data_refs),
+            ExportFormat::Xml => formats::xml::export_xml(&config, &all_data, &data_refs, &self.info),
+            ExportFormat::Yaml => formats::yaml::export_yaml(&config, &all_data, &data_refs, &self.info),
+            ExportFormat::Html => formats::html::export_html(&config, &all_data, &data_refs, &self.info),
+            ExportFormat::Markdown => formats::markdown::export_markdown(&config, &all_data, &data_refs, &self.info),
         }
     }
 
     /// Export data using a template
-    fn export_template(&self) -> PluginResult<String> {
-        if self.export_config.template_file.is_none() {
-            return Err(PluginError::configuration_error("Template file not specified. Use --template to specify a template file."));
+    async fn export_template(&self) -> PluginResult<String> {
+        {
+            let config = self.export_config.read().await;
+            if config.template_file.is_none() {
+                return Err(PluginError::configuration_error("Template file not specified. Use --template to specify a template file."));
+            }
         }
         
         // Prepare the template context with all available data
-        let context = self.prepare_template_context()?;
+        let context = self.prepare_template_context().await?;
         
         // Render the template with the context
-        self.template_engine.render(&context)
+        let engine = self.template_engine.read().await;
+        engine.render(&context)
     }
     
     /// Prepare comprehensive template data context
-    fn prepare_template_context(&self) -> PluginResult<serde_json::Value> {
+    async fn prepare_template_context(&self) -> PluginResult<serde_json::Value> {
         let mut context = serde_json::Map::new();
         
         // Repository metadata
@@ -327,14 +427,21 @@ impl ExportPlugin {
         }
         
         // Scan configuration
+        let (data_len, output_all, max_entries, template_vars) = {
+            let data = self.collected_data.read().await;
+            let config = self.export_config.read().await;
+            let engine = self.template_engine.read().await;
+            (data.len(), config.output_all, config.max_entries, engine.template_vars.clone())
+        };
+        
         context.insert("scan_config".to_string(), json!({
-            "total_items_scanned": self.collected_data.len(),
-            "output_all": self.export_config.output_all,
-            "output_limit": self.export_config.max_entries,
+            "total_items_scanned": data_len,
+            "output_all": output_all,
+            "output_limit": max_entries,
         }));
         
         // Add template variables passed via --template-var
-        for (key, value) in &self.template_engine.template_vars {
+        for (key, value) in &template_vars {
             context.insert(key.clone(), json!(value));
         }
         
@@ -382,7 +489,10 @@ mod tests {
             // 2. Argument Parsing with Detection
             let args = vec!["--output".to_string(), filename.to_string()];
             plugin.parse_plugin_args(&args).await.unwrap();
-            assert_eq!(plugin.export_config.output_format, expected_format);
+            {
+                let config = plugin.export_config.read().await;
+                assert_eq!(config.output_format, expected_format);
+            }
 
             // 3. Data Processing
             plugin.add_data(create_test_message(
@@ -393,7 +503,7 @@ mod tests {
                     timestamp: 1234567890,
                     changed_files: vec![],
                 }
-            )).unwrap();
+            )).await.unwrap();
             let context = create_test_plugin_context().await;
             plugin.initialize(&context).await.unwrap();
 
@@ -456,8 +566,11 @@ mod tests {
 
             // Test format detection through argument parsing
             plugin.parse_plugin_args(&args).await.unwrap();
-            assert_eq!(plugin.export_config.output_format, expected_format, 
-                      "Format detection failed for {}", filename);
+            {
+                let config = plugin.export_config.read().await;
+                assert_eq!(config.output_format, expected_format, 
+                          "Format detection failed for {}", filename);
+            }
 
             // Verify format detector compatibility
             assert!(plugin.format_detector.is_template_compatible(&expected_format),
@@ -467,7 +580,6 @@ mod tests {
 
     // Add a helper function for tests
     async fn create_test_plugin_context() -> PluginContext {
-        // Removed unused import: crate::git
         use std::sync::Arc;
         use crate::scanner::{ScannerConfig, QueryParams};
         
@@ -512,8 +624,8 @@ mod tests {
         plugin.initialize(&context).await.unwrap();
         
         // Initially, no plugins have reported
-        assert!(!plugin.all_expected_plugins_ready());
-        assert_eq!(plugin.get_collected_plugin_count(), 0);
+        assert!(!plugin.all_expected_plugins_ready().await);
+        assert_eq!(plugin.get_collected_plugin_count().await, 0);
         
         // Test first DataReady event from commits plugin
         let commits_event = ScanEvent::DataReady {
@@ -526,9 +638,9 @@ mod tests {
         assert!(result1.is_ok());
         
         // After first plugin, we're waiting for more
-        assert!(plugin.is_waiting_for_plugins());
-        assert_eq!(plugin.get_collected_plugin_count(), 1);
-        assert!(!plugin.all_expected_plugins_ready()); // Still waiting for metrics
+        assert!(plugin.is_waiting_for_plugins().await);
+        assert_eq!(plugin.get_collected_plugin_count().await, 1);
+        assert!(!plugin.all_expected_plugins_ready().await); // Still waiting for metrics
         
         // Test second DataReady event from metrics plugin
         let metrics_event = ScanEvent::DataReady {
@@ -541,13 +653,13 @@ mod tests {
         assert!(result2.is_ok());
         
         // After both plugins, all expected plugins are ready
-        assert_eq!(plugin.get_collected_plugin_count(), 2);
-        assert!(plugin.all_expected_plugins_ready()); // Now all plugins are ready
+        assert_eq!(plugin.get_collected_plugin_count().await, 2);
+        assert!(plugin.all_expected_plugins_ready().await); // Now all plugins are ready
         
         // Test coordination state reset
-        plugin.reset_coordination_state();
-        assert_eq!(plugin.get_collected_plugin_count(), 0);
-        assert!(!plugin.all_expected_plugins_ready());
+        plugin.reset_coordination_state().await;
+        assert_eq!(plugin.get_collected_plugin_count().await, 0);
+        assert!(!plugin.all_expected_plugins_ready().await);
     }
     
     #[tokio::test]
@@ -568,8 +680,11 @@ mod tests {
         plugin.handle_data_ready(commits_event).await.unwrap();
         
         // Should not trigger export yet - still waiting for metrics
-        assert!(!plugin.export_triggered);
-        assert!(!plugin.should_trigger_export()); // Not ready yet
+        {
+            let triggered = plugin.export_triggered.read().await;
+            assert!(!*triggered);
+        }
+        assert!(!plugin.should_trigger_export().await); // Not ready yet
         
         let metrics_event = ScanEvent::DataReady {
             scan_id: "test_scan".to_string(),
@@ -580,16 +695,22 @@ mod tests {
         plugin.handle_data_ready(metrics_event).await.unwrap();
         
         // Export should have been triggered automatically
-        assert!(plugin.export_triggered);
-        assert!(!plugin.should_trigger_export()); // Already triggered
+        {
+            let triggered = plugin.export_triggered.read().await;
+            assert!(*triggered);
+        }
+        assert!(!plugin.should_trigger_export().await); // Already triggered
         
         // Test manual triggering when not ready
-        plugin.reset_coordination_state();
-        assert!(!plugin.should_trigger_export()); // No plugins collected yet
+        plugin.reset_coordination_state().await;
+        assert!(!plugin.should_trigger_export().await); // No plugins collected yet
         
         let result = plugin.trigger_export_if_ready().await;
         assert!(result.is_ok());
-        assert!(!plugin.export_triggered); // Should not trigger when not ready
+        {
+            let triggered = plugin.export_triggered.read().await;
+            assert!(!*triggered); // Should not trigger when not ready
+        }
     }
     
     #[tokio::test]
@@ -612,7 +733,7 @@ mod tests {
         // Test incremental update
         let result = plugin.update_incremental_rendering("commits", "partial commit data").await;
         assert!(result.is_ok());
-        assert!(plugin.has_incremental_data("commits"));
+        assert!(plugin.has_incremental_data("commits").await);
         
         // Complete with metrics plugin
         let metrics_event = ScanEvent::DataReady {
@@ -626,11 +747,17 @@ mod tests {
         // Test export completion notification (Task 4.4)
         let completion_result = plugin.notify_export_completion().await;
         assert!(completion_result.is_ok());
-        assert!(plugin.export_completed);
+        {
+            let completed = plugin.export_completed.read().await;
+            assert!(*completed);
+        }
         
         // Test cleanup coordination (Task 4.4)
         plugin.cleanup_after_export().await.unwrap();
-        assert!(plugin.collected_data.is_empty());
+        {
+            let data = plugin.collected_data.read().await;
+            assert!(data.is_empty());
+        }
     }
     
     fn create_test_context() -> PluginContext {
@@ -675,10 +802,15 @@ impl Plugin for ExportPlugin {
                 let exported_data: serde_json::Value = serde_json::from_str(&exported_data_str)
                     .unwrap_or_else(|_| serde_json::json!(exported_data_str));
 
+                let entries_count = {
+                    let data = self.collected_data.read().await;
+                    data.len() as u64
+                };
+                
                 let metadata = crate::plugin::context::ExecutionMetadata {
                     duration_us,
                     memory_used: 0,
-                    entries_processed: self.collected_data.len() as u64,
+                    entries_processed: entries_count,
                     plugin_version: "1.0.0".to_string(),
                     extra: std::collections::HashMap::new(),
                 };
@@ -686,7 +818,7 @@ impl Plugin for ExportPlugin {
                 // Return the exported data as JSON
                 let result_data = serde_json::json!({
                     "exported_data": exported_data,
-                    "entries_processed": self.collected_data.len()
+                    "entries_processed": entries_count
                 });
 
                 Ok(PluginResponse::success(request_id, result_data, metadata))
@@ -704,10 +836,15 @@ impl Plugin for ExportPlugin {
                 let exported_data: serde_json::Value = serde_json::from_str(&exported_data_str)
                     .unwrap_or_else(|_| serde_json::json!(exported_data_str));
 
+                let entries_count = {
+                    let data = self.collected_data.read().await;
+                    data.len() as u64
+                };
+                
                 let metadata = crate::plugin::context::ExecutionMetadata {
                     duration_us,
                     memory_used: 0,
-                    entries_processed: self.collected_data.len() as u64,
+                    entries_processed: entries_count,
                     plugin_version: "1.0.0".to_string(),
                     extra: std::collections::HashMap::new(),
                 };
@@ -715,7 +852,7 @@ impl Plugin for ExportPlugin {
                 // For Export requests, return the raw exported data
                 let result_data = serde_json::json!({
                     "exported_data": exported_data,
-                    "entries_processed": self.collected_data.len()
+                    "entries_processed": entries_count
                 });
 
                 Ok(PluginResponse::success("export".to_string(), result_data, metadata))
@@ -734,6 +871,20 @@ impl Plugin for ExportPlugin {
     }
 
     async fn cleanup(&mut self) -> PluginResult<()> {
+        // Stop consuming if we're currently consuming
+        if *self.consuming.read().await {
+            self.stop_consuming().await?;
+        }
+        
+        // Clear collected data
+        {
+            let mut data = self.collected_data.write().await;
+            data.clear();
+        }
+        
+        // Reset coordination state
+        self.reset_coordination_state().await;
+        
         Ok(())
     }
     
@@ -752,6 +903,113 @@ impl Plugin for ExportPlugin {
     /// Get the default function name
     fn default_function(&self) -> Option<&str> {
         Some("export")
+    }
+    
+    /// Cast to ConsumerPlugin since this plugin implements that trait
+    fn as_consumer_plugin(&self) -> Option<&dyn ConsumerPlugin> {
+        Some(self)
+    }
+    
+    /// Cast to mutable ConsumerPlugin since this plugin implements that trait  
+    fn as_consumer_plugin_mut(&mut self) -> Option<&mut dyn ConsumerPlugin> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl ConsumerPlugin for ExportPlugin {
+    async fn start_consuming(&mut self, consumer: QueueConsumer) -> PluginResult<()> {
+        let mut consuming = self.consuming.write().await;
+        
+        if *consuming {
+            return Err(PluginError::invalid_state("Already consuming"));
+        }
+        
+        *consuming = true;
+        
+        // Store the consumer
+        {
+            let mut consumer_guard = self.consumer.write().await;
+            *consumer_guard = Some(consumer);
+        }
+        
+        log::info!("Export plugin started consuming messages");
+        Ok(())
+    }
+    
+    async fn process_message(&self, consumer: &QueueConsumer, message: Arc<ScanMessage>) -> PluginResult<()> {
+        // Add message to collected data
+        self.add_data((*message).clone()).await?;
+        
+        // Acknowledge the message
+        consumer.acknowledge(message.header().sequence()).await.map_err(|e| {
+            PluginError::execution_failed(format!("Failed to acknowledge message: {}", e))
+        })?;
+        
+        Ok(())
+    }
+    
+    async fn handle_queue_event(&self, event: &QueueEvent) -> PluginResult<()> {
+        log::debug!("Export plugin received queue event: {:?}", event);
+        
+        match event {
+            QueueEvent::ScanStarted { scan_id, .. } => {
+                log::info!("Export plugin: scan started for {}", scan_id);
+                // Reset coordination state for new scan
+                self.reset_coordination_state().await;
+                {
+                    let mut scan_id_guard = self.scan_id.write().await;
+                    *scan_id_guard = Some(scan_id.clone());
+                }
+            }
+            QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
+                let data_count = {
+                    let data = self.collected_data.read().await;
+                    data.len()
+                };
+                log::info!(
+                    "Export plugin: scan complete for {} - collected {} messages (total {} messages)", 
+                    scan_id, data_count, total_messages
+                );
+                
+                // Trigger export when scan completes
+                self.trigger_export_if_ready().await?;
+            }
+            _ => {
+                // Other events are just logged
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn stop_consuming(&mut self) -> PluginResult<()> {
+        let mut consuming = self.consuming.write().await;
+        
+        if !*consuming {
+            return Ok(()); // Already stopped
+        }
+        
+        *consuming = false;
+        
+        // Clear the consumer handle
+        {
+            let mut consumer_guard = self.consumer.write().await;
+            *consumer_guard = None;
+        }
+        
+        log::info!("Export plugin stopped consuming messages");
+        Ok(())
+    }
+    
+    fn consumer_preferences(&self) -> ConsumerPreferences {
+        ConsumerPreferences {
+            consume_all_messages: true, // Export needs all data types
+            interested_message_types: vec![], // Empty = all types
+            high_frequency_capable: true, // Can handle high message rates
+            preferred_batch_size: 50, // Process in larger batches for efficiency
+            requires_ordered_delivery: false, // Order doesn't matter for final export
+        }
     }
 }
 
@@ -843,13 +1101,17 @@ impl PluginArgumentParser for ExportPlugin {
                         return Err(PluginError::configuration_error("--output requires a value"));
                     }
                     let output_path = &args[i + 1];
-                    self.export_config.output_path = output_path.clone();
+                    {
+                        let mut config = self.export_config.write().await;
+                        config.output_path = output_path.clone();
+                    }
                     
                     // Auto-detect format from file extension if not explicitly set
                     let detection_result = self.format_detector.detect_format_from_path(output_path);
                     match detection_result {
                         FormatDetectionResult::Detected(format) => {
-                            self.export_config.output_format = format;
+                            let mut config = self.export_config.write().await;
+                            config.output_format = format;
                         }
                         FormatDetectionResult::UnknownExtension(ext) => {
                             return Err(PluginError::configuration_error(&format!(
@@ -874,7 +1136,7 @@ impl PluginArgumentParser for ExportPlugin {
                         return Err(PluginError::configuration_error("--format requires a value"));
                     }
                     let format_str = &args[i + 1];
-                    self.export_config.output_format = match format_str.to_lowercase().as_str() {
+                    let format = match format_str.to_lowercase().as_str() {
                         "json" => ExportFormat::Json,
                         "csv" => ExportFormat::Csv,
                         "xml" => ExportFormat::Xml,
@@ -886,10 +1148,15 @@ impl PluginArgumentParser for ExportPlugin {
                             format_str
                         ))),
                     };
+                    {
+                        let mut config = self.export_config.write().await;
+                        config.output_format = format;
+                    }
                     i += 2;
                 }
                 "--include-metadata" => {
-                    self.export_config.include_metadata = true;
+                    let mut config = self.export_config.write().await;
+                    config.include_metadata = true;
                     i += 1;
                 }
                 "--max-entries" => {
@@ -897,28 +1164,39 @@ impl PluginArgumentParser for ExportPlugin {
                         return Err(PluginError::configuration_error("--max-entries requires a value"));
                     }
                     let max_str = &args[i + 1];
-                    self.export_config.max_entries = Some(
+                    let max_entries = Some(
                         max_str.parse::<usize>()
                             .map_err(|_| PluginError::configuration_error("--max-entries must be a positive integer"))?
                     );
+                    {
+                        let mut config = self.export_config.write().await;
+                        config.max_entries = max_entries;
+                    }
                     i += 2;
                 }
                 "--output-all" => {
-                    self.export_config.output_all = true;
+                    let mut config = self.export_config.write().await;
+                    config.output_all = true;
                     i += 1;
                 }
                 "--csv-delimiter" => {
                     if i + 1 >= args.len() {
                         return Err(PluginError::configuration_error("--csv-delimiter requires a value"));
                     }
-                    self.export_config.csv_delimiter = args[i + 1].clone();
+                    {
+                        let mut config = self.export_config.write().await;
+                        config.csv_delimiter = args[i + 1].clone();
+                    }
                     i += 2;
                 }
                 "--csv-quote-char" => {
                     if i + 1 >= args.len() {
                         return Err(PluginError::configuration_error("--csv-quote-char requires a value"));
                     }
-                    self.export_config.csv_quote_char = args[i + 1].clone();
+                    {
+                        let mut config = self.export_config.write().await;
+                        config.csv_quote_char = args[i + 1].clone();
+                    }
                     i += 2;
                 }
                 "--template" => {
@@ -934,8 +1212,14 @@ impl PluginArgumentParser for ExportPlugin {
                     }
                     
                     // Load the template
-                    self.template_engine.load_template(&template_path)?;
-                    self.export_config.template_file = Some(template_path);
+                    {
+                        let mut engine = self.template_engine.write().await;
+                        engine.load_template(&template_path)?;
+                    }
+                    {
+                        let mut config = self.export_config.write().await;
+                        config.template_file = Some(template_path);
+                    }
                     i += 2;
                 }
                 "--template-var" => {
@@ -946,7 +1230,10 @@ impl PluginArgumentParser for ExportPlugin {
                     if let Some(eq_pos) = var_str.find('=') {
                         let key = var_str[..eq_pos].to_string();
                         let value = var_str[eq_pos + 1..].to_string();
-                        self.template_engine.add_template_var(key, value);
+                        {
+                            let mut engine = self.template_engine.write().await;
+                            engine.add_template_var(key, value);
+                        }
                     } else {
                         return Err(PluginError::configuration_error(
                             "--template-var must be in key=value format"
@@ -964,11 +1251,38 @@ impl PluginArgumentParser for ExportPlugin {
         }
 
         // Validate required arguments
-        if self.export_config.output_path.is_empty() {
-            return Err(PluginError::configuration_error("--output is required"));
+        {
+            let config = self.export_config.read().await;
+            if config.output_path.is_empty() {
+                return Err(PluginError::configuration_error("--output is required"));
+            }
         }
 
         Ok(())
+    }
+}
+
+/// Data requirements implementation for ExportPlugin
+/// This plugin only processes data from other plugins, no direct file access needed
+impl PluginDataRequirements for ExportPlugin {
+    fn requires_current_file_content(&self) -> bool {
+        false // Works with processed data from other plugins
+    }
+    
+    fn requires_historical_file_content(&self) -> bool {
+        false // Only exports final processed results
+    }
+    
+    fn preferred_buffer_size(&self) -> usize {
+        4096 // Small buffer since we don't read files
+    }
+    
+    fn max_file_size(&self) -> Option<usize> {
+        None // N/A - doesn't process files directly
+    }
+    
+    fn handles_binary_files(&self) -> bool {
+        false // N/A - doesn't process files directly
     }
 }
 

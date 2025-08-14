@@ -4,19 +4,24 @@
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginFunction}
+    PluginResult, PluginError, traits::{PluginType, PluginFunction, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences}
 };
+use crate::queue::{QueueConsumer, QueueEvent};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use serde_json::json;
 
 /// Commits analysis plugin
 pub struct CommitsPlugin {
     info: PluginInfo,
     initialized: bool,
-    commit_count: usize,
-    author_stats: HashMap<String, usize>,
+    commit_count: Arc<RwLock<usize>>,
+    author_stats: Arc<RwLock<HashMap<String, usize>>>,
+    consuming: Arc<RwLock<bool>>,
+    consumer: Arc<RwLock<Option<QueueConsumer>>>,
 }
 
 impl CommitsPlugin {
@@ -44,8 +49,10 @@ impl CommitsPlugin {
         Self {
             info,
             initialized: false,
-            commit_count: 0,
-            author_stats: HashMap::new(),
+            commit_count: Arc::new(RwLock::new(0)),
+            author_stats: Arc::new(RwLock::new(HashMap::new())),
+            consuming: Arc::new(RwLock::new(false)),
+            consumer: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -106,8 +113,14 @@ impl CommitsPlugin {
                 if fatal {
                     log::error!("CommitsPlugin received fatal error for scan {}: {}", scan_id, error);
                     // Fatal errors require cleanup and abort processing
-                    self.commit_count = 0;
-                    self.author_stats.clear();
+                    {
+                        let mut count = self.commit_count.write().await;
+                        *count = 0;
+                    }
+                    {
+                        let mut stats = self.author_stats.write().await;
+                        stats.clear();
+                    }
                     log::info!("CommitsPlugin cleaned up partial data for scan {}", scan_id);
                 } else {
                     log::warn!("CommitsPlugin received non-fatal error for scan {}: {}", scan_id, error);
@@ -133,8 +146,13 @@ impl CommitsPlugin {
                           scan_id, duration, warnings.len());
                 
                 // Finalize commit analysis processing
+                let (count, author_count) = {
+                    let count_guard = self.commit_count.read().await;
+                    let stats_guard = self.author_stats.read().await;
+                    (*count_guard, stats_guard.len())
+                };
                 log::info!("CommitsPlugin processed {} commits from {} authors for scan {}", 
-                          self.commit_count, self.author_stats.len(), scan_id);
+                          count, author_count, scan_id);
                 
                 // TODO: Emit DataReady event to signal export plugins that commit analysis is complete
                 // TODO: Prepare final commit statistics and metrics
@@ -149,26 +167,38 @@ impl CommitsPlugin {
         }
     }
 
-    /// Process a commit message and extract statistics
-    fn process_commit(&mut self, message: &ScanMessage) -> PluginResult<()> {
+    /// Process a commit message and extract statistics  
+    async fn process_commit(&self, message: &ScanMessage) -> PluginResult<()> {
         // Extract commit information from scan message
         if let MessageData::CommitInfo { author, .. } = &message.data {
-            self.commit_count += 1;
-            *self.author_stats.entry(author.clone()).or_insert(0) += 1;
+            {
+                let mut count = self.commit_count.write().await;
+                *count += 1;
+            }
+            {
+                let mut stats = self.author_stats.write().await;
+                *stats.entry(author.clone()).or_insert(0) += 1;
+            }
         }
         Ok(())
     }
 
     /// Generate commit summary statistics
-    fn generate_summary(&self) -> PluginResult<ScanMessage> {
+    async fn generate_summary(&self) -> PluginResult<ScanMessage> {
         // Create a metric info message containing our summary statistics
+        let (author_count, commit_count) = {
+            let stats = self.author_stats.read().await;
+            let count = self.commit_count.read().await;
+            (stats.len(), *count)
+        };
+        
         let data = MessageData::MetricInfo {
-            file_count: self.author_stats.len() as u32,
-            line_count: self.commit_count as u64,
-            complexity: if self.author_stats.is_empty() {
+            file_count: author_count as u32,
+            line_count: commit_count as u64,
+            complexity: if author_count == 0 {
                 0.0
             } else {
-                self.commit_count as f64 / self.author_stats.len() as f64
+                commit_count as f64 / author_count as f64
             },
         };
 
@@ -186,13 +216,19 @@ impl CommitsPlugin {
     async fn execute_commits_analysis(&self) -> PluginResult<PluginResponse> {
         let start_time = std::time::Instant::now();
 
+        let (commit_count, author_count) = {
+            let count = self.commit_count.read().await;
+            let stats = self.author_stats.read().await;
+            (*count, stats.len())
+        };
+
         let data = json!({
-            "total_commits": self.commit_count,
-            "unique_authors": self.author_stats.len(),
-            "avg_commits_per_author": if self.author_stats.is_empty() {
+            "total_commits": commit_count,
+            "unique_authors": author_count,
+            "avg_commits_per_author": if author_count == 0 {
                 0.0
             } else {
-                self.commit_count as f64 / self.author_stats.len() as f64
+                commit_count as f64 / author_count as f64
             },
             "function": "commits"
         });
@@ -206,7 +242,7 @@ impl CommitsPlugin {
             metadata: crate::plugin::context::ExecutionMetadata {
                 duration_us,
                 memory_used: 0,
-                entries_processed: self.commit_count as u64,
+                entries_processed: commit_count as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -218,15 +254,20 @@ impl CommitsPlugin {
     async fn execute_author_analysis(&self) -> PluginResult<PluginResponse> {
         let start_time = std::time::Instant::now();
 
-        let mut authors: Vec<_> = self.author_stats.iter().collect();
-        authors.sort_by(|a, b| b.1.cmp(a.1)); // Sort by commit count descending
+        let (author_count, author_stats, mut authors) = {
+            let stats = self.author_stats.read().await;
+            let authors: Vec<_> = stats.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            (stats.len(), stats.clone(), authors)
+        };
+        
+        authors.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by commit count descending
 
         let data = json!({
-            "total_authors": self.author_stats.len(),
+            "total_authors": author_count,
             "top_authors": authors.iter().take(10).map(|(name, count)| {
                 json!({ "name": name, "commits": count })
             }).collect::<Vec<_>>(),
-            "author_stats": self.author_stats,
+            "author_stats": author_stats,
             "function": "authors"
         });
 
@@ -239,7 +280,7 @@ impl CommitsPlugin {
             metadata: crate::plugin::context::ExecutionMetadata {
                 duration_us,
                 memory_used: 0,
-                entries_processed: self.author_stats.len() as u64,
+                entries_processed: author_count as u64,
                 plugin_version: self.info.version.clone(),
                 extra: HashMap::new(),
             },
@@ -262,12 +303,18 @@ impl Plugin for CommitsPlugin {
 
     async fn initialize(&mut self, _context: &PluginContext) -> PluginResult<()> {
         if self.initialized {
-            return Err(PluginError::initialization_failed("Plugin already initialized"));
+            return Ok(()); // Idempotent - allow re-initialization
         }
 
         // Reset statistics
-        self.commit_count = 0;
-        self.author_stats.clear();
+        {
+            let mut count = self.commit_count.write().await;
+            *count = 0;
+        }
+        {
+            let mut stats = self.author_stats.write().await;
+            stats.clear();
+        }
         self.initialized = true;
 
         Ok(())
@@ -301,7 +348,7 @@ impl Plugin for CommitsPlugin {
                 }
             }
             PluginRequest::GetStatistics => {
-                let summary = self.generate_summary()?;
+                let summary = self.generate_summary().await?;
                 Ok(PluginResponse::Statistics(summary))
             }
             PluginRequest::GetCapabilities => {
@@ -312,9 +359,20 @@ impl Plugin for CommitsPlugin {
     }
 
     async fn cleanup(&mut self) -> PluginResult<()> {
+        // Stop consuming if we're currently consuming
+        if *self.consuming.read().await {
+            self.stop_consuming().await?;
+        }
+        
         self.initialized = false;
-        self.commit_count = 0;
-        self.author_stats.clear();
+        {
+            let mut count = self.commit_count.write().await;
+            *count = 0;
+        }
+        {
+            let mut stats = self.author_stats.write().await;
+            stats.clear();
+        }
         Ok(())
     }
     
@@ -340,24 +398,164 @@ impl Plugin for CommitsPlugin {
     fn default_function(&self) -> Option<&str> {
         Some("commits")
     }
+    
+    /// Cast to ConsumerPlugin since this plugin implements that trait
+    fn as_consumer_plugin(&self) -> Option<&dyn ConsumerPlugin> {
+        Some(self)
+    }
+    
+    /// Cast to mutable ConsumerPlugin since this plugin implements that trait
+    fn as_consumer_plugin_mut(&mut self) -> Option<&mut dyn ConsumerPlugin> {
+        Some(self)
+    }
+}
+
+/// Data requirements implementation for CommitsPlugin
+/// This plugin only needs commit metadata, not file content
+impl PluginDataRequirements for CommitsPlugin {
+    fn requires_current_file_content(&self) -> bool {
+        false // Only needs commit metadata (author, hash, message, timestamp)
+    }
+    
+    fn requires_historical_file_content(&self) -> bool {
+        false // Only analyzes commit history metadata, not file changes
+    }
+    
+    fn preferred_buffer_size(&self) -> usize {
+        4096 // Small buffer since we don't read files
+    }
+    
+    fn max_file_size(&self) -> Option<usize> {
+        None // N/A - doesn't process files
+    }
+    
+    fn handles_binary_files(&self) -> bool {
+        false // N/A - doesn't process files
+    }
+}
+
+#[async_trait]
+impl ConsumerPlugin for CommitsPlugin {
+    async fn start_consuming(&mut self, consumer: QueueConsumer) -> PluginResult<()> {
+        let mut consuming = self.consuming.write().await;
+        
+        if *consuming {
+            return Err(PluginError::invalid_state("Already consuming"));
+        }
+        
+        *consuming = true;
+        
+        // Store the consumer
+        {
+            let mut consumer_guard = self.consumer.write().await;
+            *consumer_guard = Some(consumer);
+        }
+        
+        log::info!("Commits plugin started consuming messages");
+        Ok(())
+    }
+    
+    async fn process_message(&self, consumer: &QueueConsumer, message: Arc<ScanMessage>) -> PluginResult<()> {
+        // Process the commit message and update statistics
+        self.process_commit(&message).await?;
+        
+        // Acknowledge the message
+        consumer.acknowledge(message.header().sequence()).await.map_err(|e| {
+            PluginError::execution_failed(format!("Failed to acknowledge message: {}", e))
+        })?;
+        
+        Ok(())
+    }
+    
+    async fn handle_queue_event(&self, event: &QueueEvent) -> PluginResult<()> {
+        log::debug!("Commits plugin received queue event: {:?}", event);
+        
+        match event {
+            QueueEvent::ScanStarted { scan_id, .. } => {
+                log::info!("Commits plugin: scan started for {}", scan_id);
+                // Reset statistics for new scan
+                {
+                    let mut count = self.commit_count.write().await;
+                    *count = 0;
+                }
+                {
+                    let mut stats = self.author_stats.write().await;
+                    stats.clear();
+                }
+            }
+            QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
+                let count = self.commit_count.read().await;
+                let author_count = self.author_stats.read().await.len();
+                log::info!(
+                    "Commits plugin: scan complete for {} - processed {} commits from {} authors (total {} messages)", 
+                    scan_id, *count, author_count, total_messages
+                );
+            }
+            _ => {
+                // Other events are just logged
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn stop_consuming(&mut self) -> PluginResult<()> {
+        let mut consuming = self.consuming.write().await;
+        
+        if !*consuming {
+            return Ok(()); // Already stopped
+        }
+        
+        *consuming = false;
+        
+        // Clear the consumer handle
+        {
+            let mut consumer_guard = self.consumer.write().await;
+            *consumer_guard = None;
+        }
+        
+        log::info!("Commits plugin stopped consuming messages");
+        Ok(())
+    }
+    
+    fn consumer_preferences(&self) -> ConsumerPreferences {
+        ConsumerPreferences {
+            consume_all_messages: false, // Only interested in commit messages
+            interested_message_types: vec!["CommitInfo".to_string()],
+            high_frequency_capable: true, // Can handle many commits
+            preferred_batch_size: 10, // Process in small batches
+            requires_ordered_delivery: false, // Order doesn't matter for statistics
+        }
+    }
 }
 
 impl CommitsPlugin {
     /// Clone for processing (workaround for mutable operations in immutable context)
-    fn clone_for_processing(&self) -> Self {
+    async fn clone_for_processing(&self) -> Self {
+        let (count, stats) = {
+            let count_guard = self.commit_count.read().await;
+            let stats_guard = self.author_stats.read().await;
+            (*count_guard, stats_guard.clone())
+        };
+        
         Self {
             info: self.info.clone(),
             initialized: self.initialized,
-            commit_count: self.commit_count,
-            author_stats: self.author_stats.clone(),
+            commit_count: Arc::new(RwLock::new(count)),
+            author_stats: Arc::new(RwLock::new(stats)),
+            consuming: Arc::new(RwLock::new(false)),
+            consumer: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Generate analysis for a single commit
-    fn generate_commit_analysis(&self, commit: &ScanMessage) -> PluginResult<ScanMessage> {
-        if let MessageData::CommitInfo {  author, message,  .. } = &commit.data {
+    async fn generate_commit_analysis(&self, commit: &ScanMessage) -> PluginResult<ScanMessage> {
+        if let MessageData::CommitInfo { author, message, .. } = &commit.data {
             // Get author commit count
-            let count = self.author_stats.get(author).unwrap_or(&0);
+            let count = {
+                let stats = self.author_stats.read().await;
+                *stats.get(author).unwrap_or(&0)
+            };
             
             // Analyze commit message
             let is_merge_commit = message.contains("Merge");
@@ -368,7 +566,7 @@ impl CommitsPlugin {
 
             // Create a metric info that represents the commit analysis
             let data = MessageData::MetricInfo {
-                file_count: *count as u32, // Author's commit count
+                file_count: count as u32, // Author's commit count
                 line_count: message.len() as u64, // Message length
                 complexity: if is_merge_commit { 1.0 } else { 0.0 }, // Is merge commit indicator
             };
@@ -445,8 +643,8 @@ mod tests {
         assert!(plugin.initialize(&context).await.is_ok());
         assert!(plugin.initialized);
 
-        // Test double initialization fails
-        assert!(plugin.initialize(&context).await.is_err());
+        // Test double initialization succeeds (idempotent)
+        assert!(plugin.initialize(&context).await.is_ok());
     }
 
     #[tokio::test]
@@ -504,14 +702,19 @@ mod tests {
 
         assert!(plugin.cleanup().await.is_ok());
         assert!(!plugin.initialized);
-        assert_eq!(plugin.commit_count, 0);
-        assert!(plugin.author_stats.is_empty());
+        {
+            let count = plugin.commit_count.read().await;
+            assert_eq!(*count, 0);
+        }
+        {
+            let stats = plugin.author_stats.read().await;
+            assert!(stats.is_empty());
+        }
     }
 
     #[tokio::test]
     async fn test_commits_plugin_handles_scan_data_ready() {
         use crate::notifications::ScanEvent;
-        // Removed unused import: crate::scanner::ScanMode
         
         let mut plugin = CommitsPlugin::new();
         let context = create_test_context();

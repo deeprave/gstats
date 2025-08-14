@@ -6,7 +6,6 @@ use crate::plugin::discovery::{PluginDiscovery, FileBasedDiscovery, PluginDescri
 use crate::plugin::traits::{PluginDescriptor, PluginInfo, PluginType};
 use crate::plugin::error::PluginError;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tokio::fs;
 use tempfile::tempdir;
 
@@ -511,10 +510,11 @@ async fn test_unified_discovery_builtin_plugins_only() {
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
-    // Should find builtin plugins: commits, metrics, export
-    assert_eq!(plugins.len(), 3);
+    // Should find builtin plugins: debug, commits, metrics, export
+    assert_eq!(plugins.len(), 4);
     
     let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"debug"));
     assert!(plugin_names.contains(&"commits"));
     assert!(plugin_names.contains(&"metrics"));
     assert!(plugin_names.contains(&"export"));
@@ -536,8 +536,8 @@ async fn test_unified_discovery_builtin_plugins_with_exclusions() {
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
-    // Should find 2 builtin plugins (3 total - 1 excluded)
-    assert_eq!(plugins.len(), 2);
+    // Should find 3 builtin plugins (4 total - 1 excluded)
+    assert_eq!(plugins.len(), 3);
     
     let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
     assert!(plugin_names.contains(&"commits"));
@@ -561,7 +561,7 @@ async fn test_unified_discovery_external_plugins_only() {
     println!("DEBUG: Written external plugin to: {:?}", external_path);
     
     // Exclude ALL builtin plugins
-    let excluded_plugins = vec!["commits".to_string(), "metrics".to_string(), "export".to_string()];
+    let excluded_plugins = vec!["debug".to_string(), "commits".to_string(), "metrics".to_string(), "export".to_string()];
     println!("DEBUG: Creating discovery with temp dir: {:?}", temp_dir.path());
     println!("DEBUG: Temp dir exists: {}", temp_dir.path().exists());
     let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
@@ -602,10 +602,11 @@ async fn test_unified_discovery_mixed_builtin_and_external() {
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
-    // Should find 3 builtin + 1 external = 4 total
-    assert_eq!(plugins.len(), 4);
+    // Should find 4 builtin + 1 external = 5 total
+    assert_eq!(plugins.len(), 5);
     
     let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
+    assert!(plugin_names.contains(&"debug"));
     assert!(plugin_names.contains(&"commits"));
     assert!(plugin_names.contains(&"metrics"));
     assert!(plugin_names.contains(&"export"));
@@ -631,8 +632,8 @@ async fn test_unified_discovery_external_overrides_builtin() {
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
-    // Should find 3 total: external "commits" + builtin "metrics" + builtin "export"
-    assert_eq!(plugins.len(), 3);
+    // Should find 4 total: external "commits" + builtin "debug" + builtin "metrics" + builtin "export"
+    assert_eq!(plugins.len(), 4);
     
     let commits_plugin = plugins.iter().find(|p| p.info.name == "commits").unwrap();
     
@@ -664,7 +665,7 @@ async fn test_unified_discovery_multiple_external_plugins_same_name() {
     fs::write(&plugin2_path, plugin2).await.unwrap();
     
     // Exclude all builtin plugins to focus on external behavior
-    let excluded_plugins = vec!["commits".to_string(), "metrics".to_string(), "export".to_string()];
+    let excluded_plugins = vec!["debug".to_string(), "commits".to_string(), "metrics".to_string(), "export".to_string()];
     let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
@@ -698,11 +699,12 @@ async fn test_unified_discovery_external_exclusion() {
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
-    // Should find: "wanted" external + "commits" builtin + "export" builtin = 3 total
-    assert_eq!(plugins.len(), 3);
+    // Should find: "wanted" external + "debug" builtin + "commits" builtin + "export" builtin = 4 total
+    assert_eq!(plugins.len(), 4);
     
     let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
     assert!(plugin_names.contains(&"wanted"));
+    assert!(plugin_names.contains(&"debug"));
     assert!(plugin_names.contains(&"commits"));
     assert!(plugin_names.contains(&"export"));
     assert!(!plugin_names.contains(&"unwanted"));

@@ -23,7 +23,6 @@ pub mod registry;
 pub mod notification;
 pub mod compatibility;
 pub mod discovery;
-pub mod executor;
 pub mod subscriber;
 pub mod builtin;
 pub mod processors;
@@ -41,6 +40,5 @@ pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType};
 pub use traits::PluginInfo;
 
 // Registry and management
+#[allow(unused_imports)]
 pub use registry::{PluginRegistry, SharedPluginRegistry};
-pub use executor::PluginExecutor;
-// Removed unused export: subscriber::PluginSubscriber

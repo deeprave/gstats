@@ -50,29 +50,49 @@ The command-line interface provides user interaction and system configuration.
 
 ### 2. Scanner Engine (`src/scanner/`)
 
-High-performance async scanning system for repository analysis using event-driven single-pass architecture.
+High-performance async scanning system for repository analysis using event-driven single-pass architecture with enhanced file tracking and conditional checkout capabilities.
 
 #### Async Engine (`async_engine/`):
 - **Engine** (`engine.rs`): Orchestrates scanning operations with plugin integration
-- **EventDrivenScanner** (`scanners.rs`): Single-pass repository traversal with gitoxide
+- **EventDrivenScanner** (`scanners.rs`): Single-pass repository traversal with gitoxide and enhanced helper functions
+- **FileTracker** (`file_tracker.rs`): Backwards history traversal with accurate line counting and lifecycle analysis
+- **CheckoutManager** (`checkout_manager.rs`): Conditional file checkout based on plugin requirements
+- **DiffAnalyzer** (`diff_analyzer.rs`): Smart diff parsing for precise change analysis
 - **Processors** (`processors/`): Event-driven data processing components
-- **Messages** (`../messages.rs`): Structured data flow with scan mode support
+- **Messages** (`../messages.rs`): Structured data flow with enhanced FileChange messages
+
+#### Enhanced Features (Post-Refactoring):
+- **Smart Diff Analysis**: Parses git diff output directly for accurate line count changes
+- **Conditional File Checkout**: Only creates temporary files when plugins require file content
+- **Backwards File Tracking**: Maintains accurate file states working backwards through git history
+- **Binary File Support**: Handles both text files (line counts) and binary files (byte sizes)
+- **File Lifecycle Analysis**: Detects deletion, resurrection, and rename patterns
+- **Plugin Data Requirements**: PluginDataRequirements trait for declaring file access needs
+- **Memory Optimization**: Avoids unnecessary file operations when plugins only need metadata
 
 #### Plugin Integration:
 - **PluginScanner** (`plugin_scanner.rs`): Wraps scanners with plugin processing capabilities
 - **PluginScannerBuilder**: Creates plugin-enabled scanners with registry integration
+- **PluginDataRequirements**: Trait for plugins to declare their data access requirements
 
 #### Core Features:
 - **Repository-Owning Pattern**: Each scanner creates its own repository access using spawn_blocking
 - **Single-Pass Scanning**: EventDrivenScanner processes all repository data in one traversal
+- **Helper Function Architecture**: Main scanning loop uses helper functions with max 2 levels of nesting
 - **Event-Driven Processing**: Streaming data processing through EventProcessor trait
 - **Gitoxide Integration**: Uses latest gitoxide (0.73) for Git operations without Send/Sync issues
 - **Comprehensive Analysis**: Scanner extracts all repository data (files, history, metrics) without filtering
+- **No Rough Estimates**: All data is calculated precisely from git diff analysis
 
-#### Architecture Flow:
+#### Enhanced Architecture Flow:
 ```
-Repository Path → EventDrivenScanner → spawn_blocking(gitoxide) → 
-Event Stream → EventProcessor → ScanMessage → PluginScanner → Plugins
+Repository Path → EventDrivenScanner → 
+├── determine_target_commit() → Branch Detection
+├── get_commit_file_changes() → Smart Diff Analysis
+│   ├── DiffAnalyzer → Precise Line Counting
+│   ├── FileTracker → Backwards State Tracking
+│   └── CheckoutManager → Conditional File Access
+└── Message Builders → Enhanced FileChange Messages → PluginScanner → Plugins
 ```
 
 ### 3. Message Queue System (`src/queue/`)
@@ -209,6 +229,16 @@ pub struct MessageHeader {
 pub enum MessageData {
     FileInfo { path: String, size: u64, lines: u32 },
     CommitInfo { hash: String, author: String, message: String, timestamp: i64 },
+    FileChange {
+        path: String,
+        change_type: ChangeType,
+        old_path: Option<String>,
+        insertions: usize,
+        deletions: usize,
+        is_binary: bool,
+        binary_size: Option<u64>,
+        checkout_path: Option<PathBuf>,  // Enhanced for conditional checkout
+    },
     MetricInfo { file_count: u32, line_count: u64, complexity: f64 },
     SecurityInfo { vulnerability: String, severity: String, location: String },
     DependencyInfo { name: String, version: String, license: Option<String> },
@@ -222,6 +252,160 @@ pub enum MessageData {
 - **Memory Estimation**: Accurate size calculation for tracking
 - **Serialization**: Efficient binary format with bincode
 
+## Enhanced File Tracking System
+
+### Overview
+
+The enhanced file tracking system represents a major architectural improvement that provides accurate file state tracking working backwards through git history, with conditional file checkout capabilities based on plugin requirements.
+
+### Core Components
+
+#### FileTracker (`file_tracker.rs`)
+Maintains accurate file states as the scanner traverses git history backwards:
+
+```rust
+pub struct FileTracker {
+    file_states: HashMap<String, FileState>,
+}
+
+pub struct FileState {
+    pub line_count: Option<usize>,      // Precise line count from diff analysis
+    pub is_binary: bool,                // Binary file detection
+    pub binary_size: Option<u64>,       // Size for binary files
+    pub exists: bool,                   // File existence at this point in history
+    pub current_path: String,           // Track renames and moves
+}
+```
+
+**Key Features:**
+- **Backwards Processing**: Works backwards through git history for accurate state reconstruction
+- **Precise Line Counting**: No estimates - all counts derived from actual diff analysis
+- **Binary File Support**: Handles both text files (line counts) and binary files (byte sizes)
+- **Rename Detection**: Tracks file path changes through git history
+- **Lifecycle Analysis**: Detects file deletion, resurrection, and stability patterns
+
+#### CheckoutManager (`checkout_manager.rs`)
+Provides conditional file checkout capabilities based on plugin requirements:
+
+```rust
+pub struct CheckoutManager {
+    base_checkout_dir: PathBuf,
+    checkout_dirs: HashMap<String, PathBuf>,
+    checkout_required: bool,             // Derived from plugin analysis
+}
+```
+
+**Conditional Operations:**
+- **Plugin-Driven Checkout**: Only creates files when plugins require file content
+- **Commit-Scoped Directories**: Organizes checkouts by commit hash for isolation
+- **Automatic Cleanup**: Implements Drop trait for guaranteed cleanup
+- **Memory Efficiency**: Avoids unnecessary disk operations
+
+#### DiffAnalyzer (`diff_analyzer.rs`)
+Provides smart parsing of git diff output for accurate change analysis:
+
+```rust
+pub struct DiffLineAnalyzer;
+
+impl DiffLineAnalyzer {
+    pub fn analyze_diff_content(diff_content: &str) -> Result<FileChangeAnalysis, ScanError>
+    pub fn calculate_line_changes(diff_hunks: &[DiffHunk]) -> (usize, usize)
+}
+```
+
+**Smart Analysis:**
+- **Direct Diff Parsing**: Processes git diff output directly for accuracy
+- **Hunk-Level Analysis**: Analyzes individual diff hunks for precise line counting
+- **Binary Detection**: Identifies binary files from diff output
+- **Change Type Classification**: Accurately categorizes file changes (added, deleted, modified, renamed)
+
+### Plugin Data Requirements Architecture
+
+#### PluginDataRequirements Trait
+Enables plugins to declare their data access requirements:
+
+```rust
+pub trait PluginDataRequirements {
+    fn requires_current_file_content(&self) -> bool { false }
+    fn requires_historical_file_content(&self) -> bool { false }
+    fn preferred_buffer_size(&self) -> usize { 8192 }
+    fn max_file_size(&self) -> Option<usize> { None }
+    fn handles_binary_files(&self) -> bool { false }
+}
+```
+
+**Plugin Categories:**
+- **Metadata-Only Plugins**: Only need file paths, sizes, change counts (no checkout)
+- **Content-Requiring Plugins**: Need actual file content (conditional checkout)
+- **Binary-Aware Plugins**: Can process binary files alongside text files
+- **Size-Limited Plugins**: Have specific file size constraints
+
+#### Runtime Configuration Analysis
+Dynamic configuration derived from active plugins:
+
+```rust
+pub struct RuntimeScannerConfig {
+    pub requires_checkout: bool,          // Any plugins need file content
+    pub requires_current_content: bool,   // Plugins need current file state
+    pub requires_historical_content: bool, // Plugins need historical content
+    pub base_config: ScannerConfig,
+    pub effective_checkout_dir: Option<PathBuf>,
+}
+
+impl ScannerConfig {
+    pub fn analyze_plugins(&self, plugins: &[Box<dyn PluginDataRequirements>]) -> RuntimeScannerConfig
+}
+```
+
+### Enhanced Message Flow
+
+#### FileChange Messages
+Enhanced with conditional checkout support:
+
+```rust
+pub struct FileChange {
+    pub path: String,
+    pub change_type: ChangeType,
+    pub old_path: Option<String>,         // For renames
+    pub insertions: usize,                // Precise from diff analysis
+    pub deletions: usize,                 // Precise from diff analysis
+    pub is_binary: bool,
+    pub binary_size: Option<u64>,
+    pub checkout_path: Option<PathBuf>,   // Only populated when needed
+}
+```
+
+#### Processing Flow
+1. **Plugin Analysis**: Determine which plugins require file content
+2. **Runtime Configuration**: Create optimized configuration based on requirements
+3. **Conditional Checkout**: Setup CheckoutManager only if needed
+4. **Smart Diff Processing**: Analyze git diffs for precise change data
+5. **Backwards File Tracking**: Maintain accurate file states through history
+6. **Message Enhancement**: Include checkout paths only when files are actually checked out
+
+### Performance Optimizations
+
+#### Memory Efficiency
+- **Lazy Checkout**: Files only created when plugins require content
+- **Selective Processing**: Skip unnecessary operations for metadata-only plugins
+- **Efficient Tracking**: Only track files that appear in git diffs
+- **Automatic Cleanup**: Immediate cleanup of temporary checkout directories
+
+#### Processing Efficiency
+- **Single-Pass Analysis**: All diff information extracted in one pass
+- **Helper Function Architecture**: Main scanning loop complexity reduced to max 2 levels
+- **Backwards Traversal**: Efficient file state reconstruction
+- **Binary Detection**: Quick identification to avoid unnecessary text processing
+
+### Integration with Existing Architecture
+
+The enhanced file tracking system integrates seamlessly with the existing plugin architecture:
+
+- **Transparent Operation**: Existing plugins continue to work without modification
+- **Progressive Enhancement**: Plugins can opt-in to enhanced features via PluginDataRequirements
+- **Backward Compatibility**: Legacy plugins receive metadata as before
+- **Performance Benefits**: Metadata-only plugins get better performance due to reduced I/O
+
 ## Plugin Architecture
 
 ### Plugin Trait Hierarchy
@@ -234,6 +418,15 @@ pub trait Plugin: Send + Sync {
     async fn initialize(&mut self, context: &PluginContext) -> PluginResult<()>;
     async fn execute(&self, request: PluginRequest) -> PluginResult<PluginResponse>;
     async fn cleanup(&mut self) -> PluginResult<()>;
+}
+
+// Data requirements interface (NEW)
+pub trait PluginDataRequirements {
+    fn requires_current_file_content(&self) -> bool { false }
+    fn requires_historical_file_content(&self) -> bool { false }
+    fn preferred_buffer_size(&self) -> usize { 8192 }
+    fn max_file_size(&self) -> Option<usize> { None }
+    fn handles_binary_files(&self) -> bool { false }
 }
 
 // Scanner-specific capabilities

@@ -3,3 +3,4 @@
 // Core production tests
 mod engine_tests;
 mod concurrency_tests;
+mod integration_tests;

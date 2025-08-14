@@ -5,36 +5,43 @@
 use crate::scanner::messages::ScanMessage;
 
 /// Message producer trait for queue integration
-pub trait MessageProducer {
-    /// Produce a scan message
-    fn produce_message(&self, message: ScanMessage);
+#[async_trait::async_trait]
+pub trait MessageProducer: Send + Sync {
+    /// Produce a scan message to the queue
+    async fn produce_message(&self, message: ScanMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     
     /// Get the name of this producer
     fn get_producer_name(&self) -> &str;
 }
 
-/// Simple callback-based message producer that bypasses queues
-pub struct CallbackMessageProducer {
+/// Queue-based message producer that writes messages to the SharedMessageQueue
+pub struct QueueMessageProducer {
+    queue: crate::queue::SharedMessageQueue,
     name: String,
 }
 
-impl CallbackMessageProducer {
-    /// Create a new callback-based message producer
-    pub fn new(name: String) -> Self {
-        Self { name }
+impl QueueMessageProducer {
+    /// Create a new queue-based message producer
+    pub fn new(queue: crate::queue::SharedMessageQueue, name: String) -> Self {
+        Self { queue, name }
     }
 }
 
-impl MessageProducer for CallbackMessageProducer {
-    fn produce_message(&self, _message: ScanMessage) {
-        // Messages are handled directly via plugin callbacks, so this is a no-op
-        log::debug!("Message produced by {} (handled via plugin callbacks)", self.name);
+#[async_trait::async_trait]
+impl MessageProducer for QueueMessageProducer {
+    async fn produce_message(&self, message: ScanMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let sequence = self.queue.enqueue(message).await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        
+        log::trace!("Message {} produced by {} to queue", sequence, self.name);
+        Ok(())
     }
     
     fn get_producer_name(&self) -> &str {
         &self.name
     }
 }
+
 
 /// Version compatibility checking trait
 pub trait VersionCompatible {

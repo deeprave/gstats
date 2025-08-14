@@ -14,7 +14,7 @@ use gstats::scanner::{
     async_engine::repository::AsyncRepositoryHandle,
 };
 use gstats::git::RepositoryHandle;
-use gstats::scanner::CallbackMessageProducer;
+use gstats::scanner::traits::QueueMessageProducer;
 
 /// Create a test repository with specified number of commits
 fn create_test_repository(commit_count: usize) -> (TempDir, String) {
@@ -121,7 +121,9 @@ fn bench_scanner_engine_creation(c: &mut Criterion) {
     let config = ScannerConfig::default();
     
     let rt = Arc::new(Runtime::new().unwrap());
-    let message_producer = Arc::new(CallbackMessageProducer::new(
+    let queue = gstats::queue::SharedMessageQueue::new("benchmark-scan".to_string());
+    let message_producer = Arc::new(QueueMessageProducer::new(
+        queue,
         "BenchmarkProducer".to_string()
     ));
     
@@ -149,7 +151,9 @@ fn bench_scanner_repository_sizes(c: &mut Criterion) {
         let repo_handle = RepositoryHandle::open(&repo_path).unwrap();
         let config = ScannerConfig::default();
         
-        let message_producer = Arc::new(CallbackMessageProducer::new(
+        let queue = gstats::queue::SharedMessageQueue::new("benchmark-scan".to_string());
+        let message_producer = Arc::new(QueueMessageProducer::new(
+            queue,
             "BenchmarkProducer".to_string()
         ));
         
@@ -184,7 +188,9 @@ fn bench_complete_scan(c: &mut Criterion) {
     let config = ScannerConfig::default();
     
     let rt = Arc::new(Runtime::new().unwrap());
-    let message_producer = Arc::new(CallbackMessageProducer::new(
+    let queue = gstats::queue::SharedMessageQueue::new("benchmark-scan".to_string());
+    let message_producer = Arc::new(QueueMessageProducer::new(
+        queue,
         "BenchmarkProducer".to_string()
     ));
     

@@ -83,9 +83,11 @@ impl CountingProducer {
     }
 }
 
+#[async_trait]
 impl MessageProducer for CountingProducer {
-    fn produce_message(&self, _message: ScanMessage) {
+    async fn produce_message(&self, _message: ScanMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.total_count.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
     
     fn get_producer_name(&self) -> &str {

@@ -71,7 +71,7 @@ pub struct FileChangeData {
 }
 
 /// Type of file change
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChangeType {
     Added,
     Modified,

@@ -10,7 +10,6 @@ use crate::notifications::{
 use crate::notifications::traits::{NotificationManager, Publisher, Subscriber};
 use crate::notifications::events::{QueueEvent, PluginEvent};
 use crate::notifications::error::NotificationError;
-// Removed unused imports: EventFilter, RateLimit, OverflowAction
 
 /// Mock subscriber for testing
 struct MockSubscriber {

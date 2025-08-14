@@ -9,8 +9,6 @@ pub fn is_commit_data(data: &[&ScanMessage]) -> bool {
         .any(|msg| matches!(msg.data, MessageData::CommitInfo { .. }))
 }
 
-// Removed unused utility functions: escape_html, escape_xml, format_timestamp - no current usage found
-
 /// Generate authors summary data structure
 pub fn generate_authors_summary(collected_data: &[ScanMessage]) -> Vec<(String, (u32, u32, u32, Vec<(String, String, u64, u32)>))> {
     let mut author_stats: HashMap<String, (u32, u32, u32, Vec<(String, String, u64, u32)>)> = HashMap::new();

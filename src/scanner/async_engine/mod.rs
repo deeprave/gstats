@@ -10,22 +10,18 @@ pub mod stream;
 pub mod streaming_producer;
 pub mod scanners;
 pub mod events;
-// pub mod event_engine; // Temporarily disabled during AsyncRepositoryHandler removal
 pub mod processors;
 pub mod shared_state;
 pub mod event_filtering;
+pub mod diff_analyzer;
+pub mod file_tracker;
+pub mod checkout_manager;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export core types
-// pub use error::ScanResult;
 pub use engine::AsyncScannerEngineBuilder;
-// Removed unused exports: RepositoryEvent, CommitInfo, FileChangeData, FileInfo, RepositoryStats, EventFilter, ChangeType
-// Removed unused export: RepositoryEventEngine
-// Removed unused exports: EventProcessor, ProcessorRegistry, ProcessorFactory, EventProcessingCoordinator
-// Removed unused exports: SharedProcessorState, RepositoryMetadata, ProcessorSharedData, CacheStats, SharedStateAccess
-// Removed unused exports: AdvancedEventFilter, FilterDecision, ProcessorRouting, EventBatchingConfig, MemoryPressureMonitor
 
 // Re-export statistics types for convenience
 

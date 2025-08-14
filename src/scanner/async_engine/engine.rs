@@ -226,7 +226,11 @@ impl AsyncScannerEngine {
                 message = stream.next() => {
                     match message {
                         Some(Ok(msg)) => {
-                            producer.produce_message(msg);
+                            // Now async!
+                            if let Err(e) = producer.produce_message(msg).await {
+                                log::error!("Failed to produce message: {}", e);
+                                return Err(ScanError::processing(format!("Message production failed: {}", e)));
+                            }
                             count += 1;
                         }
                         Some(Err(e)) => {

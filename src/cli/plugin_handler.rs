@@ -110,6 +110,7 @@ impl PluginHandler {
     /// Create a new plugin handler with an existing registry
     /// This allows the handler to use plugins from a pre-populated registry
     /// instead of creating duplicate instances
+    #[allow(dead_code)]
     pub fn with_registry(registry: SharedPluginRegistry) -> PluginResult<Self> {
         let discovery = Box::new(UnifiedPluginDiscovery::new(Some("plugins".into()), Vec::new())?);
         let command_mapper = CommandMapper::new();
@@ -166,6 +167,7 @@ impl PluginHandler {
     
     
     /// Get plugin information by name
+    #[allow(dead_code)]
     pub async fn get_plugin_info(&self, plugin_name: &str) -> PluginResult<Option<PluginInfo>> {
         let descriptors = self.discover_plugins().await?;
         
@@ -189,6 +191,7 @@ impl PluginHandler {
     }
     
     /// Filter plugins by type
+    #[allow(dead_code)]
     pub async fn get_plugins_by_type(&self, plugin_type: PluginType) -> PluginResult<Vec<PluginInfo>> {
         let descriptors = self.discovery.discover_plugins_by_type(plugin_type).await?;
         
@@ -286,6 +289,7 @@ impl PluginHandler {
     }
     
     /// Resolve a command to a plugin and function
+    #[allow(dead_code)]
     pub async fn resolve_command(&self, command: &str) -> Result<CommandResolution, String> {
         self.command_mapper.resolve_command(command)
             .await
@@ -330,6 +334,7 @@ impl PluginHandler {
 
 /// Plugin information for CLI display
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PluginInfo {
     pub name: String,
     pub version: String,
@@ -343,6 +348,7 @@ pub struct PluginInfo {
 
 /// Function mapping information for plugin-help display
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FunctionMapping {
     pub function_name: String,
     pub aliases: Vec<String>,
@@ -407,7 +413,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 5); // 3 builtin + 2 external
+        assert_eq!(plugins.len(), 6); // 4 builtin + 2 external
         
         let names: Vec<String> = plugins.iter().map(|p| p.info.name.clone()).collect();
         assert!(names.contains(&"test-scanner".to_string()));
@@ -424,7 +430,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         let plugins = handler.list_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 5); // 3 builtin + 2 external
+        assert_eq!(plugins.len(), 6); // 4 builtin + 2 external
         
         // Should be sorted by name - check that external plugins are in the mix
         let plugin_names: Vec<&str> = plugins.iter().map(|p| p.name.as_str()).collect();
@@ -464,7 +470,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_directory(temp_dir.path()).unwrap();
         let scanners = handler.get_plugins_by_type(PluginType::Processing).await.unwrap();
         
-        assert_eq!(scanners.len(), 4); // 2 external + 2 builtin Processing (commits, metrics)
+        assert_eq!(scanners.len(), 5); // 2 external + 3 builtin Processing (debug, commits, metrics)
         for plugin in &scanners {
             assert_eq!(plugin.plugin_type, PluginType::Processing);
         }
@@ -516,7 +522,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_config(config).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 4); // 3 builtin + 1 external (only first directory used)
+        assert_eq!(plugins.len(), 5); // 4 builtin + 1 external (only first directory used)
         let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
         assert!(plugin_names.contains(&"plugin1")); // From first directory
         // plugin2 should not be found since only first directory is used now
@@ -545,7 +551,7 @@ mod tests {
         let plugins = handler.discover_plugins().await.unwrap();
         
         // Note: explicit loading (plugin_load) is no longer supported, so this finds all plugins
-        assert_eq!(plugins.len(), 5); // 3 builtin + 2 external
+        assert_eq!(plugins.len(), 6); // 4 builtin + 2 external
         let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
         assert!(plugin_names.contains(&"wanted"));
         assert!(plugin_names.contains(&"unwanted")); // Not filtered out anymore
@@ -571,7 +577,7 @@ mod tests {
         let handler = PluginHandler::with_plugin_config(config).unwrap();
         let plugins = handler.discover_plugins().await.unwrap();
         
-        assert_eq!(plugins.len(), 4); // 3 builtin + 1 external (unwanted excluded)
+        assert_eq!(plugins.len(), 5); // 4 builtin + 1 external (unwanted excluded)
         let plugin_names: Vec<&str> = plugins.iter().map(|p| p.info.name.as_str()).collect();
         assert!(plugin_names.contains(&"wanted"));
         assert!(!plugin_names.contains(&"unwanted")); // Should be excluded

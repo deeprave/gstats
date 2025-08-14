@@ -29,11 +29,5 @@ pub mod activation_tests;
 pub mod builtin_initialization_tests;
 
 #[cfg(test)]
-pub mod executor_activation_tests;
-
-#[cfg(test)]
 pub mod coordination_tests;
 
-// Temporarily commented out due to import issues
-// #[cfg(test)]
-// pub mod executor_tests;

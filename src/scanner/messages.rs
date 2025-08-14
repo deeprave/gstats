@@ -3,6 +3,8 @@
 //! Compact message structures for memory-efficient queue operations.
 
 use serde::{Serialize, Deserialize};
+use std::path::PathBuf;
+use crate::scanner::async_engine::events::ChangeType;
 
 /// File change data for commits
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,6 +93,20 @@ pub enum MessageData {
         age_days: u64,
         avg_commits_per_day: f64,
     },
+    /// File change data with commit context (GS-76)
+    FileChange {
+        path: String,
+        change_type: ChangeType,
+        old_path: Option<String>,
+        insertions: usize,
+        deletions: usize,
+        is_binary: bool,
+        binary_size: Option<u64>,
+        line_count: Option<usize>,
+        commit_hash: String,
+        commit_timestamp: i64,
+        checkout_path: Option<PathBuf>,
+    },
     /// Empty data placeholder
     None,
 }
@@ -161,6 +177,13 @@ impl ScanMessage {
             MessageData::PerformanceInfo { function, .. } => function.len(),
             MessageData::MetricInfo { .. } => 0, // No string fields in MetricInfo
             MessageData::RepositoryStatistics { .. } => 0, // No string fields in RepositoryStatistics
+            MessageData::FileChange { path, old_path, commit_hash, checkout_path, .. } => {
+                path.len() + 
+                old_path.as_ref().map_or(0, |p| p.len()) + 
+                commit_hash.len() + 
+                checkout_path.as_ref().map_or(0, |p| p.to_string_lossy().len()) +
+                48 // insertions, deletions, timestamp, binary_size, line_count + other fields
+            },
             MessageData::None => 0,
         };
         base_size + data_size
@@ -255,5 +278,120 @@ mod tests {
         assert!(matches!(file_data, MessageData::FileInfo { .. }));
         assert!(matches!(commit_data, MessageData::CommitInfo { .. }));
         assert!(matches!(metric_data, MessageData::MetricInfo { .. }));
+    }
+
+    #[test]
+    fn test_file_change_message_type() {
+        use crate::scanner::async_engine::events::ChangeType;
+
+        let file_change_data = MessageData::FileChange {
+            path: "src/main.rs".to_string(),
+            change_type: ChangeType::Modified,
+            old_path: None,
+            insertions: 15,
+            deletions: 3,
+            is_binary: false,
+            binary_size: None,
+            line_count: Some(150),
+            commit_hash: "abc123def456".to_string(),
+            commit_timestamp: 1672531200,
+            checkout_path: None,
+        };
+
+        let message = ScanMessage::new(
+            MessageHeader::new(42),
+            file_change_data,
+        );
+
+        // Test that FileChange variant can be created
+        assert!(matches!(message.data, MessageData::FileChange { .. }));
+        
+        // Test serialization and deserialization
+        let bytes = message.to_bytes();
+        let deserialized = ScanMessage::from_bytes(&bytes).unwrap();
+        assert_eq!(deserialized.header.sequence, message.header.sequence);
+        
+        // Test memory estimation includes new variant
+        let memory_usage = message.estimate_memory_usage();
+        assert!(memory_usage > 0);
+    }
+
+    #[test]
+    fn test_file_change_with_rename() {
+        use crate::scanner::async_engine::events::ChangeType;
+
+        let file_change_data = MessageData::FileChange {
+            path: "src/new_name.rs".to_string(),
+            change_type: ChangeType::Renamed,
+            old_path: Some("src/old_name.rs".to_string()),
+            insertions: 0,
+            deletions: 0,
+            is_binary: false,
+            binary_size: None,
+            line_count: Some(100),
+            commit_hash: "rename123".to_string(),
+            commit_timestamp: 1672531200,
+            checkout_path: None,
+        };
+
+        assert!(matches!(file_change_data, MessageData::FileChange { 
+            change_type: ChangeType::Renamed,
+            old_path: Some(_),
+            ..
+        }));
+    }
+
+    #[test]
+    fn test_binary_file_change() {
+        use crate::scanner::async_engine::events::ChangeType;
+
+        let binary_file_data = MessageData::FileChange {
+            path: "assets/image.png".to_string(),
+            change_type: ChangeType::Added,
+            old_path: None,
+            insertions: 0, // Binary files should have 0 line counts
+            deletions: 0,
+            is_binary: true,
+            binary_size: Some(204800), // 200KB binary file
+            line_count: None, // No line count for binary files
+            commit_hash: "binary123".to_string(),
+            commit_timestamp: 1672531200,
+            checkout_path: None,
+        };
+
+        if let MessageData::FileChange { is_binary, insertions, deletions, binary_size, line_count, .. } = binary_file_data {
+            assert!(is_binary);
+            assert_eq!(insertions, 0);
+            assert_eq!(deletions, 0);
+            assert_eq!(binary_size, Some(204800));
+            assert_eq!(line_count, None);
+        }
+    }
+
+    #[test]
+    fn test_file_change_with_checkout_path() {
+        use crate::scanner::async_engine::events::ChangeType;
+        use std::path::PathBuf;
+
+        let checkout_path = PathBuf::from("/tmp/gstats/checkout/src/main.rs");
+        let file_change_data = MessageData::FileChange {
+            path: "src/main.rs".to_string(),
+            change_type: ChangeType::Modified,
+            old_path: None,
+            insertions: 20,
+            deletions: 5,
+            is_binary: false,
+            binary_size: None,
+            line_count: Some(200),
+            commit_hash: "checkout123".to_string(),
+            commit_timestamp: 1672531200,
+            checkout_path: Some(checkout_path.clone()),
+        };
+
+        if let MessageData::FileChange { checkout_path: cp, line_count, binary_size, .. } = file_change_data {
+            assert_eq!(cp, Some(checkout_path));
+            assert_eq!(line_count, Some(200));
+            assert_eq!(binary_size, None);
+        }
     }
 }

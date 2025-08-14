@@ -12,6 +12,7 @@ use super::help_formatter::HelpFormatter;
 
 /// Resolution result for a command
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum CommandResolution {
     /// Function found in single plugin
     Function {

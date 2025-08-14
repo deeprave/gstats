@@ -77,6 +77,10 @@ pub enum PluginError {
     /// Generic plugin error
     #[error("Plugin error: {message}")]
     Generic { message: String },
+    
+    /// Invalid plugin argument
+    #[error("Invalid plugin argument '{arg}': {reason}")]
+    InvalidArgument { arg: String, reason: String },
 }
 
 impl PluginError {
@@ -163,6 +167,11 @@ impl PluginError {
     /// Create a generic error
     pub fn generic<S: Into<String>>(message: S) -> Self {
         Self::Generic { message: message.into() }
+    }
+    
+    /// Create an invalid argument error
+    pub fn invalid_argument<S: Into<String>>(arg: S, reason: S) -> Self {
+        Self::InvalidArgument { arg: arg.into(), reason: reason.into() }
     }
     
     /// Check if error is recoverable

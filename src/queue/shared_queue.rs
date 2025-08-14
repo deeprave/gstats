@@ -1,331 +1,113 @@
 //! Shared Message Queue Implementation
 //!
-//! Core queue implementation providing producer interface for scanner-to-plugin
-//! message coordination. The queue is designed to be thread-safe and async-first
-//! with proper event notification and memory monitoring.
+//! Multi-consumer queue implementation providing producer and consumer interfaces
+//! for scanner-to-plugin message coordination. Built on MultiConsumerQueue for
+//! efficient parallel message processing.
 
-use crate::queue::error::{QueueError, QueueResult};
-use crate::queue::notifications::{QueueEvent, QueueEventNotifier};
-use crate::queue::memory::MemoryMonitor;
+use crate::queue::error::QueueResult;
+use crate::queue::{MultiConsumerQueue, MultiConsumerConfig, QueueConsumer, ConsumerSummary};
 use crate::scanner::messages::ScanMessage;
-use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
 
-/// State of the scanning process
-#[derive(Debug, Clone, PartialEq)]
-enum ScanState {
-    /// Scan has not been started yet
-    NotStarted,
-    /// Scan is currently in progress
-    InProgress,
-    /// Scan has been completed
-    Completed { total_messages: u64 },
-}
-
-/// Shared message queue for coordinating between scanners and plugins
-#[derive(Debug)]
+/// Shared message queue for multi-consumer scanner-to-plugin coordination
+/// 
+/// This is a clean wrapper around MultiConsumerQueue providing a unified
+/// interface for both producers (scanners) and consumers (plugins).
+#[derive(Debug, Clone)]
 pub struct SharedMessageQueue {
-    /// Unique identifier for this scanning session
-    scan_id: String,
-    /// The actual message queue
-    queue: Arc<RwLock<VecDeque<ScanMessage>>>,
-    /// Current scan state
-    scan_state: Arc<RwLock<ScanState>>,
-    /// Event notification system
-    event_notifier: QueueEventNotifier,
-    /// Memory usage monitoring
-    memory_monitor: MemoryMonitor,
-    /// Maximum queue capacity (0 = unlimited)
-    max_capacity: usize,
+    /// The underlying multi-consumer queue implementation
+    queue: Arc<MultiConsumerQueue>,
 }
 
 impl SharedMessageQueue {
     /// Create a new shared message queue for the given scan session
     pub fn new(scan_id: String) -> Self {
-        Self::with_capacity(scan_id, 0) // Unlimited capacity by default
-    }
-
-    /// Create a new shared message queue with specified capacity
-    pub fn with_capacity(scan_id: String, max_capacity: usize) -> Self {
         Self {
-            scan_id,
-            queue: Arc::new(RwLock::new(VecDeque::new())),
-            scan_state: Arc::new(RwLock::new(ScanState::NotStarted)),
-            event_notifier: QueueEventNotifier::with_default_capacity(),
-            memory_monitor: MemoryMonitor::new(),
-            max_capacity,
+            queue: Arc::new(MultiConsumerQueue::new(scan_id)),
         }
     }
 
-    /// Create a new shared message queue with custom memory threshold
-    pub fn with_memory_threshold(scan_id: String, memory_threshold: usize) -> Self {
+    /// Create a new shared message queue with custom configuration
+    pub fn with_config(scan_id: String, config: MultiConsumerConfig) -> Self {
         Self {
-            scan_id,
-            queue: Arc::new(RwLock::new(VecDeque::new())),
-            scan_state: Arc::new(RwLock::new(ScanState::NotStarted)),
-            event_notifier: QueueEventNotifier::with_default_capacity(),
-            memory_monitor: MemoryMonitor::with_threshold(memory_threshold),
-            max_capacity: 0,
+            queue: Arc::new(MultiConsumerQueue::with_config(scan_id, config)),
         }
     }
 
     /// Get the scan ID for this queue
     pub fn scan_id(&self) -> &str {
-        &self.scan_id
-    }
-
-    /// Subscribe to queue events
-    pub fn subscribe_events(&self) -> broadcast::Receiver<QueueEvent> {
-        self.event_notifier.subscribe()
+        self.queue.scan_id()
     }
 
     // Producer Interface
 
-    /// Start a new scan
-    pub async fn start_scan(&self) -> QueueResult<()> {
-        let mut state = self.scan_state.write().await;
-        
-        match *state {
-            ScanState::NotStarted => {
-                *state = ScanState::InProgress;
-                drop(state); // Release lock before emitting event
-
-                let event = QueueEvent::scan_started(self.scan_id.clone());
-                self.event_notifier.emit(event)?;
-                
-                log::info!("Started scan '{}'", self.scan_id);
-                Ok(())
-            }
-            ScanState::InProgress => {
-                Err(QueueError::ScanAlreadyStarted {
-                    scan_id: self.scan_id.clone(),
-                })
-            }
-            ScanState::Completed { .. } => {
-                Err(QueueError::ScanAlreadyCompleted {
-                    scan_id: self.scan_id.clone(),
-                })
-            }
-        }
+    /// Start the queue for message processing
+    pub async fn start(&self) -> QueueResult<()> {
+        self.queue.start().await
     }
 
-    /// Push a message to the queue
-    pub async fn push(&self, message: ScanMessage) -> QueueResult<()> {
-        // Check if scan is in progress
-        {
-            let state = self.scan_state.read().await;
-            if matches!(*state, ScanState::NotStarted) {
-                return Err(QueueError::ScanNotStarted {
-                    scan_id: self.scan_id.clone(),
-                });
-            }
-        }
-
-        // Check capacity if limited
-        if self.max_capacity > 0 {
-            let queue = self.queue.read().await;
-            if queue.len() >= self.max_capacity {
-                return Err(QueueError::QueueFull);
-            }
-        }
-
-        // Record memory usage before adding
-        self.memory_monitor.record_push(&message).await;
-
-        // Add message to queue
-        let queue_size = {
-            let mut queue = self.queue.write().await;
-            queue.push_back(message);
-            queue.len()
-        };
-
-        // Emit event
-        let event = QueueEvent::message_added(self.scan_id.clone(), 1, queue_size);
-        self.event_notifier.emit(event)?;
-
-        // Check for memory warnings
-        if self.memory_monitor.is_memory_concerning().await {
-            let stats = self.memory_monitor.get_stats().await;
-            let warning_event = QueueEvent::memory_warning(
-                self.scan_id.clone(),
-                stats.current_size,
-                stats.warning_threshold,
-            );
-            self.event_notifier.emit(warning_event)?;
-        }
-
-        log::trace!("Pushed message to queue '{}', size: {}", self.scan_id, queue_size);
-        Ok(())
+    /// Add a message to the queue
+    pub async fn enqueue(&self, message: ScanMessage) -> QueueResult<u64> {
+        self.queue.enqueue(message).await
     }
 
-    /// Signal that scanning is complete
-    pub async fn complete_scan(&self) -> QueueResult<()> {
-        let total_messages = {
-            let mut state = self.scan_state.write().await;
-            match *state {
-                ScanState::InProgress { .. } => {
-                    let stats = self.memory_monitor.get_stats().await;
-                    let total = stats.total_messages_processed / 2; // Divide by 2 since we count push+pop
-                    *state = ScanState::Completed { total_messages: total };
-                    total
-                }
-                ScanState::NotStarted => {
-                    return Err(QueueError::ScanNotStarted {
-                        scan_id: self.scan_id.clone(),
-                    });
-                }
-                ScanState::Completed { .. } => {
-                    return Err(QueueError::ScanAlreadyCompleted {
-                        scan_id: self.scan_id.clone(),
-                    });
-                }
-            }
-        };
-
-        // Emit completion event
-        let event = QueueEvent::scan_complete(self.scan_id.clone(), total_messages);
-        self.event_notifier.emit(event)?;
-
-        log::info!("Completed scan '{}', total messages: {}", self.scan_id, total_messages);
-        self.memory_monitor.log_status().await;
-        Ok(())
+    /// Stop the queue and complete processing
+    pub async fn stop(&self) -> QueueResult<()> {
+        self.queue.stop().await
     }
 
-    // Consumer Interface (Internal - will be abstracted by consumer API)
+    // Consumer Interface
 
-    /// Pop a message from the queue (returns None if empty)
-    pub(crate) async fn pop(&self) -> Option<ScanMessage> {
-        let message = {
-            let mut queue = self.queue.write().await;
-            queue.pop_front()
-        };
-
-        if let Some(ref msg) = message {
-            self.memory_monitor.record_pop(msg).await;
-            
-            // Check if queue is now empty and scan is complete
-            let should_emit_drained = {
-                let queue = self.queue.read().await;
-                let state = self.scan_state.read().await;
-                queue.is_empty() && matches!(*state, ScanState::Completed { .. })
-            };
-
-            if should_emit_drained {
-                let event = QueueEvent::queue_drained(self.scan_id.clone());
-                let _ = self.event_notifier.emit(event); // Don't fail pop on event error
-            }
-
-            log::trace!("Popped message from queue '{}'", self.scan_id);
-        }
-
-        message
+    /// Register a new consumer with the queue
+    pub async fn register_consumer(&self, plugin_name: String) -> QueueResult<QueueConsumer> {
+        self.queue.register_consumer(plugin_name).await
     }
 
-    /// Pop multiple messages from the queue (up to max_count)
-    pub(crate) async fn pop_batch(&self, max_count: usize) -> Vec<ScanMessage> {
-        let messages = {
-            let mut queue = self.queue.write().await;
-            let count = max_count.min(queue.len());
-            (0..count).filter_map(|_| queue.pop_front()).collect::<Vec<_>>()
-        };
+    /// Register a new consumer with priority
+    pub async fn register_consumer_with_priority(&self, plugin_name: String, priority: i32) -> QueueResult<QueueConsumer> {
+        self.queue.register_consumer_with_priority(plugin_name, priority).await
+    }
 
-        // Record memory usage for all popped messages
-        for message in &messages {
-            self.memory_monitor.record_pop(message).await;
-        }
-
-        if !messages.is_empty() {
-            // Check if queue is now empty and scan is complete
-            let should_emit_drained = {
-                let queue = self.queue.read().await;
-                let state = self.scan_state.read().await;
-                queue.is_empty() && matches!(*state, ScanState::Completed { .. })
-            };
-
-            if should_emit_drained {
-                let event = QueueEvent::queue_drained(self.scan_id.clone());
-                let _ = self.event_notifier.emit(event); // Don't fail pop on event error
-            }
-
-            log::trace!("Popped {} messages from queue '{}'", messages.len(), self.scan_id);
-        }
-
-        messages
+    /// Deregister a consumer from the queue
+    pub async fn deregister_consumer(&self, consumer: &QueueConsumer) -> QueueResult<()> {
+        self.queue.deregister_consumer(consumer).await
     }
 
     // Status and Monitoring
 
-    /// Get the current queue size
-    pub async fn get_queue_size(&self) -> usize {
-        self.queue.read().await.len()
+    /// Check if the queue is active
+    pub async fn is_active(&self) -> bool {
+        self.queue.is_active().await
     }
 
-    /// Check if the queue is empty
-    pub async fn is_empty(&self) -> bool {
-        self.queue.read().await.is_empty()
+    /// Get queue statistics
+    pub async fn get_statistics(&self) -> crate::queue::QueueStatistics {
+        self.queue.get_statistics().await
     }
 
-    /// Check if the scan is complete
-    pub async fn is_scan_complete(&self) -> bool {
-        let state = self.scan_state.read().await;
-        matches!(*state, ScanState::Completed { .. })
-    }
-
-    /// Check if the scan is in progress
-    pub async fn is_scan_in_progress(&self) -> bool {
-        let state = self.scan_state.read().await;
-        matches!(*state, ScanState::InProgress { .. })
-    }
-
-    /// Get current memory statistics
+    /// Get memory statistics
     pub async fn get_memory_stats(&self) -> crate::queue::memory::QueueMemoryStats {
-        self.memory_monitor.get_stats().await
+        self.queue.get_memory_stats().await
     }
 
-    /// Get the number of event subscribers
-    pub fn get_subscriber_count(&self) -> usize {
-        self.event_notifier.subscriber_count()
+    /// Get consumer summary
+    pub async fn get_consumer_summary(&self) -> ConsumerSummary {
+        self.queue.get_consumer_summary().await
     }
 
-    /// Wait for the queue to be drained (empty and scan complete)
-    pub async fn wait_for_drain(&self) -> QueueResult<()> {
-        let mut event_receiver = self.subscribe_events();
-        
-        // Check current state first
-        if self.is_empty().await && self.is_scan_complete().await {
-            return Ok(());
-        }
-
-        // Wait for drain event
-        while let Ok(event) = event_receiver.recv().await {
-            if matches!(event, QueueEvent::QueueDrained { .. }) {
-                return Ok(());
-            }
-        }
-
-        Err(QueueError::operation_failed("Event channel closed while waiting for drain"))
+    /// Force backpressure evaluation
+    pub async fn force_backpressure_evaluation(&self) -> Option<crate::queue::BackpressureReason> {
+        self.queue.force_backpressure_evaluation().await
     }
+
 }
 
-impl Clone for SharedMessageQueue {
-    fn clone(&self) -> Self {
-        Self {
-            scan_id: self.scan_id.clone(),
-            queue: Arc::clone(&self.queue),
-            scan_state: Arc::clone(&self.scan_state),
-            event_notifier: self.event_notifier.clone(),
-            memory_monitor: self.memory_monitor.clone(),
-            max_capacity: self.max_capacity,
-        }
-    }
-}
+// Clone is automatically derived since SharedMessageQueue only contains Arc<MultiConsumerQueue>
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, MessageData};
-    use tokio::time::{timeout, Duration};
 
     fn create_test_message() -> ScanMessage {
         let header = MessageHeader::new(0);
@@ -341,134 +123,139 @@ mod tests {
     async fn test_queue_creation() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
         assert_eq!(queue.scan_id(), "test-scan");
-        assert!(queue.is_empty().await);
-        assert!(!queue.is_scan_complete().await);
-        assert!(!queue.is_scan_in_progress().await);
+        assert!(!queue.is_active().await);
+        
+        let stats = queue.get_statistics().await;
+        assert_eq!(stats.queue_size, 0);
+        assert_eq!(stats.active_consumers, 0);
     }
 
     #[tokio::test]
-    async fn test_scan_lifecycle() {
+    async fn test_queue_lifecycle() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
         
-        // Start scan
-        queue.start_scan().await.unwrap();
-        assert!(queue.is_scan_in_progress().await);
-        assert!(!queue.is_scan_complete().await);
+        // Start queue
+        queue.start().await.unwrap();
+        assert!(queue.is_active().await);
 
-        // Complete scan
-        queue.complete_scan().await.unwrap();
-        assert!(!queue.is_scan_in_progress().await);
-        assert!(queue.is_scan_complete().await);
+        // Stop queue
+        queue.stop().await.unwrap();
+        assert!(!queue.is_active().await);
     }
 
     #[tokio::test]
-    async fn test_scan_state_errors() {
+    async fn test_message_enqueue_and_consume() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
-        
-        // Cannot push before starting scan
-        let message = create_test_message();
-        assert!(queue.push(message).await.is_err());
-
-        // Cannot start scan twice
-        queue.start_scan().await.unwrap();
-        assert!(queue.start_scan().await.is_err());
-
-        // Cannot complete scan twice
-        queue.complete_scan().await.unwrap();
-        assert!(queue.complete_scan().await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_message_push_pop() {
-        let queue = SharedMessageQueue::new("test-scan".to_string());
-        queue.start_scan().await.unwrap();
+        queue.start().await.unwrap();
 
         let message = create_test_message();
-        queue.push(message.clone()).await.unwrap();
+        let _sequence = queue.enqueue(message.clone()).await.unwrap();
+        // Sequence numbers start at 0 for first message
         
-        assert_eq!(queue.get_queue_size().await, 1);
-        assert!(!queue.is_empty().await);
+        let stats = queue.get_statistics().await;
+        assert_eq!(stats.queue_size, 1);
 
-        let popped = queue.pop().await.unwrap();
-        assert_eq!(popped.data(), message.data());
-        assert!(queue.is_empty().await);
+        // Register consumer and read message
+        let consumer = queue.register_consumer("test-plugin".to_string()).await.unwrap();
+        let consumed_arc = consumer.read_next().await.unwrap().unwrap();
+        let consumed = (*consumed_arc).clone();
+        
+        assert_eq!(consumed.data(), message.data());
+        
+        // Acknowledge the message
+        consumer.acknowledge(consumed_arc.header().sequence()).await.unwrap();
+        
+        // Clean up
+        queue.deregister_consumer(&consumer).await.unwrap();
+        queue.stop().await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_batch_pop() {
+    async fn test_multiple_consumers() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
-        queue.start_scan().await.unwrap();
+        queue.start().await.unwrap();
 
-        // Push multiple messages
-        for _ in 0..5 {
-            queue.push(create_test_message()).await.unwrap();
+        // Add messages
+        for i in 0..5 {
+            let header = MessageHeader::new(0);
+            let data = MessageData::FileInfo {
+                path: format!("test{}.rs", i),
+                size: 1000,
+                lines: 50,
+            };
+            let message = ScanMessage::new(header, data);
+            queue.enqueue(message).await.unwrap();
         }
 
-        assert_eq!(queue.get_queue_size().await, 5);
-
-        // Pop batch
-        let messages = queue.pop_batch(3).await;
-        assert_eq!(messages.len(), 3);
-        assert_eq!(queue.get_queue_size().await, 2);
-
-        // Pop remaining
-        let messages = queue.pop_batch(10).await; // Request more than available
-        assert_eq!(messages.len(), 2);
-        assert!(queue.is_empty().await);
+        // Register two consumers
+        let consumer1 = queue.register_consumer("plugin1".to_string()).await.unwrap();
+        let consumer2 = queue.register_consumer("plugin2".to_string()).await.unwrap();
+        
+        // Both consumers should be able to read all messages
+        let messages1 = consumer1.read_batch(5).await.unwrap();
+        let messages2 = consumer2.read_batch(5).await.unwrap();
+        
+        assert_eq!(messages1.len(), 5);
+        assert_eq!(messages2.len(), 5);
+        
+        // Acknowledge all messages for both consumers
+        for msg in &messages1 {
+            consumer1.acknowledge(msg.header().sequence()).await.unwrap();
+        }
+        for msg in &messages2 {
+            consumer2.acknowledge(msg.header().sequence()).await.unwrap();
+        }
+        
+        // Clean up
+        queue.deregister_consumer(&consumer1).await.unwrap();
+        queue.deregister_consumer(&consumer2).await.unwrap();
+        queue.stop().await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_event_notifications() {
+    async fn test_consumer_summary() {
         let queue = SharedMessageQueue::new("test-scan".to_string());
-        let mut event_receiver = queue.subscribe_events();
+        queue.start().await.unwrap();
 
-        // Start scan - should emit ScanStarted
-        queue.start_scan().await.unwrap();
-        let event = timeout(Duration::from_millis(100), event_receiver.recv()).await.unwrap().unwrap();
-        assert!(matches!(event, QueueEvent::ScanStarted { .. }));
+        // Add some messages
+        for _ in 0..3 {
+            queue.enqueue(create_test_message()).await.unwrap();
+        }
 
-        // Push message - should emit MessageAdded
-        queue.push(create_test_message()).await.unwrap();
-        let event = timeout(Duration::from_millis(100), event_receiver.recv()).await.unwrap().unwrap();
-        assert!(matches!(event, QueueEvent::MessageAdded { .. }));
-
-        // Complete scan - should emit ScanComplete
-        queue.complete_scan().await.unwrap();
-        let event = timeout(Duration::from_millis(100), event_receiver.recv()).await.unwrap().unwrap();
-        assert!(matches!(event, QueueEvent::ScanComplete { .. }));
+        // Register consumer
+        let consumer = queue.register_consumer("test-plugin".to_string()).await.unwrap();
+        
+        // Get summary
+        let summary = queue.get_consumer_summary().await;
+        assert_eq!(summary.total_consumers, 1);
+        assert_eq!(summary.active_consumers, 1);
+        
+        // Clean up
+        queue.deregister_consumer(&consumer).await.unwrap();
+        queue.stop().await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_capacity_limit() {
-        let queue = SharedMessageQueue::with_capacity("test-scan".to_string(), 2);
-        queue.start_scan().await.unwrap();
-
-        // Should be able to add up to capacity
-        queue.push(create_test_message()).await.unwrap();
-        queue.push(create_test_message()).await.unwrap();
-
-        // Should fail when exceeding capacity
-        assert!(queue.push(create_test_message()).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_drain() {
-        let queue = SharedMessageQueue::new("test-scan".to_string());
-        queue.start_scan().await.unwrap();
-        queue.push(create_test_message()).await.unwrap();
-        queue.complete_scan().await.unwrap();
-
-        // Should not be drained yet (message still in queue)
-        assert!(!queue.is_empty().await);
-
-        // Pop the message in a separate task
-        let queue_clone = queue.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            queue_clone.pop().await;
-        });
-
-        // Should complete when drained
-        timeout(Duration::from_millis(200), queue.wait_for_drain()).await.unwrap().unwrap();
+    async fn test_with_config() {
+        let config = MultiConsumerConfig {
+            max_queue_size: 100,
+            memory_threshold: 1024 * 1024, // 1MB
+            ..Default::default()
+        };
+        
+        let queue = SharedMessageQueue::with_config("test-scan".to_string(), config);
+        assert_eq!(queue.scan_id(), "test-scan");
+        
+        // Start and add some messages
+        queue.start().await.unwrap();
+        
+        for _ in 0..5 {
+            queue.enqueue(create_test_message()).await.unwrap();
+        }
+        
+        let stats = queue.get_statistics().await;
+        assert_eq!(stats.queue_size, 5);
+        
+        queue.stop().await.unwrap();
     }
 }

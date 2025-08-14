@@ -1,6 +1,6 @@
 //! Plugin Activation Tests
 
-use crate::plugin::traits::{PluginInfo, PluginType};
+// Plugin trait imports removed - functionality moved to integration tests
 use crate::plugin::registry::PluginRegistry;
 use crate::plugin::tests::mock_plugins::MockPlugin;
 

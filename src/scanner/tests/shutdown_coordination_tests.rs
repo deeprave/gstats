@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use crate::scanner::async_engine::engine::AsyncScannerEngine;
 use crate::scanner::config::ScannerConfig;
-use crate::scanner::CallbackMessageProducer;
+use crate::scanner::traits::QueueMessageProducer;
 use crate::plugin::{SharedPluginRegistry, traits::PluginState};
 use crate::plugin::tests::mock_plugins::MockPlugin;
 
@@ -65,7 +65,9 @@ async fn test_basic_coordination() {
 #[tokio::test]
 async fn test_scanner_shutdown_no_plugins() {
     let config = ScannerConfig::default();
-    let producer = Arc::new(CallbackMessageProducer::new("test".to_string()));
+    // Create a queue and producer for test
+    let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
+    let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
     let repo_path = std::env::current_dir().unwrap();
     
     let engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
@@ -88,7 +90,9 @@ async fn test_scanner_shutdown_idle_plugins() {
     
     // Create scanner
     let config = ScannerConfig::default();
-    let producer = Arc::new(CallbackMessageProducer::new("test".to_string()));
+    // Create a queue and producer for test
+    let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
+    let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
     let repo_path = std::env::current_dir().unwrap();
     
     let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
@@ -111,7 +115,9 @@ async fn test_scanner_waits_for_plugin_coordination() {
     
     // Create scanner with plugin registry integration
     let config = ScannerConfig::default();
-    let producer = Arc::new(CallbackMessageProducer::new("test".to_string()));
+    // Create a queue and producer for test
+    let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
+    let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
     let repo_path = std::env::current_dir().unwrap();
     
     let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
@@ -172,7 +178,9 @@ async fn test_scanner_shutdown_timeout() {
     
     // Create scanner
     let config = ScannerConfig::default();
-    let producer = Arc::new(CallbackMessageProducer::new("test".to_string()));
+    // Create a queue and producer for test
+    let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
+    let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
     let repo_path = std::env::current_dir().unwrap();
     
     let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
@@ -203,7 +211,9 @@ async fn test_scanner_shutdown_multiple_plugins() {
     
     // Create scanner
     let config = ScannerConfig::default();
-    let producer = Arc::new(CallbackMessageProducer::new("test".to_string()));
+    // Create a queue and producer for test
+    let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
+    let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
     let repo_path = std::env::current_dir().unwrap();
     
     let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
@@ -255,7 +265,9 @@ async fn test_scanner_shutdown_with_plugin_errors() {
     
     // Create scanner
     let config = ScannerConfig::default();
-    let producer = Arc::new(CallbackMessageProducer::new("test".to_string()));
+    // Create a queue and producer for test
+    let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
+    let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
     let repo_path = std::env::current_dir().unwrap();
     
     let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();

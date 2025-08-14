@@ -1,6 +1,6 @@
 //! Tests for builtin plugin initialization with activation control
 
-use crate::plugin::registry::PluginRegistry;
+// Note: PluginRegistry import removed - not used in this test
 use crate::app::initialization::initialize_builtin_plugins;
 use crate::plugin::SharedPluginRegistry;
 

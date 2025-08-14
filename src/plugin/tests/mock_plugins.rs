@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use crate::plugin::traits::*;
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::{PluginContext, PluginRequest, PluginResponse, ExecutionMetadata};
-use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 
 /// Mock plugin for testing basic plugin functionality
 pub struct MockPlugin {
@@ -144,6 +143,29 @@ impl Plugin for MockPlugin {
     }
 }
 
+/// Data requirements implementation for MockPlugin
+impl PluginDataRequirements for MockPlugin {
+    fn requires_current_file_content(&self) -> bool {
+        false // Mock plugin doesn't need file content
+    }
+    
+    fn requires_historical_file_content(&self) -> bool {
+        false // Mock plugin for testing only
+    }
+    
+    fn preferred_buffer_size(&self) -> usize {
+        4096 // Small buffer for testing
+    }
+    
+    fn max_file_size(&self) -> Option<usize> {
+        Some(1024 * 1024) // 1MB limit for testing
+    }
+    
+    fn handles_binary_files(&self) -> bool {
+        false // Text files only for testing
+    }
+}
+
 /// Mock processing plugin for testing processing-specific functionality
 pub struct MockProcessingPlugin {
     base: MockPlugin,
@@ -184,11 +206,30 @@ impl Plugin for MockProcessingPlugin {
     fn plugin_state(&self) -> PluginState {
         self.base.plugin_state()
     }
-
-
 }
 
-
+/// Data requirements implementation for MockProcessingPlugin
+impl PluginDataRequirements for MockProcessingPlugin {
+    fn requires_current_file_content(&self) -> bool {
+        true // Processing plugin mock might need file content for testing
+    }
+    
+    fn requires_historical_file_content(&self) -> bool {
+        false // Still mock, keep it simple
+    }
+    
+    fn preferred_buffer_size(&self) -> usize {
+        8192 // Slightly larger buffer for processing testing
+    }
+    
+    fn max_file_size(&self) -> Option<usize> {
+        Some(2 * 1024 * 1024) // 2MB limit for processing tests
+    }
+    
+    fn handles_binary_files(&self) -> bool {
+        true // Processing plugin mock can handle binary for testing
+    }
+}
 
 /// Mock notification plugin for testing notification functionality
 pub struct MockNotificationPlugin {
@@ -312,10 +353,32 @@ impl NotificationPlugin for MockNotificationPlugin {
     }
 }
 
+/// Data requirements implementation for MockNotificationPlugin
+impl PluginDataRequirements for MockNotificationPlugin {
+    fn requires_current_file_content(&self) -> bool {
+        false // Notification plugin doesn't need file content
+    }
+    
+    fn requires_historical_file_content(&self) -> bool {
+        false // Only handles notifications, not file analysis
+    }
+    
+    fn preferred_buffer_size(&self) -> usize {
+        4096 // Small buffer for notifications
+    }
+    
+    fn max_file_size(&self) -> Option<usize> {
+        None // N/A - doesn't process files
+    }
+    
+    fn handles_binary_files(&self) -> bool {
+        false // N/A - doesn't process files
+    }
+}
+
 /// Helper function to create a test plugin context
 pub fn create_test_context() -> PluginContext {
     use crate::scanner::{ScannerConfig, QueryParams};
-    // Removed unused import: crate::git
     use std::sync::Arc;
 
     let scanner_config = Arc::new(ScannerConfig::default());

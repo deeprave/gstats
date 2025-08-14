@@ -11,6 +11,7 @@ pub mod suggestion;
 pub mod contextual_help;
 pub mod help_formatter;
 pub mod global_flags;
+pub mod plugin_args;
 
 #[cfg(test)]
 pub mod tests;

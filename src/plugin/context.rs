@@ -517,7 +517,6 @@ impl CompactFormat for ExecutionMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Removed unused import: crate::git
     
     #[tokio::test]
     async fn test_plugin_context_creation() {

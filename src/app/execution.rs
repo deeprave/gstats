@@ -6,6 +6,8 @@ use std::sync::Arc;
 use log::{info, debug, error};
 use crate::{cli, config, display, plugin, scanner};
 use crate::scanner::branch_detection::BranchDetection;
+use crate::scanner::traits::QueueMessageProducer;
+use crate::scanner::async_traits::AsyncScanner;
 
 
 /// Resolve plugin commands using CommandMapper
@@ -229,33 +231,48 @@ pub async fn run_scanner(
     let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
     debug!("Plugin arguments (filtered): {:?}", filtered_plugin_args);
     
-    // Create a callback-based message producer (queue bypassed via plugin callbacks)
-    let message_producer = Arc::new(scanner::CallbackMessageProducer::new(
+    // 1. CREATE THE QUEUE FIRST
+    let queue = crate::queue::SharedMessageQueue::new("main-scan".to_string());
+    queue.start().await?;
+    
+    debug!("Queue created and started");
+    
+    // 2. ADD CONSUMERS (register all active plugins BEFORE scanning starts)
+    for plugin_name in &plugin_names {
+        let consumer = queue.register_consumer(plugin_name.clone()).await?;
+        
+        // Get the plugin and start consuming
+        let mut plugin_registry_guard = plugin_registry.inner().write().await;
+        if let Some(plugin) = plugin_registry_guard.get_plugin_mut(plugin_name) {
+            if let Some(consumer_plugin) = plugin.as_consumer_plugin_mut() {
+                consumer_plugin.start_consuming(consumer).await
+                    .map_err(|e| anyhow::anyhow!("Failed to start consuming for plugin {}: {}", plugin_name, e))?;
+                debug!("Plugin {} registered as consumer and started consuming", plugin_name);
+            }
+        }
+    }
+    
+    debug!("All active plugins registered as consumers");
+    
+    // 3. CREATE SCANNER WITH QUEUE-BASED MESSAGE PRODUCER
+    let message_producer = Arc::new(QueueMessageProducer::new(
+        queue.clone(),
         "ScannerProducer".to_string()
     ));
     
-    // Create a scanner engine with the repository path
+    // Create a scanner engine with the repository path and queue producer
     let mut engine_builder = scanner::AsyncScannerEngineBuilder::new()
         .repository_path(repo_path.clone())
         .config(scanner_config.clone())
         .message_producer(message_producer as Arc<dyn scanner::MessageProducer + Send + Sync>)
         .runtime(runtime);
     
-    // Create an event-driven scanner - using a repository-owning pattern
+    // Create an event-driven scanner - no plugin wrapping needed, uses queue directly
     let query_params = scanner::QueryParams::default();
     let event_scanner = Arc::new(scanner::async_engine::scanners::EventDrivenScanner::new(query_params));
     
-    // Wrap scanner with plugin processing
-    let plugin_scanner_builder = scanner::PluginScannerBuilder::new()
-        .add_scanner(event_scanner)
-        .plugin_registry(plugin_registry.clone());
-    
-    let plugin_scanners = plugin_scanner_builder.build()?;
-    
-    // Add plugin-enabled scanner to engine
-    for scanner in plugin_scanners {
-        engine_builder = engine_builder.add_scanner(scanner);
-    }
+    // Add scanner directly to engine (no plugin wrapper needed - queue handles distribution)
+    engine_builder = engine_builder.add_scanner(event_scanner as Arc<dyn AsyncScanner>);
     
     // Build and run scanner engine
     let engine = engine_builder.build()?;

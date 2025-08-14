@@ -3,6 +3,7 @@ mod config;
 mod display;
 mod logging;
 mod notifications;
+mod queue;
 mod scanner;
 mod plugin;
 mod stats;

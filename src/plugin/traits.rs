@@ -3,10 +3,13 @@
 //! Defines the fundamental trait hierarchy for the plugin system.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 use super::error::{PluginError, PluginResult};
 use super::context::{PluginContext, PluginRequest, PluginResponse};
+use crate::queue::{QueueEvent, QueueConsumer};
+use crate::scanner::messages::ScanMessage;
 
 /// Function that a plugin can provide
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +64,16 @@ pub trait Plugin: Send + Sync {
         // Default implementation returns None
         None
     }
-
+    
+    /// Cast to ConsumerPlugin if this plugin implements that trait
+    fn as_consumer_plugin(&self) -> Option<&dyn ConsumerPlugin> {
+        None
+    }
+    
+    /// Cast to mutable ConsumerPlugin if this plugin implements that trait
+    fn as_consumer_plugin_mut(&mut self) -> Option<&mut dyn ConsumerPlugin> {
+        None
+    }
 }
 
 /// Notification capabilities for plugins that respond to system events
@@ -602,4 +614,397 @@ pub struct PluginArgDefinition {
     
     /// Example values to show in help
     pub examples: Vec<String>,
+}
+
+/// Plugin data requirements trait for scanner optimization
+/// 
+/// This trait allows plugins to specify what data they need from the scanner,
+/// enabling the scanner to conditionally provide file content only when needed.
+/// Most plugins only need metadata, avoiding expensive file checkout operations.
+pub trait PluginDataRequirements {
+    /// Whether this plugin needs current (HEAD) file content for analysis
+    /// 
+    /// Examples of plugins that need current content:
+    /// - Complexity analysis (needs to parse current code)
+    /// - Tech debt analysis (needs current code structure)
+    /// - Security scanning (needs current code patterns)
+    /// 
+    /// # Returns
+    /// `true` if plugin requires current file content checkout, `false` for metadata only
+    fn requires_current_file_content(&self) -> bool {
+        false // Default: metadata only
+    }
+    
+    /// Whether this plugin needs historical file content from past commits
+    /// 
+    /// Examples of plugins that need historical content:
+    /// - Change analysis comparing versions
+    /// - Code evolution tracking
+    /// - Regression analysis
+    /// 
+    /// # Returns
+    /// `true` if plugin requires historical file content checkout, `false` for metadata only
+    fn requires_historical_file_content(&self) -> bool {
+        false // Default: metadata only
+    }
+    
+    /// Preferred buffer size for file reading operations
+    /// 
+    /// This allows plugins to optimize for their specific use cases:
+    /// - Small buffers (4KB) for line-by-line analysis
+    /// - Large buffers (64KB+) for bulk processing
+    /// - Filesystem-aligned buffers (32KB) for optimal I/O
+    /// 
+    /// # Returns
+    /// Preferred buffer size in bytes, default is 32KB (filesystem block aligned)
+    fn preferred_buffer_size(&self) -> usize {
+        32 * 1024 // 32KB default - filesystem block aligned
+    }
+    
+    /// Maximum file size this plugin will process
+    /// 
+    /// Plugins can set limits to avoid processing extremely large files:
+    /// - Memory-intensive analysis might limit to 1MB
+    /// - Line-counting plugins might handle larger files
+    /// - Binary analysis might have different limits
+    /// 
+    /// # Returns
+    /// `Some(size)` to limit file size, `None` for no limit
+    fn max_file_size(&self) -> Option<usize> {
+        None // Default: no limit
+    }
+    
+    /// Whether this plugin can handle binary files
+    /// 
+    /// # Returns
+    /// `true` if plugin can process binary files, `false` if text only
+    fn handles_binary_files(&self) -> bool {
+        false // Default: text files only
+    }
+}
+
+/// Consumer Plugin trait for plugins that consume messages from the queue
+/// 
+/// This trait extends the base Plugin trait to provide message consumption
+/// capabilities for plugins that need to process the message stream from
+/// the scanner. Consumer plugins receive a QueueConsumer handle and can
+/// process messages independently with acknowledgment support.
+#[async_trait]
+pub trait ConsumerPlugin: Plugin {
+    /// Start consuming messages with the provided queue consumer
+    /// 
+    /// This method is called when the plugin should begin consuming messages
+    /// using the provided QueueConsumer handle. The plugin should use the
+    /// consumer to read messages and acknowledge them after processing.
+    /// 
+    /// # Arguments
+    /// * `consumer` - The queue consumer handle for reading messages
+    /// 
+    /// # Returns
+    /// Result indicating success or failure to start consuming
+    async fn start_consuming(&mut self, consumer: QueueConsumer) -> PluginResult<()>;
+    
+    /// Process a single message from the queue with acknowledgment
+    /// 
+    /// This method is called for each message that the plugin should process.
+    /// The plugin should handle the message according to its functionality,
+    /// then acknowledge it using the consumer handle when processing is complete.
+    /// 
+    /// # Arguments
+    /// * `consumer` - The queue consumer handle for acknowledgment
+    /// * `message` - The scan message to process (Arc-wrapped for efficiency)
+    /// 
+    /// # Returns
+    /// Result indicating success or failure of message processing
+    async fn process_message(&self, consumer: &QueueConsumer, message: Arc<ScanMessage>) -> PluginResult<()>;
+    
+    /// Handle queue events (scan start/complete/error)
+    /// 
+    /// This method is called when queue events occur, such as scan start,
+    /// completion, or errors. Plugins can use this to perform setup,
+    /// cleanup, or other lifecycle operations.
+    /// 
+    /// # Arguments
+    /// * `event` - The queue event to handle
+    /// 
+    /// # Returns
+    /// Result indicating success or failure of event handling
+    async fn handle_queue_event(&self, event: &QueueEvent) -> PluginResult<()>;
+    
+    /// Stop consuming messages and cleanup
+    /// 
+    /// This method is called when the plugin should stop consuming messages
+    /// and perform any necessary cleanup. The consumer handle will be
+    /// deregistered after this method completes.
+    /// 
+    /// # Returns
+    /// Result indicating success or failure of cleanup
+    async fn stop_consuming(&mut self) -> PluginResult<()>;
+    
+    /// Get consumer configuration
+    /// 
+    /// This method returns the consumer configuration for this plugin,
+    /// which includes preferences for message consumption behavior.
+    /// 
+    /// # Returns
+    /// Consumer configuration preferences
+    fn consumer_preferences(&self) -> ConsumerPreferences {
+        ConsumerPreferences::default()
+    }
+}
+
+/// Consumer preferences for message consumption behavior
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConsumerPreferences {
+    /// Whether this consumer wants to receive all message types
+    pub consume_all_messages: bool,
+    
+    /// Specific message types this consumer is interested in
+    pub interested_message_types: Vec<String>,
+    
+    /// Whether this consumer can handle high-frequency message streams
+    pub high_frequency_capable: bool,
+    
+    /// Preferred batch size for message processing (0 = no batching)
+    pub preferred_batch_size: usize,
+    
+    /// Whether this consumer requires ordered message delivery
+    pub requires_ordered_delivery: bool,
+}
+
+impl Default for ConsumerPreferences {
+    fn default() -> Self {
+        Self {
+            consume_all_messages: true,
+            interested_message_types: vec![],
+            high_frequency_capable: true,
+            preferred_batch_size: 0, // No batching by default
+            requires_ordered_delivery: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scanner::messages::ScanMessage;
+    use crate::queue::QueueEvent;
+
+    struct TestPlugin;
+    impl PluginDataRequirements for TestPlugin {}
+
+    #[test]
+    fn test_plugin_data_requirements_defaults() {
+        let plugin = TestPlugin;
+        
+        // Test default values
+        assert!(!plugin.requires_current_file_content());
+        assert!(!plugin.requires_historical_file_content());
+        assert_eq!(plugin.preferred_buffer_size(), 32 * 1024);
+        assert_eq!(plugin.max_file_size(), None);
+        assert!(!plugin.handles_binary_files());
+    }
+
+    struct CustomPlugin;
+    impl PluginDataRequirements for CustomPlugin {
+        fn requires_current_file_content(&self) -> bool {
+            true
+        }
+        
+        fn preferred_buffer_size(&self) -> usize {
+            64 * 1024
+        }
+        
+        fn max_file_size(&self) -> Option<usize> {
+            Some(1024 * 1024) // 1MB limit
+        }
+        
+        fn handles_binary_files(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn test_plugin_data_requirements_custom() {
+        let plugin = CustomPlugin;
+        
+        // Test custom values
+        assert!(plugin.requires_current_file_content());
+        assert!(!plugin.requires_historical_file_content()); // Still default
+        assert_eq!(plugin.preferred_buffer_size(), 64 * 1024);
+        assert_eq!(plugin.max_file_size(), Some(1024 * 1024));
+        assert!(plugin.handles_binary_files());
+    }
+
+    #[test]
+    fn test_consumer_preferences_defaults() {
+        let prefs = ConsumerPreferences::default();
+        
+        assert!(prefs.consume_all_messages);
+        assert!(prefs.interested_message_types.is_empty());
+        assert!(prefs.high_frequency_capable);
+        assert_eq!(prefs.preferred_batch_size, 0);
+        assert!(prefs.requires_ordered_delivery);
+    }
+
+    #[test]
+    fn test_consumer_preferences_custom() {
+        let prefs = ConsumerPreferences {
+            consume_all_messages: false,
+            interested_message_types: vec!["FileChange".to_string(), "CommitInfo".to_string()],
+            high_frequency_capable: false,
+            preferred_batch_size: 50,
+            requires_ordered_delivery: false,
+        };
+        
+        assert!(!prefs.consume_all_messages);
+        assert_eq!(prefs.interested_message_types.len(), 2);
+        assert!(!prefs.high_frequency_capable);
+        assert_eq!(prefs.preferred_batch_size, 50);
+        assert!(!prefs.requires_ordered_delivery);
+    }
+
+    // Mock consumer plugin for testing trait methods
+    struct MockConsumerPlugin {
+        started: bool,
+        prefs: ConsumerPreferences,
+        info: PluginInfo,
+        consumer: Option<QueueConsumer>,
+    }
+
+    #[async_trait]
+    impl Plugin for MockConsumerPlugin {
+        fn plugin_info(&self) -> &PluginInfo {
+            &self.info
+        }
+        
+        async fn initialize(&mut self, _context: &PluginContext) -> PluginResult<()> {
+            Ok(())
+        }
+        
+        async fn execute(&self, _request: PluginRequest) -> PluginResult<PluginResponse> {
+            use crate::plugin::context::ExecutionMetadata;
+            use std::collections::HashMap;
+            let metadata = ExecutionMetadata {
+                duration_us: 1000,
+                memory_used: 1024,
+                entries_processed: 0,
+                plugin_version: "1.0.0".to_string(),
+                extra: HashMap::new(),
+            };
+            Ok(PluginResponse::success(
+                "test-request".to_string(),
+                serde_json::Value::Null,
+                metadata
+            ))
+        }
+        
+        async fn cleanup(&mut self) -> PluginResult<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl ConsumerPlugin for MockConsumerPlugin {
+        async fn start_consuming(&mut self, consumer: QueueConsumer) -> PluginResult<()> {
+            self.started = true;
+            self.consumer = Some(consumer);
+            Ok(())
+        }
+        
+        async fn process_message(&self, consumer: &QueueConsumer, message: Arc<ScanMessage>) -> PluginResult<()> {
+            // Acknowledge the message after processing
+            consumer.acknowledge(message.header().sequence()).await.map_err(|e| {
+                PluginError::execution_failed(format!("Failed to acknowledge message: {}", e))
+            })?;
+            Ok(())
+        }
+        
+        async fn handle_queue_event(&self, _event: &QueueEvent) -> PluginResult<()> {
+            Ok(())
+        }
+        
+        async fn stop_consuming(&mut self) -> PluginResult<()> {
+            self.started = false;
+            self.consumer = None;
+            Ok(())
+        }
+        
+        fn consumer_preferences(&self) -> ConsumerPreferences {
+            self.prefs.clone()
+        }
+    }
+
+    impl MockConsumerPlugin {
+        fn new() -> Self {
+            Self {
+                started: false,
+                prefs: ConsumerPreferences::default(),
+                info: PluginInfo {
+                    name: "mock-consumer".to_string(),
+                    version: "1.0.0".to_string(),
+                    api_version: 1,
+                    description: "Mock consumer plugin for testing".to_string(),
+                    author: "Test".to_string(),
+                    url: None,
+                    dependencies: Vec::new(),
+                    capabilities: Vec::new(),
+                    plugin_type: PluginType::Processing,
+                    license: None,
+                    priority: 0,
+                    load_by_default: false,
+                },
+                consumer: None,
+            }
+        }
+        
+        fn with_preferences(mut self, prefs: ConsumerPreferences) -> Self {
+            self.prefs = prefs;
+            self
+        }
+    }
+
+    // Note: These tests are simplified since we can't easily create a QueueConsumer
+    // in unit tests without a full MultiConsumerQueue setup. Integration tests
+    // will test the actual functionality with real queue consumers.
+    
+    #[test]
+    fn test_consumer_plugin_basic_lifecycle() {
+        let plugin = MockConsumerPlugin::new();
+        
+        // Initial state
+        assert!(!plugin.started);
+        assert!(plugin.consumer.is_none());
+        
+        // Test that we can construct and check preferences
+        let prefs = plugin.consumer_preferences();
+        assert_eq!(prefs, ConsumerPreferences::default());
+    }
+
+    #[tokio::test]
+    async fn test_consumer_plugin_queue_event_handling() {
+        let plugin = MockConsumerPlugin::new();
+        
+        // Create test queue event
+        let event = QueueEvent::scan_started("test-scan".to_string());
+        
+        // Should handle without error
+        plugin.handle_queue_event(&event).await.unwrap();
+    }
+
+    #[test]
+    fn test_consumer_plugin_preferences() {
+        let custom_prefs = ConsumerPreferences {
+            consume_all_messages: false,
+            interested_message_types: vec!["FileChange".to_string()],
+            high_frequency_capable: false,
+            preferred_batch_size: 10,
+            requires_ordered_delivery: true,
+        };
+        
+        let plugin = MockConsumerPlugin::new().with_preferences(custom_prefs.clone());
+        let returned_prefs = plugin.consumer_preferences();
+        
+        assert_eq!(returned_prefs, custom_prefs);
+    }
 }
