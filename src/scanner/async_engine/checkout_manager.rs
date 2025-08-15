@@ -33,8 +33,8 @@
 //!
 //! ```rust,no_run
 //! use std::path::Path;
-//! use crate::plugin::traits::PluginDataRequirements;
-//! use crate::scanner::async_engine::checkout_manager::CheckoutManager;
+//! use gstats::plugin::traits::PluginDataRequirements;
+//! use gstats::scanner::async_engine::checkout_manager::CheckoutManager;
 //! 
 //! // Create manager based on plugin requirements
 //! let plugins: Vec<Box<dyn PluginDataRequirements>> = vec![]; // Plugin list here

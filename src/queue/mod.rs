@@ -17,7 +17,7 @@
 //! # Usage
 //!
 //! ```rust
-//! use gstats::queue::{SharedMessageQueue, QueueEvent};
+//! use gstats::queue::SharedMessageQueue;
 //! use gstats::scanner::messages::{ScanMessage, MessageHeader, MessageData};
 //!
 //! # tokio_test::block_on(async {
@@ -25,7 +25,7 @@
 //! let queue = SharedMessageQueue::new("scan-001".to_string());
 //!
 //! // Producer: Start scanning and add messages
-//! queue.start_scan().await.unwrap();
+//! queue.start().await.unwrap();
 //!
 //! // Create a sample message
 //! let header = MessageHeader::new(0);
@@ -38,12 +38,12 @@
 //! };
 //! let scan_message = ScanMessage::new(header, data);
 //!
-//! queue.push(scan_message).await.unwrap();
-//! queue.complete_scan().await.unwrap();
+//! queue.enqueue(scan_message).await.unwrap();
+//! queue.stop().await.unwrap();
 //!
-//! // Consumer: Subscribe to events and process messages
-//! let mut event_receiver = queue.subscribe_events();
-//! // In a real scenario, you would process events in a loop
+//! // Consumer: Register consumer and process messages
+//! let consumer = queue.register_consumer("debug".to_string()).await.unwrap();
+//! // In a real scenario, you would process messages with consumer.read_next()
 //! // This example just shows the API structure
 //! # });
 //! ```

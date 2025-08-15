@@ -40,14 +40,14 @@
 //!
 //! ### Basic Configuration
 //! ```rust,no_run
-//! use crate::scanner::config::ScannerConfig;
+//! use gstats::scanner::config::ScannerConfig;
 //! 
 //! let config = ScannerConfig::default();
 //! ```
 //!
 //! ### Builder Pattern
 //! ```rust,no_run
-//! use crate::scanner::config::ScannerConfig;
+//! use gstats::scanner::config::ScannerConfig;
 //! 
 //! let config = ScannerConfig::builder()
 //!     .with_max_memory(128 * 1024 * 1024)
@@ -59,8 +59,8 @@
 //!
 //! ### Runtime Analysis
 //! ```rust,no_run
-//! use crate::plugin::traits::PluginDataRequirements;
-//! use crate::scanner::config::ScannerConfig;
+//! use gstats::plugin::traits::PluginDataRequirements;
+//! use gstats::scanner::config::ScannerConfig;
 //! 
 //! let plugins: Vec<Box<dyn PluginDataRequirements>> = vec![]; // Plugin list here
 //! let config = ScannerConfig::default();

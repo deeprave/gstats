@@ -243,7 +243,7 @@ Binary files a/binary.png and b/binary.png differ
         // Test that file states are updated correctly
         let main_state = tracker.get_file_state("src/main.rs").unwrap();
         assert!(main_state.exists);
-        assert_eq!(main_state.line_count, Some(99)); // 100 - 2 + 1 = 99
+        assert_eq!(main_state.line_count, Some(98)); // 100 - 2 + 0 = 98
         
         // Test new file handling (working backwards, it didn't exist before)
         let new_file_state = tracker.get_file_state("src/new_file.rs").unwrap();

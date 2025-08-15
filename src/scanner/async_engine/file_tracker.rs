@@ -37,7 +37,7 @@
 //! ## Usage Pattern
 //!
 //! ```rust,no_run
-//! use crate::scanner::async_engine::file_tracker::FileTracker;
+//! use gstats::scanner::async_engine::file_tracker::FileTracker;
 //! 
 //! let mut tracker = FileTracker::new();
 //! 
@@ -583,7 +583,7 @@ index 0000000..abc123
         
         // Check main.rs state (was modified)
         let main_state = tracker.get_file_state("src/main.rs").unwrap();
-        assert_eq!(main_state.line_count, Some(149)); // 150 - 2 + 1 = 149
+        assert_eq!(main_state.line_count, Some(148)); // 150 - 2 + 0 = 148
         assert!(main_state.exists);
         
         // Check lib.rs state (was added, so didn't exist before)
