@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub struct ExportConfig {
     pub output_format: ExportFormat,
     pub output_path: String,
+    pub output_file: Option<PathBuf>,
     pub include_metadata: bool,
     pub max_entries: Option<usize>,
     pub output_all: bool,
@@ -29,6 +30,7 @@ impl Default for ExportConfig {
         Self {
             output_format: ExportFormat::Json,
             output_path: String::new(),
+            output_file: None,
             include_metadata: false,
             max_entries: None,
             output_all: false,

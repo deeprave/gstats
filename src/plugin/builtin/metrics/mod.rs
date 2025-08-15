@@ -8,6 +8,13 @@ use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences}
 };
+use crate::plugin::data_export::{
+    PluginDataExport, DataExportType, DataSchema, ColumnDef, ColumnType,
+    DataPayload, Row, Value, ExportHints, ExportFormat
+};
+use crate::notifications::AsyncNotificationManager;
+use crate::notifications::events::PluginEvent;
+use crate::notifications::traits::NotificationManager;
 use crate::queue::{QueueConsumer, QueueEvent};
 use crate::scanner::async_engine::processors::{EventProcessor, EventProcessingCoordinator};
 use crate::plugin::processors::{
@@ -32,6 +39,9 @@ pub struct MetricsPlugin {
     // Consumer plugin fields
     consuming: Arc<RwLock<bool>>,
     consumer: Arc<RwLock<Option<QueueConsumer>>>,
+    // Notification publishing
+    notification_manager: Option<AsyncNotificationManager<PluginEvent>>,
+    current_scan_id: Arc<RwLock<Option<String>>>,
 }
 
 impl MetricsPlugin {
@@ -83,6 +93,8 @@ impl MetricsPlugin {
             // Initialize consumer plugin fields
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
+            notification_manager: None,
+            current_scan_id: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -98,6 +110,112 @@ impl MetricsPlugin {
         processors.push(Box::new(ComprehensiveDuplicationDetectorProcessor::new()));
 
         processors
+    }
+    
+    /// Create PluginDataExport from current metrics results
+    async fn create_data_export(&self, scan_id: &str) -> PluginResult<PluginDataExport> {
+        let results = {
+            let results_guard = self.results.read().await;
+            results_guard.clone()
+        };
+        
+        // Create schema for metrics table
+        let schema = DataSchema {
+            columns: vec![
+                ColumnDef::new("Metric", ColumnType::String)
+                    .with_description("Metric name or category".to_string()),
+                ColumnDef::new("Value", ColumnType::String)
+                    .with_description("Metric value (formatted)".to_string()),
+                ColumnDef::new("Type", ColumnType::String)
+                    .with_description("Type of metric (complexity, hotspot, etc.)".to_string()),
+            ],
+            metadata: {
+                let mut meta = HashMap::new();
+                meta.insert("description".to_string(), "Code quality metrics and analysis results".to_string());
+                meta.insert("generated_by".to_string(), "metrics_plugin".to_string());
+                meta
+            },
+        };
+        
+        // Convert results to rows
+        let rows: Vec<Row> = results
+            .iter()
+            .map(|(key, value)| {
+                // Determine metric type from key
+                let metric_type = if key.contains("complexity") {
+                    "Complexity"
+                } else if key.contains("hotspot") {
+                    "Hotspot"
+                } else if key.contains("change_frequency") {
+                    "Change Frequency"
+                } else if key.contains("debt") {
+                    "Technical Debt"
+                } else if key.contains("duplication") {
+                    "Duplication"
+                } else if key.contains("format") {
+                    "Format Detection"
+                } else {
+                    "General"
+                };
+                
+                // Format value based on type
+                let formatted_value = match value {
+                    serde_json::Value::Number(n) => {
+                        if n.is_f64() {
+                            format!("{:.2}", n.as_f64().unwrap_or(0.0))
+                        } else {
+                            n.to_string()
+                        }
+                    }
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Array(arr) => format!("Array[{}]", arr.len()),
+                    serde_json::Value::Object(obj) => format!("Object[{}]", obj.len()),
+                    serde_json::Value::Null => "null".to_string(),
+                };
+                
+                Row::new(vec![
+                    Value::String(key.clone()),
+                    Value::String(formatted_value),
+                    Value::String(metric_type.to_string()),
+                ])
+            })
+            .collect();
+        
+        // Create export hints
+        let export_hints = ExportHints {
+            preferred_formats: vec![
+                ExportFormat::Console,
+                ExportFormat::Json,
+                ExportFormat::Html,
+                ExportFormat::Csv,
+            ],
+            sort_by: Some("Type".to_string()),
+            sort_ascending: true,
+            limit: None,
+            include_totals: false,
+            include_row_numbers: true,
+            custom_hints: {
+                let mut hints = HashMap::new();
+                hints.insert("title".to_string(), "Code Quality Metrics".to_string());
+                hints.insert("highlight_high_values".to_string(), "true".to_string());
+                hints
+            },
+        };
+        
+        Ok(PluginDataExport {
+            plugin_id: "metrics".to_string(),
+            title: "Code Quality Metrics".to_string(),
+            description: Some(format!(
+                "Comprehensive code quality analysis with {} metrics for scan {}",
+                results.len(), scan_id
+            )),
+            data_type: DataExportType::Tabular,
+            schema,
+            data: DataPayload::Rows(Arc::new(rows)),
+            export_hints,
+            timestamp: std::time::SystemTime::now(),
+        })
     }
 }
 
@@ -147,6 +265,13 @@ impl ConsumerPlugin for MetricsPlugin {
         match event {
             QueueEvent::ScanStarted { scan_id, .. } => {
                 log::info!("Metrics plugin: scan started for {}", scan_id);
+                
+                // Store the current scan ID
+                {
+                    let mut current_scan = self.current_scan_id.write().await;
+                    *current_scan = Some(scan_id.clone());
+                }
+                
                 // Reset results for new scan
                 {
                     let mut results = self.results.write().await;
@@ -162,6 +287,23 @@ impl ConsumerPlugin for MetricsPlugin {
                     "Metrics plugin: scan complete for {} - generated {} metrics (total {} messages)", 
                     scan_id, result_count, total_messages
                 );
+                
+                // Create and publish data export if we have a notification manager
+                if let Some(ref manager) = self.notification_manager {
+                    if let Ok(export_data) = self.create_data_export(scan_id).await {
+                        let event = PluginEvent::DataReady {
+                            plugin_id: "metrics".to_string(),
+                            scan_id: scan_id.clone(),
+                            export: Arc::new(export_data),
+                        };
+                        
+                        if let Err(e) = manager.publish(event).await {
+                            log::warn!("Failed to publish DataReady event: {}", e);
+                        } else {
+                            log::debug!("Published DataReady event for metrics plugin");
+                        }
+                    }
+                }
             }
             _ => {
                 // Other events are just logged
@@ -221,6 +363,11 @@ impl Plugin for MetricsPlugin {
 
         coordinator.initialize().await?;
         self.processor_coordinator = Some(coordinator);
+        
+        // TODO: Initialize notification manager when PluginContext supports it
+        // For now, the notification manager will be None until the context is extended
+        log::debug!("MetricsPlugin: Initialization complete (notification manager not yet implemented in context)");
+        
         self.initialized = true;
 
         Ok(())

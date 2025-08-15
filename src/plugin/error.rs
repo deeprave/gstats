@@ -81,6 +81,10 @@ pub enum PluginError {
     /// Invalid plugin argument
     #[error("Invalid plugin argument '{arg}': {reason}")]
     InvalidArgument { arg: String, reason: String },
+    
+    /// I/O operation error
+    #[error("I/O error: {message}")]
+    IoError { message: String },
 }
 
 impl PluginError {
@@ -172,6 +176,11 @@ impl PluginError {
     /// Create an invalid argument error
     pub fn invalid_argument<S: Into<String>>(arg: S, reason: S) -> Self {
         Self::InvalidArgument { arg: arg.into(), reason: reason.into() }
+    }
+    
+    /// Create an I/O error
+    pub fn io_error<S: Into<String>>(message: S) -> Self {
+        Self::IoError { message: message.into() }
     }
     
     /// Check if error is recoverable

@@ -40,6 +40,9 @@ pub enum NotificationError {
     
     /// Generic error
     Generic(String),
+    
+    /// Processing error
+    Processing(String),
 }
 
 impl fmt::Display for NotificationError {
@@ -68,6 +71,9 @@ impl fmt::Display for NotificationError {
             }
             NotificationError::Generic(msg) => {
                 write!(f, "Notification error: {}", msg)
+            }
+            NotificationError::Processing(msg) => {
+                write!(f, "Processing error: {}", msg)
             }
         }
     }
@@ -113,5 +119,10 @@ impl NotificationError {
     /// Create a generic error
     pub fn generic<S: Into<String>>(message: S) -> Self {
         Self::Generic(message.into())
+    }
+    
+    /// Create a processing error
+    pub fn processing<S: Into<String>>(message: S) -> Self {
+        Self::Processing(message.into())
     }
 }

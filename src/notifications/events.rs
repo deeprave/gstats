@@ -3,8 +3,10 @@
 //! Defines the various event types that can flow through the notification system.
 //! Events are strongly typed and implement the NotificationEvent trait.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
+use crate::plugin::data_export::PluginDataExport;
 
 /// Base trait for all notification events
 pub trait NotificationEvent: Send + Sync + Clone + std::fmt::Debug + 'static {}
@@ -151,6 +153,13 @@ pub enum PluginEvent {
         old_state: String,
         new_state: String,
         changed_at: SystemTime,
+    },
+    
+    /// Plugin has data ready for export
+    DataReady {
+        plugin_id: String,
+        scan_id: String,
+        export: Arc<PluginDataExport>,
     },
 }
 
@@ -326,6 +335,15 @@ impl PluginEvent {
             result_count,
             data_size_bytes: None,
             ready_at: SystemTime::now(),
+        }
+    }
+    
+    /// Create a data ready event for export
+    pub fn data_ready(plugin_id: String, scan_id: String, export: Arc<PluginDataExport>) -> Self {
+        Self::DataReady {
+            plugin_id,
+            scan_id,
+            export,
         }
     }
 }

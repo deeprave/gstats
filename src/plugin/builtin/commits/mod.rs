@@ -6,11 +6,19 @@ use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
     PluginResult, PluginError, traits::{PluginType, PluginFunction, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences}
 };
+use crate::plugin::data_export::{
+    PluginDataExport, DataExportType, DataSchema, ColumnDef, ColumnType,
+    DataPayload, Row, Value, ExportHints, ExportFormat
+};
 use crate::queue::{QueueConsumer, QueueEvent};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
+use crate::notifications::AsyncNotificationManager;
+use crate::notifications::events::PluginEvent;
+use crate::notifications::traits::NotificationManager;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::RwLock;
 use serde_json::json;
 
@@ -22,6 +30,9 @@ pub struct CommitsPlugin {
     author_stats: Arc<RwLock<HashMap<String, usize>>>,
     consuming: Arc<RwLock<bool>>,
     consumer: Arc<RwLock<Option<QueueConsumer>>>,
+    // Notification publishing
+    notification_manager: Option<AsyncNotificationManager<PluginEvent>>,
+    current_scan_id: Arc<RwLock<Option<String>>>,
 }
 
 impl CommitsPlugin {
@@ -53,6 +64,8 @@ impl CommitsPlugin {
             author_stats: Arc::new(RwLock::new(HashMap::new())),
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
+            notification_manager: None,
+            current_scan_id: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -154,8 +167,22 @@ impl CommitsPlugin {
                 log::info!("CommitsPlugin processed {} commits from {} authors for scan {}", 
                           count, author_count, scan_id);
                 
-                // TODO: Emit DataReady event to signal export plugins that commit analysis is complete
-                // TODO: Prepare final commit statistics and metrics
+                // Create and publish data export if we have a notification manager
+                if let Some(ref manager) = self.notification_manager {
+                    if let Ok(export_data) = self.create_data_export(&scan_id).await {
+                        let event = PluginEvent::DataReady {
+                            plugin_id: "commits".to_string(),
+                            scan_id: scan_id.clone(),
+                            export: Arc::new(export_data),
+                        };
+                        
+                        if let Err(e) = manager.publish(event).await {
+                            log::warn!("Failed to publish DataReady event: {}", e);
+                        } else {
+                            log::debug!("Published DataReady event for commits plugin");
+                        }
+                    }
+                }
                 
                 Ok(())
             }
@@ -210,6 +237,78 @@ impl CommitsPlugin {
         );
 
         Ok(ScanMessage::new(header, data))
+    }
+    
+    /// Create PluginDataExport from current commit statistics
+    async fn create_data_export(&self, scan_id: &str) -> PluginResult<PluginDataExport> {
+        let (commit_count, author_stats) = {
+            let count_guard = self.commit_count.read().await;
+            let stats_guard = self.author_stats.read().await;
+            (*count_guard, stats_guard.clone())
+        };
+        
+        // Create schema for commit statistics table
+        let schema = DataSchema {
+            columns: vec![
+                ColumnDef::new("Author", ColumnType::String),
+                ColumnDef::new("Commits", ColumnType::Integer),
+                ColumnDef::new("Percentage", ColumnType::Float)
+                    .with_format_hint("percentage"),
+            ],
+            metadata: HashMap::new(),
+        };
+        
+        // Convert author stats to rows, sorted by commit count
+        let mut author_list: Vec<_> = author_stats.iter().collect();
+        author_list.sort_by(|a, b| b.1.cmp(a.1)); // Sort by commit count descending
+        
+        let rows: Vec<Row> = author_list
+            .into_iter()
+            .map(|(author, count)| {
+                let percentage = if commit_count > 0 {
+                    (*count as f64 / commit_count as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                Row::new(vec![
+                    Value::String(author.clone()),
+                    Value::Integer(*count as i64),
+                    Value::Float(percentage),
+                ])
+            })
+            .collect();
+        
+        // Create export hints
+        let export_hints = ExportHints {
+            preferred_formats: vec![
+                ExportFormat::Console,
+                ExportFormat::Json,
+                ExportFormat::Csv,
+                ExportFormat::Html,
+                ExportFormat::Markdown,
+            ],
+            sort_by: Some("Commits".to_string()),
+            sort_ascending: false, // Descending by commit count
+            limit: None,
+            include_totals: true,
+            include_row_numbers: false,
+            custom_hints: HashMap::new(),
+        };
+        
+        Ok(PluginDataExport {
+            plugin_id: "commits".to_string(),
+            title: "Commit Analysis".to_string(),
+            description: Some(format!(
+                "Analysis of {} commits from {} authors in scan {}",
+                commit_count, author_stats.len(), scan_id
+            )),
+            data_type: DataExportType::Tabular,
+            schema,
+            data: DataPayload::Rows(Arc::new(rows)),
+            export_hints,
+            timestamp: SystemTime::now(),
+        })
     }
     
     /// Execute commits analysis function
@@ -315,6 +414,11 @@ impl Plugin for CommitsPlugin {
             let mut stats = self.author_stats.write().await;
             stats.clear();
         }
+        
+        // TODO: Initialize notification manager when PluginContext supports it
+        // For now, the notification manager will be None until the context is extended
+        log::debug!("CommitsPlugin: Initialization complete (notification manager not yet implemented in context)");
+        
         self.initialized = true;
 
         Ok(())
@@ -473,6 +577,13 @@ impl ConsumerPlugin for CommitsPlugin {
         match event {
             QueueEvent::ScanStarted { scan_id, .. } => {
                 log::info!("Commits plugin: scan started for {}", scan_id);
+                
+                // Store the current scan ID
+                {
+                    let mut current_scan = self.current_scan_id.write().await;
+                    *current_scan = Some(scan_id.clone());
+                }
+                
                 // Reset statistics for new scan
                 {
                     let mut count = self.commit_count.write().await;
@@ -490,6 +601,23 @@ impl ConsumerPlugin for CommitsPlugin {
                     "Commits plugin: scan complete for {} - processed {} commits from {} authors (total {} messages)", 
                     scan_id, *count, author_count, total_messages
                 );
+                
+                // Create and publish data export if we have a notification manager
+                if let Some(ref manager) = self.notification_manager {
+                    if let Ok(export_data) = self.create_data_export(scan_id).await {
+                        let event = PluginEvent::DataReady {
+                            plugin_id: "commits".to_string(),
+                            scan_id: scan_id.clone(),
+                            export: Arc::new(export_data),
+                        };
+                        
+                        if let Err(e) = manager.publish(event).await {
+                            log::warn!("Failed to publish DataReady event: {}", e);
+                        } else {
+                            log::debug!("Published DataReady event for commits plugin");
+                        }
+                    }
+                }
             }
             _ => {
                 // Other events are just logged
@@ -532,10 +660,11 @@ impl ConsumerPlugin for CommitsPlugin {
 impl CommitsPlugin {
     /// Clone for processing (workaround for mutable operations in immutable context)
     async fn clone_for_processing(&self) -> Self {
-        let (count, stats) = {
+        let (count, stats, scan_id) = {
             let count_guard = self.commit_count.read().await;
             let stats_guard = self.author_stats.read().await;
-            (*count_guard, stats_guard.clone())
+            let scan_guard = self.current_scan_id.read().await;
+            (*count_guard, stats_guard.clone(), scan_guard.clone())
         };
         
         Self {
@@ -545,6 +674,8 @@ impl CommitsPlugin {
             author_stats: Arc::new(RwLock::new(stats)),
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
+            notification_manager: None, // Clone doesn't preserve notification manager
+            current_scan_id: Arc::new(RwLock::new(scan_id)),
         }
     }
 

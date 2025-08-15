@@ -21,9 +21,16 @@ use crate::plugin::traits::{
 };
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::{PluginContext, PluginRequest, PluginResponse};
+use crate::plugin::data_export::{
+    PluginDataExport, DataExportType, DataSchema, ColumnDef, ColumnType,
+    DataPayload, Row, Value, ExportHints, ExportFormat
+};
 use crate::scanner::messages::{ScanMessage, MessageData};
 use crate::queue::{QueueEvent, QueueConsumer};
 use crate::cli::plugin_args::{PluginArguments, PluginArgValue};
+use crate::notifications::AsyncNotificationManager;
+use crate::notifications::events::PluginEvent;
+use crate::notifications::traits::NotificationManager;
 
 mod display;
 mod config;
@@ -50,6 +57,13 @@ pub struct DebugPlugin {
     
     /// Queue consumer handle
     consumer: Arc<RwLock<Option<QueueConsumer>>>,
+    
+    /// Notification publishing (optional - only enabled with --export flag)
+    notification_manager: Option<AsyncNotificationManager<PluginEvent>>,
+    current_scan_id: Arc<RwLock<Option<String>>>,
+    
+    /// Whether export functionality is enabled via CLI flag
+    export_enabled: Arc<RwLock<bool>>,
 }
 
 /// Statistics for debug plugin operation
@@ -95,6 +109,9 @@ impl DebugPlugin {
             stats: Arc::new(RwLock::new(DebugStats::default())),
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
+            notification_manager: None,
+            current_scan_id: Arc::new(RwLock::new(None)),
+            export_enabled: Arc::new(RwLock::new(false)),
         }
     }
     
@@ -128,6 +145,105 @@ impl DebugPlugin {
             println!("==============================\n");
         }
     }
+    
+    /// Create PluginDataExport from debug statistics (only when export is enabled)
+    async fn create_data_export(&self, scan_id: &str) -> PluginResult<PluginDataExport> {
+        let stats = {
+            let stats_guard = self.stats.read().await;
+            stats_guard.clone()
+        };
+        
+        // Create schema for debug statistics table
+        let schema = DataSchema {
+            columns: vec![
+                ColumnDef::new("Metric", ColumnType::String)
+                    .with_description("Debug metric name".to_string()),
+                ColumnDef::new("Value", ColumnType::Integer)
+                    .with_description("Metric count or value".to_string()),
+                ColumnDef::new("Description", ColumnType::String)
+                    .with_description("Description of the metric".to_string()),
+            ],
+            metadata: {
+                let mut meta = std::collections::HashMap::new();
+                meta.insert("description".to_string(), "Debug plugin statistics and message processing metrics".to_string());
+                meta.insert("generated_by".to_string(), "debug_plugin".to_string());
+                meta
+            },
+        };
+        
+        // Convert statistics to rows
+        let rows: Vec<Row> = vec![
+            Row::new(vec![
+                Value::String("Messages Processed".to_string()),
+                Value::Integer(stats.messages_processed as i64),
+                Value::String("Total number of messages processed by debug plugin".to_string()),
+            ]),
+            Row::new(vec![
+                Value::String("Commit Messages".to_string()),
+                Value::Integer(stats.commit_messages as i64),
+                Value::String("Number of git commit info messages".to_string()),
+            ]),
+            Row::new(vec![
+                Value::String("File Changes".to_string()),
+                Value::Integer(stats.file_changes as i64),
+                Value::String("Number of file change messages".to_string()),
+            ]),
+            Row::new(vec![
+                Value::String("File Info".to_string()),
+                Value::Integer(stats.file_info as i64),
+                Value::String("Number of file information messages".to_string()),
+            ]),
+            Row::new(vec![
+                Value::String("Other Messages".to_string()),
+                Value::Integer(stats.other_messages as i64),
+                Value::String("Number of other message types".to_string()),
+            ]),
+            Row::new(vec![
+                Value::String("Display Errors".to_string()),
+                Value::Integer(stats.display_errors as i64),
+                Value::String("Number of message display errors encountered".to_string()),
+            ]),
+            Row::new(vec![
+                Value::String("Queue Events".to_string()),
+                Value::Integer(stats.queue_events as i64),
+                Value::String("Number of queue lifecycle events processed".to_string()),
+            ]),
+        ];
+        
+        // Create export hints
+        let export_hints = ExportHints {
+            preferred_formats: vec![
+                ExportFormat::Console,
+                ExportFormat::Json,
+                ExportFormat::Csv,
+            ],
+            sort_by: Some("Metric".to_string()),
+            sort_ascending: true,
+            limit: None,
+            include_totals: false,
+            include_row_numbers: true,
+            custom_hints: {
+                let mut hints = std::collections::HashMap::new();
+                hints.insert("title".to_string(), "Debug Plugin Statistics".to_string());
+                hints.insert("category".to_string(), "debugging".to_string());
+                hints
+            },
+        };
+        
+        Ok(PluginDataExport {
+            plugin_id: "debug".to_string(),
+            title: "Debug Plugin Statistics".to_string(),
+            description: Some(format!(
+                "Message processing statistics from debug plugin for scan {}",
+                scan_id
+            )),
+            data_type: DataExportType::Tabular,
+            schema,
+            data: DataPayload::Rows(Arc::new(rows)),
+            export_hints,
+            timestamp: std::time::SystemTime::now(),
+        })
+    }
 }
 
 impl Default for DebugPlugin {
@@ -142,15 +258,13 @@ impl Plugin for DebugPlugin {
         &self.info
     }
     
-    async fn initialize(&mut self, context: &PluginContext) -> PluginResult<()> {
+    async fn initialize(&mut self, _context: &PluginContext) -> PluginResult<()> {
         // Initialize plugin with context if needed
         log::info!("Debug plugin initialized");
         
-        // Check for any plugin-specific configuration in context
-        if let Some(debug_config) = context.plugin_config.get("debug") {
-            // Apply any configuration from context
-            log::debug!("Debug plugin config from context: {:?}", debug_config);
-        }
+        // TODO: Initialize notification manager when PluginContext supports it
+        // For now, the notification manager will be None until the context is extended
+        log::debug!("DebugPlugin: Initialization complete (notification manager not yet implemented in context)");
         
         Ok(())
     }
@@ -324,29 +438,64 @@ impl ConsumerPlugin for DebugPlugin {
     async fn handle_queue_event(&self, event: &QueueEvent) -> PluginResult<()> {
         let mut stats = self.stats.write().await;
         stats.queue_events += 1;
+        drop(stats); // Release the lock early
         
         let config = self.config.read().await;
         
-        if config.verbose {
-            match event {
-                QueueEvent::ScanStarted { scan_id, .. } => {
+        match event {
+            QueueEvent::ScanStarted { scan_id, .. } => {
+                // Store the current scan ID
+                {
+                    let mut current_scan = self.current_scan_id.write().await;
+                    *current_scan = Some(scan_id.clone());
+                }
+                
+                if config.verbose {
                     println!("\n>>> SCAN STARTED: {} <<<\n", scan_id);
                 }
-                QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
+            }
+            QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
+                if config.verbose {
                     println!("\n>>> SCAN COMPLETE: {} (Total: {} messages) <<<\n", 
                             scan_id, total_messages);
                 }
-                QueueEvent::QueueDrained { scan_id, .. } => {
+                
+                // Create and publish data export if export is enabled and we have a notification manager
+                let export_enabled = *self.export_enabled.read().await;
+                if export_enabled {
+                    if let Some(ref manager) = self.notification_manager {
+                        if let Ok(export_data) = self.create_data_export(scan_id).await {
+                            let event = PluginEvent::DataReady {
+                                plugin_id: "debug".to_string(),
+                                scan_id: scan_id.clone(),
+                                export: Arc::new(export_data),
+                            };
+                            
+                            if let Err(e) = manager.publish(event).await {
+                                log::warn!("Failed to publish DataReady event: {}", e);
+                            } else {
+                                log::debug!("Published DataReady event for debug plugin");
+                            }
+                        }
+                    } else {
+                        log::debug!("Export enabled but no notification manager available");
+                    }
+                }
+            }
+            QueueEvent::QueueDrained { scan_id, .. } => {
+                if config.verbose {
                     println!("\n>>> QUEUE DRAINED: {} <<<\n", scan_id);
                 }
-                QueueEvent::MemoryWarning { current_size, threshold, .. } => {
+            }
+            QueueEvent::MemoryWarning { current_size, threshold, .. } => {
+                if config.verbose {
                     println!("\n!!! MEMORY WARNING: {} / {} bytes !!!\n", 
                             current_size, threshold);
                 }
-                _ => {
-                    // Other events are logged but not displayed
-                    log::debug!("Debug plugin received queue event: {:?}", event);
-                }
+            }
+            _ => {
+                // Other events are logged but not displayed
+                log::debug!("Debug plugin received queue event: {:?}", event);
             }
         }
         
@@ -422,6 +571,12 @@ impl PluginArgumentParser for DebugPlugin {
                 "--message-index" => config.message_index = true,
                 "--no-color" => config.use_color = false,
                 "--compact" => config.compact_mode = true,
+                "--export" => {
+                    // Enable export functionality
+                    let mut export_enabled = self.export_enabled.write().await;
+                    *export_enabled = true;
+                    log::info!("Debug plugin: Export functionality enabled");
+                }
                 arg if arg.starts_with("--max-lines=") => {
                     let value = arg.strip_prefix("--max-lines=").unwrap();
                     config.max_display_lines = value.parse().unwrap_or(100);
@@ -501,6 +656,14 @@ impl PluginArgumentParser for DebugPlugin {
                 arg_type: "number".to_string(),
                 examples: vec!["--max-lines=50".to_string()],
             },
+            PluginArgDefinition {
+                name: "--export".to_string(),
+                description: "Enable data export interface to export plugin (default: console output only)".to_string(),
+                required: false,
+                default_value: Some("false".to_string()),
+                arg_type: "boolean".to_string(),
+                examples: vec!["--export".to_string()],
+            },
         ]
     }
 }
@@ -547,6 +710,14 @@ pub fn apply_plugin_arguments(config: &mut DebugConfig, args: &PluginArguments) 
             "max-lines" => {
                 if let PluginArgValue::Number(n) = value {
                     config.max_display_lines = *n as usize;
+                }
+            }
+            "export" => {
+                if let PluginArgValue::Flag(v) = value {
+                    // Note: This only handles the DebugConfig part.
+                    // The actual export functionality is controlled by the export_enabled field
+                    // in DebugPlugin which is set during parse_plugin_args
+                    log::debug!("Export flag set to {} in config", v);
                 }
             }
             _ => {

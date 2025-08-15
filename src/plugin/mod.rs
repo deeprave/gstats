@@ -27,6 +27,8 @@ pub mod subscriber;
 pub mod builtin;
 pub mod processors;
 pub mod priority_queue;
+pub mod data_export;
+pub mod data_coordinator;
 
 #[cfg(test)]
 pub mod tests;
