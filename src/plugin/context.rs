@@ -8,6 +8,8 @@ use serde::{Serialize, Deserialize};
 use crate::scanner::{ScannerConfig, QueryParams};
 use crate::scanner::messages::ScanMessage;
 use crate::display::CompactFormat;
+use crate::notifications::AsyncNotificationManager;
+use crate::notifications::events::PluginEvent;
 
 /// Context provided to plugins during initialization and execution
 #[derive(Clone)]
@@ -29,6 +31,9 @@ pub struct PluginContext {
 
     /// Aggregated scan data from scanner subsystem (populated after scanning)
     pub aggregated_data: Option<ScanMessage>,
+    
+    /// Notification manager for plugin-to-plugin communication
+    pub notification_manager: Option<Arc<AsyncNotificationManager<PluginEvent>>>,
 }
 
 /// Runtime environment information
@@ -178,6 +183,7 @@ impl PluginContext {
             runtime_info: RuntimeInfo::current(),
             capabilities: Vec::new(),
             aggregated_data: None,
+            notification_manager: None,
         }
     }
     
@@ -190,6 +196,12 @@ impl PluginContext {
     /// Add capabilities
     pub fn with_capabilities(mut self, capabilities: Vec<String>) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+    
+    /// Add notification manager for plugin-to-plugin communication
+    pub fn with_notification_manager(mut self, manager: Arc<AsyncNotificationManager<PluginEvent>>) -> Self {
+        self.notification_manager = Some(manager);
         self
     }
     
@@ -635,5 +647,31 @@ mod tests {
         assert!(context.has_capability("async"));
         assert!(context.has_capability("streaming"));
         assert!(!context.has_capability("missing"));
+    }
+    
+    #[tokio::test]
+    async fn test_context_with_notification_manager() {
+        let scanner_config = Arc::new(ScannerConfig::default());
+        let query_params = Arc::new(QueryParams::default());
+        
+        // Test context without notification manager
+        let context_without = PluginContext::new(
+            scanner_config.clone(),
+            query_params.clone(),
+        );
+        assert!(context_without.notification_manager.is_none());
+        
+        // Test context with notification manager
+        let notification_manager = Arc::new(
+            AsyncNotificationManager::<PluginEvent>::new()
+        );
+        let context_with = PluginContext::new(
+            scanner_config,
+            query_params,
+        ).with_notification_manager(notification_manager.clone());
+        
+        assert!(context_with.notification_manager.is_some());
+        let manager_ref = context_with.notification_manager.as_ref().unwrap();
+        assert_eq!(Arc::as_ptr(manager_ref), Arc::as_ptr(&notification_manager));
     }
 }

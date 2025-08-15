@@ -15,6 +15,7 @@ pub enum FormatDetectionResult {
 }
 
 /// Format detection configuration and utilities
+#[derive(Clone)]
 pub struct FormatDetector {
     /// Whether to enable logging of detection decisions
     enable_logging: bool,

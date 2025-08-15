@@ -222,7 +222,7 @@ impl<T> NotificationManager<T> for AsyncNotificationManager<T>
 where 
     T: NotificationEvent
 {
-    async fn subscribe(&mut self, subscriber: Arc<dyn Subscriber<T>>) -> NotificationResult<()> {
+    async fn subscribe(&self, subscriber: Arc<dyn Subscriber<T>>) -> NotificationResult<()> {
         if self.is_shutting_down().await {
             return Err(NotificationError::SystemShutdown);
         }
@@ -259,7 +259,7 @@ where
         Ok(())
     }
     
-    async fn unsubscribe(&mut self, subscriber_id: &str) -> NotificationResult<()> {
+    async fn unsubscribe(&self, subscriber_id: &str) -> NotificationResult<()> {
         let mut subscribers = self.subscribers.write().await;
         
         if subscribers.remove(subscriber_id).is_some() {

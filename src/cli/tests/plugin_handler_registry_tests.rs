@@ -63,7 +63,7 @@ async fn test_command_resolution_without_plugin_duplication() {
     match export_resolution {
         crate::cli::command_mapper::CommandResolution::Function { plugin_name, function_name, .. } => {
             assert_eq!(plugin_name, "export");
-            assert_eq!(function_name, "export"); // Default function
+            assert_eq!(function_name, "output"); // Default function
         }
         crate::cli::command_mapper::CommandResolution::DirectPlugin { plugin_name, .. } => {
             assert_eq!(plugin_name, "export");

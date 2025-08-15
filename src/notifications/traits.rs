@@ -59,10 +59,10 @@ where
     T: NotificationEvent
 {
     /// Subscribe a component to receive events
-    async fn subscribe(&mut self, subscriber: Arc<dyn Subscriber<T>>) -> NotificationResult<()>;
+    async fn subscribe(&self, subscriber: Arc<dyn Subscriber<T>>) -> NotificationResult<()>;
     
     /// Unsubscribe a component from receiving events
-    async fn unsubscribe(&mut self, subscriber_id: &str) -> NotificationResult<()>;
+    async fn unsubscribe(&self, subscriber_id: &str) -> NotificationResult<()>;
     
     /// Publish an event to all subscribers
     async fn publish(&self, event: T) -> NotificationResult<()>;

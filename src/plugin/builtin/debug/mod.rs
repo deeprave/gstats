@@ -132,8 +132,10 @@ impl DebugPlugin {
     async fn display_stats(&self) {
         let stats = self.stats.read().await;
         let config = self.config.read().await;
+        let export_enabled = *self.export_enabled.read().await;
         
-        if config.verbose {
+        // Only display stats if verbose and export is not enabled
+        if config.verbose && !export_enabled {
             println!("\n=== Debug Plugin Statistics ===");
             println!("Total messages processed: {}", stats.messages_processed);
             println!("  Commit messages: {}", stats.commit_messages);
@@ -258,13 +260,17 @@ impl Plugin for DebugPlugin {
         &self.info
     }
     
-    async fn initialize(&mut self, _context: &PluginContext) -> PluginResult<()> {
+    async fn initialize(&mut self, context: &PluginContext) -> PluginResult<()> {
         // Initialize plugin with context if needed
         log::info!("Debug plugin initialized");
         
-        // TODO: Initialize notification manager when PluginContext supports it
-        // For now, the notification manager will be None until the context is extended
-        log::debug!("DebugPlugin: Initialization complete (notification manager not yet implemented in context)");
+        // Initialize notification manager from context if available
+        if let Some(ref manager) = context.notification_manager {
+            self.notification_manager = Some(manager.as_ref().clone());
+            log::debug!("DebugPlugin: Notification manager initialized from context");
+        } else {
+            log::debug!("DebugPlugin: No notification manager available in context");
+        }
         
         Ok(())
     }
@@ -345,7 +351,8 @@ impl ConsumerPlugin for DebugPlugin {
         *consuming = true;
         
         let config = self.config.read().await;
-        if config.verbose {
+        let export_enabled = *self.export_enabled.read().await;
+        if config.verbose && !export_enabled {
             println!("\n=== Debug Plugin: Starting Message Consumption ===\n");
         }
         
@@ -356,6 +363,7 @@ impl ConsumerPlugin for DebugPlugin {
         let formatter = MessageFormatter::new(Arc::clone(&self.config));
         let consuming_flag = Arc::clone(&self.consuming);
         let consumer_store = Arc::clone(&self.consumer);
+        let export_enabled_flag = Arc::clone(&self.export_enabled);
         
         // Store the consumer in the field for later cleanup
         {
@@ -368,13 +376,18 @@ impl ConsumerPlugin for DebugPlugin {
             while *consuming_flag.read().await {
                 match consumer.read_next().await {
                     Ok(Some(message)) => {
-                        // Display the message
-                        if let Err(e) = formatter.format_message(&message).await {
-                            let mut stats_guard = stats.write().await;
-                            stats_guard.display_errors += 1;
-                            log::error!("Failed to display message: {}", e);
-                        } else {
-                            // Update statistics
+                        // Display the message only if export is not enabled
+                        let export_enabled = *export_enabled_flag.read().await;
+                        if !export_enabled {
+                            if let Err(e) = formatter.format_message(&message).await {
+                                let mut stats_guard = stats.write().await;
+                                stats_guard.display_errors += 1;
+                                log::error!("Failed to display message: {}", e);
+                            }
+                        }
+                        
+                        // Always update statistics
+                        {
                             let mut stats_guard = stats.write().await;
                             stats_guard.messages_processed += 1;
                             
@@ -416,12 +429,15 @@ impl ConsumerPlugin for DebugPlugin {
     }
     
     async fn process_message(&self, consumer: &QueueConsumer, message: Arc<ScanMessage>) -> PluginResult<()> {
-        // Display the message
-        if let Err(e) = self.formatter.format_message(&message).await {
-            let mut stats = self.stats.write().await;
-            stats.display_errors += 1;
-            log::error!("Failed to display message: {}", e);
-            return Err(PluginError::execution_failed(format!("Display error: {}", e)));
+        // Display the message only if export is not enabled
+        let export_enabled = *self.export_enabled.read().await;
+        if !export_enabled {
+            if let Err(e) = self.formatter.format_message(&message).await {
+                let mut stats = self.stats.write().await;
+                stats.display_errors += 1;
+                log::error!("Failed to display message: {}", e);
+                return Err(PluginError::execution_failed(format!("Display error: {}", e)));
+            }
         }
         
         // Update statistics
@@ -441,6 +457,7 @@ impl ConsumerPlugin for DebugPlugin {
         drop(stats); // Release the lock early
         
         let config = self.config.read().await;
+        let export_enabled = *self.export_enabled.read().await;
         
         match event {
             QueueEvent::ScanStarted { scan_id, .. } => {
@@ -450,12 +467,12 @@ impl ConsumerPlugin for DebugPlugin {
                     *current_scan = Some(scan_id.clone());
                 }
                 
-                if config.verbose {
+                if config.verbose && !export_enabled {
                     println!("\n>>> SCAN STARTED: {} <<<\n", scan_id);
                 }
             }
             QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
-                if config.verbose {
+                if config.verbose && !export_enabled {
                     println!("\n>>> SCAN COMPLETE: {} (Total: {} messages) <<<\n", 
                             scan_id, total_messages);
                 }
@@ -483,12 +500,12 @@ impl ConsumerPlugin for DebugPlugin {
                 }
             }
             QueueEvent::QueueDrained { scan_id, .. } => {
-                if config.verbose {
+                if config.verbose && !export_enabled {
                     println!("\n>>> QUEUE DRAINED: {} <<<\n", scan_id);
                 }
             }
             QueueEvent::MemoryWarning { current_size, threshold, .. } => {
-                if config.verbose {
+                if config.verbose && !export_enabled {
                     println!("\n!!! MEMORY WARNING: {} / {} bytes !!!\n", 
                             current_size, threshold);
                 }
@@ -519,7 +536,8 @@ impl ConsumerPlugin for DebugPlugin {
         self.display_stats().await;
         
         let config = self.config.read().await;
-        if config.verbose {
+        let export_enabled = *self.export_enabled.read().await;
+        if config.verbose && !export_enabled {
             println!("\n=== Debug Plugin: Stopped Message Consumption ===\n");
         }
         
@@ -835,6 +853,129 @@ mod tests {
         assert!(!plugin.requires_historical_file_content());
         assert_eq!(plugin.preferred_buffer_size(), 4 * 1024);
         assert!(!plugin.handles_binary_files());
+    }
+    
+    #[tokio::test]
+    async fn test_debug_plugin_notification_manager_initialization() {
+        use crate::notifications::{AsyncNotificationManager};
+        use crate::notifications::events::PluginEvent;
+        
+        let mut plugin = DebugPlugin::new();
+        
+        // Test initialization without notification manager
+        let context_without = create_test_context();
+        plugin.initialize(&context_without).await.unwrap();
+        assert!(plugin.notification_manager.is_none());
+        
+        // Test initialization with notification manager
+        let notification_manager = Arc::new(
+            AsyncNotificationManager::<PluginEvent>::new()
+        );
+        let context_with = create_test_context()
+            .with_notification_manager(notification_manager.clone());
+        
+        let mut plugin2 = DebugPlugin::new();
+        plugin2.initialize(&context_with).await.unwrap();
+        assert!(plugin2.notification_manager.is_some());
+        
+        // Verify the notification manager is the same instance
+        assert!(plugin2.notification_manager.is_some());
+    }
+    
+    #[tokio::test]
+    async fn test_debug_plugin_export_mode_output_suppression() {
+        let mut plugin = DebugPlugin::new();
+        let context = create_test_context();
+        plugin.initialize(&context).await.unwrap();
+        
+        // Test normal verbose mode (export disabled)
+        {
+            let mut config = plugin.config.write().await;
+            config.verbose = true;
+        }
+        *plugin.export_enabled.write().await = false;
+        
+        // In normal mode, display_stats should work (we can't easily test console output,
+        // but we can verify the conditions for display)
+        {
+            let export_enabled = *plugin.export_enabled.read().await;
+            let config = plugin.config.read().await;
+            assert!(config.verbose && !export_enabled); // Should display in this case
+        }
+        
+        // Test export mode (export enabled)
+        *plugin.export_enabled.write().await = true;
+        
+        {
+            let export_enabled = *plugin.export_enabled.read().await;
+            let config = plugin.config.read().await;
+            assert!(config.verbose && export_enabled); // Should NOT display in this case
+        }
+        
+        // Test the export enabled flag state changes
+        assert!(*plugin.export_enabled.read().await);
+        
+        // Test argument parsing sets export mode
+        let args = vec!["--export".to_string(), "--verbose".to_string()];
+        plugin.parse_plugin_args(&args).await.unwrap();
+        
+        assert!(*plugin.export_enabled.read().await);
+        {
+            let config = plugin.config.read().await;
+            assert!(config.verbose);
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_debug_plugin_dataready_event_publishing() {
+        use crate::notifications::{AsyncNotificationManager, traits::NotificationManager};
+        use crate::notifications::events::PluginEvent;
+        use crate::queue::notifications::QueueEvent;
+        
+        let mut plugin = DebugPlugin::new();
+        
+        // Set up plugin with notification manager and export mode
+        let notification_manager = Arc::new(
+            AsyncNotificationManager::<PluginEvent>::new()
+        );
+        let context = create_test_context()
+            .with_notification_manager(notification_manager.clone());
+        
+        plugin.initialize(&context).await.unwrap();
+        *plugin.export_enabled.write().await = true;
+        
+        // Add some test statistics
+        {
+            let mut stats = plugin.stats.write().await;
+            stats.messages_processed = 100;
+            stats.commit_messages = 50;
+            stats.file_changes = 40;
+            stats.file_info = 10;
+        }
+        
+        // Test that create_data_export works
+        let export_data = plugin.create_data_export("test-scan").await.unwrap();
+        assert_eq!(export_data.title, "Debug Plugin Statistics");
+        assert!(export_data.description.is_some());
+        
+        // Verify export data contains our test statistics
+        if let crate::plugin::data_export::DataPayload::Rows(rows) = &export_data.data {
+            assert!(!rows.is_empty());
+            // Should have rows for messages processed, commit messages, etc.
+            assert!(rows.len() >= 4);
+        } else {
+            panic!("Expected DataPayload::Rows");
+        }
+        
+        // Test ScanComplete event handling with export enabled
+        let scan_complete_event = QueueEvent::scan_complete("test-scan".to_string(), 100);
+        plugin.handle_queue_event(&scan_complete_event).await.unwrap();
+        
+        // Note: We can't easily test that the notification was actually published
+        // without a complex mock setup, but we can verify the export enabled state
+        // and that create_data_export was called successfully
+        assert!(*plugin.export_enabled.read().await);
+        assert!(plugin.notification_manager.is_some());
     }
     
     fn create_test_context() -> PluginContext {

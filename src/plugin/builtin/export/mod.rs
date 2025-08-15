@@ -14,7 +14,7 @@ use crate::plugin::data_export::{PluginDataExport, DataPayload, ColumnType};
 use crate::plugin::data_coordinator::DataCoordinator;
 use crate::plugin::builtin::utils::format_detection::{FormatDetector, FormatDetectionResult};
 use crate::notifications::events::PluginEvent;
-use crate::notifications::traits::Subscriber;
+use crate::notifications::traits::{Subscriber, NotificationManager};
 use crate::notifications::{NotificationResult};
 use crate::notifications::error::NotificationError;
 use async_trait::async_trait;
@@ -27,6 +27,7 @@ pub use config::{ExportConfig, ExportFormat};
 pub use template_engine::TemplateEngine;
 
 /// Data export plugin for various output formats
+#[derive(Clone)]
 pub struct ExportPlugin {
     info: PluginInfo,
     initialized: bool,
@@ -486,7 +487,7 @@ impl Plugin for ExportPlugin {
         &self.info
     }
     
-    async fn initialize(&mut self, _context: &PluginContext) -> PluginResult<()> {
+    async fn initialize(&mut self, context: &PluginContext) -> PluginResult<()> {
         if self.initialized {
             return Ok(());
         }
@@ -498,6 +499,17 @@ impl Plugin for ExportPlugin {
                 let mut engine = self.template_engine.write().await;
                 engine.load_template(template_file)?;
             }
+        }
+        
+        // Subscribe to notifications if notification manager is available
+        if let Some(ref manager) = context.notification_manager {
+            // Create a subscriber handle for this plugin
+            let subscriber = Arc::new(self.clone());
+            manager.subscribe(subscriber).await
+                .map_err(|e| PluginError::initialization_failed(format!("Failed to subscribe to notifications: {}", e)))?;
+            log::info!("ExportPlugin subscribed to PluginEvent notifications");
+        } else {
+            log::debug!("ExportPlugin: No notification manager available in context");
         }
         
         self.initialized = true;
@@ -558,6 +570,10 @@ impl Plugin for ExportPlugin {
 // Implement Subscriber trait for receiving data export notifications
 #[async_trait]
 impl Subscriber<PluginEvent> for ExportPlugin {
+    fn subscriber_id(&self) -> &str {
+        "export-plugin"
+    }
+    
     async fn handle_event(&self, event: PluginEvent) -> NotificationResult<()> {
         match event {
             PluginEvent::DataReady { plugin_id, scan_id, export } => {
@@ -605,10 +621,6 @@ impl Subscriber<PluginEvent> for ExportPlugin {
                 Ok(())
             }
         }
-    }
-    
-    fn subscriber_id(&self) -> &str {
-        "export_plugin"
     }
 }
 
@@ -708,5 +720,161 @@ impl PluginDataRequirements for ExportPlugin {
 impl Default for ExportPlugin {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notifications::{AsyncNotificationManager, traits::NotificationManager};
+    use crate::notifications::events::PluginEvent;
+    use crate::plugin::data_export::{PluginDataExport, DataPayload, DataSchema, ColumnDef, ColumnType, Row, Value};
+    use crate::scanner::{ScannerConfig, QueryParams};
+    use std::sync::Arc;
+
+    fn create_test_context() -> PluginContext {
+        PluginContext::new(
+            Arc::new(ScannerConfig::default()),
+            Arc::new(QueryParams::default()),
+        )
+    }
+
+    fn create_test_export_data() -> Arc<PluginDataExport> {
+        let schema = DataSchema {
+            columns: vec![
+                ColumnDef::new("metric", ColumnType::String)
+                    .with_description("Metric name".to_string()),
+                ColumnDef::new("value", ColumnType::Integer)
+                    .with_description("Metric value".to_string()),
+            ],
+            metadata: std::collections::HashMap::new(),
+        };
+
+        let rows = vec![
+            Row::new(vec![
+                Value::String("total_commits".to_string()),
+                Value::Integer(100),
+            ]),
+            Row::new(vec![
+                Value::String("total_authors".to_string()),
+                Value::Integer(5),
+            ]),
+        ];
+
+        Arc::new(PluginDataExport {
+            plugin_id: "test".to_string(),
+            title: "Test Data".to_string(),
+            description: Some("Test export data".to_string()),
+            data_type: crate::plugin::data_export::DataExportType::Tabular,
+            schema,
+            data: DataPayload::Rows(Arc::new(rows)),
+            export_hints: crate::plugin::data_export::ExportHints::default(),
+            timestamp: std::time::SystemTime::now(),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_export_plugin_creation() {
+        let plugin = ExportPlugin::new();
+        assert_eq!(plugin.plugin_info().name, "export");
+        assert_eq!(plugin.plugin_info().version, "1.0.0");
+        assert_eq!(plugin.plugin_info().plugin_type, PluginType::Output);
+        assert!(plugin.plugin_info().load_by_default);
+    }
+
+    #[tokio::test]
+    async fn test_export_plugin_subscription() {
+        let mut plugin = ExportPlugin::new();
+        
+        // Test initialization without notification manager
+        let context_without = create_test_context();
+        plugin.initialize(&context_without).await.unwrap();
+        
+        // Test initialization with notification manager
+        let notification_manager = Arc::new(
+            AsyncNotificationManager::<PluginEvent>::new()
+        );
+        let context_with = create_test_context()
+            .with_notification_manager(notification_manager.clone());
+        
+        let mut plugin2 = ExportPlugin::new();
+        plugin2.initialize(&context_with).await.unwrap();
+        
+        // Verify subscriber_id method
+        assert_eq!(plugin2.subscriber_id(), "export-plugin");
+        
+        // Verify subscription was attempted (we can't easily verify success without complex mocking)
+        // The initialize call should complete without error
+    }
+
+    #[tokio::test]
+    async fn test_export_plugin_event_handling() {
+        let plugin = ExportPlugin::new();
+        
+        // Test DataReady event handling
+        let export_data = create_test_export_data();
+        let event = PluginEvent::DataReady {
+            plugin_id: "debug".to_string(),
+            scan_id: "test-scan".to_string(),
+            export: export_data.clone(),
+        };
+        
+        // Handle the event
+        let result = plugin.handle_event(event).await;
+        assert!(result.is_ok());
+        
+        // Verify that data was added to coordinator
+        let coordinator = plugin.data_coordinator.read().await;
+        assert!(coordinator.has_data_from("debug"));
+        
+        // Verify scan ID was set
+        let scan_id = plugin.current_scan_id.read().await;
+        assert_eq!(scan_id.as_ref().unwrap(), "test-scan");
+    }
+
+    #[tokio::test]
+    async fn test_export_plugin_formatting() {
+        let plugin = ExportPlugin::new();
+        let export_data = create_test_export_data();
+        let data_vec = vec![export_data];
+        
+        // Test JSON formatting
+        let json_result = plugin.format_json(&data_vec).await;
+        assert!(json_result.is_ok());
+        let json_output = json_result.unwrap();
+        assert!(json_output.contains("Test Data"));
+        assert!(json_output.contains("total_commits"));
+        
+        // Test CSV formatting
+        let csv_result = plugin.format_csv(&data_vec).await;
+        assert!(csv_result.is_ok());
+        let csv_output = csv_result.unwrap();
+        assert!(csv_output.contains("metric,value"));
+        assert!(csv_output.contains("total_commits,100"));
+        
+        // Test HTML formatting
+        let html_result = plugin.format_html(&data_vec).await;
+        assert!(html_result.is_ok());
+        let html_output = html_result.unwrap();
+        assert!(html_output.contains("<html>"));
+        assert!(html_output.contains("Test Data"));
+        
+        // Test Markdown formatting
+        let md_result = plugin.format_markdown(&data_vec).await;
+        assert!(md_result.is_ok());
+        let md_output = md_result.unwrap();
+        assert!(md_output.contains("# Export Report"));
+        assert!(md_output.contains("Test Data"));
+    }
+
+    #[tokio::test]
+    async fn test_export_plugin_clone() {
+        let plugin = ExportPlugin::new();
+        let cloned_plugin = plugin.clone();
+        
+        // Verify basic properties are the same
+        assert_eq!(plugin.plugin_info().name, cloned_plugin.plugin_info().name);
+        assert_eq!(plugin.plugin_info().version, cloned_plugin.plugin_info().version);
+        assert_eq!(plugin.subscriber_id(), cloned_plugin.subscriber_id());
     }
 }

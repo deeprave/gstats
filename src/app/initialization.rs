@@ -196,11 +196,19 @@ pub async fn initialize_builtin_plugins(
 
 pub fn create_plugin_context(_repo_path: &PathBuf) -> Result<plugin::PluginContext> {
     use crate::scanner::{ScannerConfig, QueryParams};
+    use crate::notifications::AsyncNotificationManager;
+    use crate::notifications::events::PluginEvent;
     use std::sync::Arc;
     
     // Create default scanner config and query params
     let scanner_config = Arc::new(ScannerConfig::default());
     let query_params = Arc::new(QueryParams::default());
     
-    Ok(plugin::PluginContext::new(scanner_config, query_params))
+    // Create notification manager for plugin-to-plugin communication
+    let notification_manager = Arc::new(
+        AsyncNotificationManager::<PluginEvent>::new()
+    );
+    
+    Ok(plugin::PluginContext::new(scanner_config, query_params)
+        .with_notification_manager(notification_manager))
 }
