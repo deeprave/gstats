@@ -268,7 +268,10 @@ impl HelpFormatter {
             ("--no-color", "Disable colored output"),
             ("--log-format <FORMAT>", "Log format: text or json [default: text]"),
             ("--log-file <FILE>", "Log file path for file output"),
+            ("--log-file-level <LEVEL>", "Log level for file output (independent of console level)"),
             ("--config-file <FILE>", "Configuration file path"),
+            ("--list-formats", "List all supported export formats and their file extensions"),
+            ("--export-config <FILE>", "Export complete configuration to specified TOML file"),
             ("-h, --help", "Print help information"),
             ("-V, --version", "Print version information"),
         ];
@@ -290,6 +293,7 @@ impl HelpFormatter {
             ("--exclude-file <PATTERN>", "Skip files matching these patterns"),
             ("--author <AUTHOR>", "Filter commits by author name or email"),
             ("--exclude-author <AUTHOR>", "Exclude commits by author name or email"),
+            ("--scan-limit <N>", "Maximum number of commits to scan from repository"),
         ];
         
         for (option, desc) in options {
@@ -330,19 +334,46 @@ impl HelpFormatter {
     
     /// Write plugin discovery options
     fn write_plugin_options(&self, output: &mut String) {
-        let options = vec![
+        // Plugin configuration options
+        let config_options = vec![
+            ("--plugin-dir <DIR>", "Override default plugin discovery directory"),
+            ("--plugins-dir <DIR>", "Additional plugin directories to search (can be used multiple times)"),
+            ("--plugin-directory <DIR>", "Plugin directory path for external plugin discovery"),
+            ("--plugin-load <LIST>", "Comma-separated list of plugins to load explicitly"),
+            ("--plugin-exclude <LIST>", "Comma-separated list of plugins to exclude"),
+        ];
+        
+        for (option, desc) in config_options {
+            let (flag_part, arg_part) = self.parse_option(option);
+            writeln!(output, "{}", self.format_option_line(&flag_part, &arg_part, desc)).unwrap();
+        }
+        
+        // Plugin discovery and information options
+        let discovery_options = vec![
             ("--list-plugins", "List all available plugins"),
             ("--plugins", "Show all plugins with functions and descriptions"),
             ("--plugins-help", "Show detailed plugin functions and command mappings"),
             ("--plugin-info <PLUGIN>", "Show detailed information about specific plugin"),
             ("--check-plugin <PLUGIN>", "Check plugin compatibility with current API"),
-            ("--list-by-type <TYPE>", "List plugins by type (scanner, output, etc.)"),
         ];
         
-        for (option, desc) in options {
+        for (option, desc) in discovery_options {
             let (flag_part, arg_part) = self.parse_option(option);
             writeln!(output, "{}", self.format_option_line(&flag_part, &arg_part, desc)).unwrap();
         }
+        
+        writeln!(output).unwrap();
+        
+        // Add GS-81 requirement: mention that plugins have context-specific help
+        writeln!(output, "    {}", self.colour_manager.info("NOTE: Each plugin provides context-specific help:")).unwrap();
+        writeln!(output, "    {} {} {}", 
+                self.colour_manager.command("gstats"),
+                self.colour_manager.highlight("<COMMAND>"),
+                self.colour_manager.success("--help")).unwrap();
+        writeln!(output, "    Example: {} {} {}", 
+                self.colour_manager.command("gstats"),
+                self.colour_manager.highlight("authors"),
+                self.colour_manager.success("--help")).unwrap();
     }
 
     /// Write usage examples with consistent alignment

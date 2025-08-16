@@ -4,7 +4,7 @@
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginFunction, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences}
+    PluginResult, PluginError, traits::{PluginType, PluginFunction, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences, PluginClapParser}
 };
 use crate::plugin::data_export::{
     PluginDataExport, DataExportType, DataSchema, ColumnDef, ColumnType,
@@ -512,6 +512,16 @@ impl Plugin for CommitsPlugin {
     fn as_consumer_plugin_mut(&mut self) -> Option<&mut dyn ConsumerPlugin> {
         Some(self)
     }
+    
+    fn get_plugin_help(&self) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help(self))
+    }
+    
+    fn build_clap_command(&self) -> Option<clap::Command> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::build_clap_command(self))
+    }
 }
 
 /// Data requirements implementation for CommitsPlugin
@@ -713,6 +723,51 @@ impl CommitsPlugin {
         } else {
             Err(PluginError::execution_failed("Expected CommitInfo data"))
         }
+    }
+}
+
+/// Modern clap-based argument parsing implementation for commits plugin
+#[async_trait]
+impl PluginClapParser for CommitsPlugin {
+    fn build_clap_command(&self) -> clap::Command {
+        use clap::{Arg, ArgAction, Command};
+        
+        Command::new("commits")
+            .override_usage("commits [OPTIONS]")
+            .help_template("Usage: {usage}\n\nAnalyzes git commit history and statistics\n\nOptions:\n{options}\n{after-help}")
+            .after_help("Provides commit analysis, author statistics, and development patterns.")
+            .arg(Arg::new("include-stats")
+                .long("stats")
+                .help("Include detailed statistical analysis")
+                .action(ArgAction::SetTrue))
+    }
+    
+    async fn configure_from_matches(&mut self, matches: &clap::ArgMatches) -> PluginResult<()> {
+        // Commits plugin doesn't have complex configuration state to update
+        // The arguments are handled during execution based on the function being called
+        
+        if let Some(limit) = matches.get_one::<u64>("limit") {
+            log::debug!("Commits plugin configured with limit: {}", limit);
+        }
+        
+        if let Some(authors) = matches.get_many::<String>("author-filter") {
+            log::debug!("Commits plugin configured with author filters: {:?}", 
+                       authors.collect::<Vec<_>>());
+        }
+        
+        if matches.get_flag("exclude-merges") {
+            log::debug!("Commits plugin configured to exclude merge commits");
+        }
+        
+        if matches.get_flag("include-stats") {
+            log::debug!("Commits plugin configured to include detailed statistics");
+        }
+        
+        if let Some(format) = matches.get_one::<String>("output-format") {
+            log::debug!("Commits plugin configured with output format: {}", format);
+        }
+        
+        Ok(())
     }
 }
 

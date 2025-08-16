@@ -8,7 +8,7 @@ pub mod config;
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginArgumentParser, PluginArgDefinition, PluginDataRequirements}
+    PluginResult, PluginError, traits::{PluginType, PluginArgumentParser, PluginClapParser, PluginArgDefinition, PluginDataRequirements}
 };
 use crate::plugin::data_export::{PluginDataExport, DataPayload, ColumnType};
 use crate::plugin::data_coordinator::DataCoordinator;
@@ -565,6 +565,22 @@ impl Plugin for ExportPlugin {
     fn default_function(&self) -> Option<&str> {
         Some("output")
     }
+    
+    fn get_arg_schema(&self) -> Vec<crate::plugin::traits::PluginArgDefinition> {
+        // Forward to PluginArgumentParser implementation to maintain DRY principle
+        use crate::plugin::traits::PluginArgumentParser;
+        PluginArgumentParser::get_arg_schema(self)
+    }
+    
+    fn get_plugin_help(&self) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help(self))
+    }
+    
+    fn build_clap_command(&self) -> Option<clap::Command> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::build_clap_command(self))
+    }
 }
 
 // Implement Subscriber trait for receiving data export notifications
@@ -702,6 +718,86 @@ impl PluginArgumentParser for ExportPlugin {
                 _ => {}
             }
         }
+        
+        Ok(())
+    }
+}
+
+/// Modern clap-based argument parsing implementation for export plugin
+#[async_trait]
+impl PluginClapParser for ExportPlugin {
+    fn build_clap_command(&self) -> clap::Command {
+        use clap::{Arg, Command};
+        
+        Command::new("export")
+            .override_usage("export [OPTIONS]")
+            .help_template("Usage: {usage}\n\nExports analysis results\n\nOptions:\n{options}\n{after-help}")
+            .after_help("File extensions (.json, .csv, .xml, .yaml, .html, .md, .htm, .yml) auto-detect format when using --outfile.")
+            .arg(Arg::new("outfile")
+                .short('o')
+                .long("outfile")
+                .value_name("FILE")
+                .help("Output file path (if not specified, output to console)")
+                .value_hint(clap::ValueHint::FilePath))
+            .arg(Arg::new("template")
+                .short('t')
+                .long("template")
+                .value_name("FILE")
+                .help("Template file for custom formatting (Tera/Jinja2-compatible)")
+                .value_hint(clap::ValueHint::FilePath))
+            .arg(Arg::new("format")
+                .short('f')
+                .long("format")
+                .value_name("FORMAT")
+                .help("Output format: json, csv, xml, yaml, html, markdown")
+                .value_parser(["json", "csv", "xml", "yaml", "html", "markdown"])
+                .hide_possible_values(true))
+    }
+    
+    async fn configure_from_matches(&mut self, matches: &clap::ArgMatches) -> PluginResult<()> {
+        let mut config = self.export_config.write().await;
+        
+        // Handle output file
+        if let Some(outfile) = matches.get_one::<String>("outfile") {
+            config.output_file = Some(PathBuf::from(outfile));
+            
+            // Auto-detect format from extension
+            match self.format_detector.detect_format_from_path(outfile) {
+                FormatDetectionResult::Detected(format) => {
+                    config.output_format = format;
+                }
+                _ => {}
+            }
+        }
+        
+        // Handle format
+        if let Some(format) = matches.get_one::<String>("format") {
+            config.output_format = match format.to_lowercase().as_str() {
+                "json" => ExportFormat::Json,
+                "csv" => ExportFormat::Csv,
+                "xml" => ExportFormat::Xml,
+                "yaml" | "yml" => ExportFormat::Yaml,
+                "html" | "htm" => ExportFormat::Html,
+                "markdown" | "md" => ExportFormat::Markdown,
+                _ => return Err(PluginError::invalid_argument(
+                    "--format",
+                    &format!("Unknown format: {}", format)
+                )),
+            };
+        }
+        
+        // Handle template
+        if let Some(template) = matches.get_one::<String>("template") {
+            let template_path = PathBuf::from(template);
+            config.template_file = Some(template_path.clone());
+            
+            // Load template
+            let mut engine = self.template_engine.write().await;
+            engine.load_template(&template_path)?;
+        }
+        
+        log::debug!("Export plugin configured with clap: format={:?}, outfile={:?}", 
+                   config.output_format, config.output_file);
         
         Ok(())
     }

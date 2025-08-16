@@ -31,3 +31,6 @@ pub mod builtin_initialization_tests;
 #[cfg(test)]
 pub mod coordination_tests;
 
+#[cfg(test)]
+pub mod encapsulation_tests;
+

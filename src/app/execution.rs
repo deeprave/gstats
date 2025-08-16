@@ -38,28 +38,8 @@ pub async fn resolve_single_plugin_command(
             }
         }
         Err(e) => {
-            // TEMPORARY FALLBACK: Since CLI handler doesn't register functions (see GS-73),
-            // assume the command is a builtin plugin name
-            debug!("Command resolution failed, trying fallback for builtin plugins: {}", e);
-            
-            match command {
-                "commits" | "commit" | "history" => {
-                    debug!("Fallback: Resolved '{}' to 'commits' plugin", command);
-                    Ok("commits".to_string())
-                }
-                "metrics" | "metric" => {
-                    debug!("Fallback: Resolved '{}' to 'metrics' plugin", command);
-                    Ok("metrics".to_string())
-                }
-                "export" => {
-                    debug!("Fallback: Resolved '{}' to 'export' plugin", command);
-                    Ok("export".to_string())
-                }
-                _ => {
-                    error!("Failed to resolve command '{}': {}", command, e);
-                    Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e))
-                }
-            }
+            error!("Failed to resolve command '{}': {}", command, e);
+            Err(anyhow::anyhow!("Command resolution failed for '{}': {}", command, e))
         }
     }
 }
@@ -95,30 +75,62 @@ pub async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigMan
         if mappings.is_empty() {
             println!("No plugin functions available.");
         } else {
-            // Sort functions alphabetically
-            let mut sorted_mappings = mappings.clone();
-            sorted_mappings.sort_by(|a, b| a.function_name.cmp(&b.function_name));
+            use std::collections::HashMap;
             
-            for mapping in &sorted_mappings {
-                let aliases_str = if mapping.aliases.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (aliases: {})", mapping.aliases.join(", "))
-                };
-                
-                let default_marker = if mapping.is_default { " *" } else { "" };
-                
-                println!("{}{}{} → {} plugin{}", 
-                    mapping.function_name,
-                    default_marker,
-                    aliases_str,
-                    mapping.plugin_name,
-                    if !mapping.description.is_empty() { 
-                        format!(" - {}", mapping.description) 
-                    } else { 
-                        String::new() 
-                    }
-                );
+            // Group functions by plugin for better organization
+            let mut by_plugin: HashMap<String, Vec<_>> = HashMap::new();
+            for mapping in &mappings {
+                by_plugin.entry(mapping.plugin_name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(mapping);
+            }
+            
+            // Sort plugins alphabetically
+            let mut plugin_names: Vec<_> = by_plugin.keys().cloned().collect();
+            plugin_names.sort();
+            
+            // Calculate column widths for proper alignment
+            let max_plugin_width = plugin_names.iter().map(|name| name.len()).max().unwrap_or(6).max(6); // "Plugin" length
+            
+            // Print sleek header with underline
+            println!(" {:<width$} Functions & Description", "Plugin", width = max_plugin_width);
+            println!(" {} {}", "-".repeat(max_plugin_width), "--");
+            
+            // Print each plugin row
+            for plugin_name in &plugin_names {
+                if let Some(funcs) = by_plugin.get(plugin_name) {
+                    // Sort functions, putting default first
+                    let mut sorted_funcs = funcs.clone();
+                    sorted_funcs.sort_by(|a, b| {
+                        match (a.is_default, b.is_default) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => a.function_name.cmp(&b.function_name),
+                        }
+                    });
+                    
+                    // Build function list string without brackets around aliases
+                    let function_strs: Vec<String> = sorted_funcs.iter().map(|f| {
+                        let default_marker = if f.is_default { "*" } else { "" };
+                        let aliases = if !f.aliases.is_empty() {
+                            format!(", {}", f.aliases.join(", "))
+                        } else {
+                            String::new()
+                        };
+                        format!("{}{}{}", f.function_name, default_marker, aliases)
+                    }).collect();
+                    
+                    let functions_str = function_strs.join(", ");
+                    
+                    // Get plugin description (use first function's description or plugin name)
+                    let description = sorted_funcs.first()
+                        .and_then(|f| if !f.description.is_empty() { Some(f.description.as_str()) } else { None })
+                        .unwrap_or("Plugin for data processing");
+                    
+                    // Print plugin row with functions on first line, description on second
+                    println!(" {:<width$} {}", plugin_name, functions_str, width = max_plugin_width);
+                    println!(" {:<width$} {}", "", description, width = max_plugin_width);
+                }
             }
             
             println!();
@@ -221,8 +233,21 @@ pub async fn run_scanner(
     plugin_handler.build_command_mappings().await?;
     
     // Resolve plugin command using CommandMapper
-    let command = args.command.as_ref().map(|s| s.as_str()).unwrap_or("commits");
-    let plugin_names = vec![resolve_single_plugin_command(&plugin_handler, command, &args).await?];
+    let command = if let Some(cmd) = args.command.as_ref() {
+        cmd.clone()
+    } else {
+        // Get the first available plugin as default instead of hardcoding
+        let mappings = plugin_handler.get_function_mappings();
+        if mappings.is_empty() {
+            return Err(anyhow::anyhow!("No plugins available"));
+        }
+        // Find the first plugin with a default function
+        mappings.iter()
+            .find(|m| m.is_default)
+            .map(|m| m.plugin_name.clone())
+            .unwrap_or_else(|| mappings[0].plugin_name.clone())
+    };
+    let plugin_names = vec![resolve_single_plugin_command(&plugin_handler, &command, &args).await?];
     
     debug!("Active plugins: {:?}", plugin_names);
     debug!("Plugin arguments (original): {:?}", args.plugin_args);

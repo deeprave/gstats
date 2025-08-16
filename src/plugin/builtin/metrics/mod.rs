@@ -6,7 +6,7 @@
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences}
+    PluginResult, PluginError, traits::{PluginType, PluginDataRequirements, ConsumerPlugin, ConsumerPreferences, PluginClapParser}
 };
 use crate::plugin::data_export::{
     PluginDataExport, DataExportType, DataSchema, ColumnDef, ColumnType,
@@ -483,6 +483,16 @@ impl Plugin for MetricsPlugin {
     fn default_function(&self) -> Option<&str> {
         Some("metrics")
     }
+    
+    fn get_plugin_help(&self) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help(self))
+    }
+    
+    fn build_clap_command(&self) -> Option<clap::Command> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::build_clap_command(self))
+    }
 }
 
 /// Data requirements implementation for MetricsPlugin
@@ -509,6 +519,76 @@ impl PluginDataRequirements for MetricsPlugin {
     }
 }
 
+/// Modern clap-based argument parsing implementation for metrics plugin
+#[async_trait]
+impl PluginClapParser for MetricsPlugin {
+    fn build_clap_command(&self) -> clap::Command {
+        use clap::{Arg, ArgAction, Command};
+        
+        Command::new("metrics")
+            .override_usage("metrics [OPTIONS]")
+            .help_template("Usage: {usage}\n\nAnalyzes code quality metrics and statistics\n\nOptions:\n{options}\n{after-help}")
+            .after_help("Analyzes complexity, duplication, hotspots, and code quality indicators.")
+            .arg(Arg::new("complexity-threshold")
+                .short('c')
+                .long("complexity")
+                .value_name("NUMBER")
+                .help("Complexity threshold for reporting")
+                .value_parser(clap::value_parser!(u32))
+                .default_value("10"))
+            .arg(Arg::new("exclude-tests")
+                .long("no-tests")
+                .help("Exclude test files from analysis")
+                .action(ArgAction::SetTrue))
+            .arg(Arg::new("duplication-threshold")
+                .short('d')
+                .long("duplication")
+                .value_name("LINES")
+                .help("Minimum lines for duplication detection")
+                .value_parser(clap::value_parser!(u32))
+                .default_value("5"))
+            .arg(Arg::new("hotspot-threshold")
+                .short('t')
+                .long("hotspot")
+                .value_name("COUNT")
+                .help("Minimum change count for hotspot detection")
+                .value_parser(clap::value_parser!(u32))
+                .default_value("5"))
+            .arg(Arg::new("detailed")
+                .long("detailed")
+                .help("Include detailed metrics breakdown")
+                .action(ArgAction::SetTrue))
+    }
+    
+    async fn configure_from_matches(&mut self, matches: &clap::ArgMatches) -> PluginResult<()> {
+        // Metrics plugin doesn't have complex configuration state to update
+        // The arguments are handled during execution based on the function being called
+        
+        if let Some(threshold) = matches.get_one::<u32>("complexity-threshold") {
+            log::debug!("Metrics plugin configured with complexity threshold: {}", threshold);
+        }
+        
+        
+        if matches.get_flag("exclude-tests") {
+            log::debug!("Metrics plugin configured to exclude test files");
+        }
+        
+        if let Some(dup_threshold) = matches.get_one::<u32>("duplication-threshold") {
+            log::debug!("Metrics plugin configured with duplication threshold: {}", dup_threshold);
+        }
+        
+        if let Some(hotspot_threshold) = matches.get_one::<u32>("hotspot-threshold") {
+            log::debug!("Metrics plugin configured with hotspot threshold: {}", hotspot_threshold);
+        }
+        
+        if matches.get_flag("detailed") {
+            log::debug!("Metrics plugin configured for detailed analysis");
+        }
+        
+        
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {

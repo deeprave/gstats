@@ -36,6 +36,33 @@ pub trait Plugin: Send + Sync {
     /// Initialize the plugin with the given context
     async fn initialize(&mut self, context: &PluginContext) -> PluginResult<()>;
     
+    /// Get argument schema for this plugin (if it supports argument parsing)
+    /// 
+    /// This provides a unified way to access plugin argument schemas without
+    /// requiring separate trait casting. Plugins that don't support arguments
+    /// should return an empty vector.
+    fn get_arg_schema(&self) -> Vec<PluginArgDefinition> {
+        vec![]
+    }
+    
+    /// Generate help text for this plugin's arguments
+    /// 
+    /// This method attempts to use clap-based help generation if the plugin
+    /// implements PluginClapParser, otherwise falls back to legacy help.
+    /// Plugins should override this to provide custom help formatting.
+    fn get_plugin_help(&self) -> Option<String> {
+        None // Override in implementations that support argument parsing
+    }
+    
+    /// Build a clap Command for this plugin if it supports clap-based parsing
+    /// 
+    /// This provides a unified way to access plugin clap commands without
+    /// requiring separate trait casting. Plugins that don't use clap should
+    /// return None.
+    fn build_clap_command(&self) -> Option<clap::Command> {
+        None // Override in implementations that use PluginClapParser
+    }
+    
     /// Execute a plugin request
     async fn execute(&self, request: PluginRequest) -> PluginResult<PluginResponse>;
     
@@ -535,6 +562,42 @@ impl PluginDescriptor {
 }
 
 /// Plugin argument parsing trait for handling plugin-specific command line arguments
+#[async_trait]
+/// Modern clap-based plugin argument parsing trait
+/// 
+/// This trait provides a clap-based approach to plugin argument parsing,
+/// offering consistency with the main CLI and automatic help generation.
+#[async_trait]
+pub trait PluginClapParser {
+    /// Build a clap Command for this plugin
+    /// 
+    /// This method should return a clap Command that defines all the arguments
+    /// this plugin supports. The Command will be used for parsing and help generation.
+    fn build_clap_command(&self) -> clap::Command;
+    
+    /// Parse arguments using clap and configure the plugin
+    /// 
+    /// This method receives the parsed clap ArgMatches and should configure
+    /// the plugin based on the provided arguments.
+    async fn configure_from_matches(&mut self, matches: &clap::ArgMatches) -> PluginResult<()>;
+    
+    /// Generate help text for this plugin using clap
+    /// 
+    /// This provides automatic help generation using clap's built-in help system.
+    /// Plugins can override this for custom help formatting.
+    fn generate_help(&self) -> String {
+        let mut command = self.build_clap_command();
+        let mut help_output = Vec::new();
+        let _ = command.write_help(&mut help_output);
+        String::from_utf8_lossy(&help_output).to_string()
+    }
+}
+
+/// Legacy plugin argument parsing trait (deprecated)
+/// 
+/// This trait is maintained for backward compatibility but should be migrated
+/// to PluginClapParser for better consistency and functionality.
+#[deprecated(note = "Use PluginClapParser for better consistency and automatic help generation")]
 #[async_trait]
 pub trait PluginArgumentParser {
     /// Parse plugin-specific arguments

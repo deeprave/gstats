@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use crate::plugin::traits::{
     Plugin, PluginInfo, PluginType, ConsumerPlugin, PluginDataRequirements,
-    ConsumerPreferences, PluginArgumentParser, PluginArgDefinition,
+    ConsumerPreferences, PluginArgumentParser, PluginClapParser, PluginArgDefinition,
 };
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::{PluginContext, PluginRequest, PluginResponse};
@@ -336,6 +336,33 @@ impl Plugin for DebugPlugin {
     /// Cast to mutable ConsumerPlugin since this plugin implements that trait
     fn as_consumer_plugin_mut(&mut self) -> Option<&mut dyn ConsumerPlugin> {
         Some(self)
+    }
+    
+    fn get_arg_schema(&self) -> Vec<crate::plugin::traits::PluginArgDefinition> {
+        // Forward to PluginArgumentParser implementation to maintain DRY principle
+        use crate::plugin::traits::PluginArgumentParser;
+        PluginArgumentParser::get_arg_schema(self)
+    }
+    
+    fn get_plugin_help(&self) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help(self))
+    }
+    
+    fn build_clap_command(&self) -> Option<clap::Command> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::build_clap_command(self))
+    }
+    
+    fn advertised_functions(&self) -> Vec<crate::plugin::traits::PluginFunction> {
+        vec![
+            crate::plugin::traits::PluginFunction {
+                name: "debug".to_string(),
+                aliases: vec!["dbg".to_string(), "info".to_string()],
+                description: "Debug plugin for system and scan diagnostics".to_string(),
+                is_default: true,
+            }
+        ]
     }
 }
 
@@ -683,6 +710,85 @@ impl PluginArgumentParser for DebugPlugin {
                 examples: vec!["--export".to_string()],
             },
         ]
+    }
+}
+
+/// Modern clap-based argument parsing implementation
+#[async_trait]
+impl PluginClapParser for DebugPlugin {
+    fn build_clap_command(&self) -> clap::Command {
+        use clap::{Arg, ArgAction, Command};
+        
+        Command::new("debug")
+            .override_usage("debug [OPTIONS]")
+            .help_template("Usage: {usage}\n\nInspects git scan message streams\n\nOptions:\n{options}\n{after-help}")
+            .after_help("Use --export to send results to the export plugin for formatted output.")
+            .arg(Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .action(ArgAction::SetTrue)
+                .help("Enable verbose debugging output"))
+            .arg(Arg::new("full-commit-message")
+                .long("full-commit-message")
+                .action(ArgAction::SetTrue)
+                .help("Show complete commit messages without truncation"))
+            .arg(Arg::new("file-diff")
+                .long("file-diff")
+                .action(ArgAction::SetTrue)
+                .help("Display file differences and change details"))
+            .arg(Arg::new("raw-data")
+                .long("raw-data")
+                .action(ArgAction::SetTrue)
+                .help("Show raw message data without formatting"))
+            .arg(Arg::new("message-index")
+                .long("message-index")
+                .action(ArgAction::SetTrue)
+                .help("Include message index numbers in output"))
+            .arg(Arg::new("no-color")
+                .long("no-color")
+                .action(ArgAction::SetTrue)
+                .help("Disable colored output"))
+            .arg(Arg::new("compact")
+                .long("compact")
+                .action(ArgAction::SetTrue)
+                .help("Use compact single-line output format"))
+            .arg(Arg::new("max-lines")
+                .long("max-lines")
+                .value_name("N")
+                .help("Maximum number of lines to display")
+                .default_value("100")
+                .value_parser(clap::value_parser!(u32)))
+            .arg(Arg::new("export")
+                .long("export")
+                .action(ArgAction::SetTrue)
+                .help("Enable data export interface"))
+    }
+    
+    async fn configure_from_matches(&mut self, matches: &clap::ArgMatches) -> PluginResult<()> {
+        let mut config = self.config.write().await;
+        
+        config.verbose = matches.get_flag("verbose");
+        config.full_commit_message = matches.get_flag("full-commit-message");
+        config.file_diff = matches.get_flag("file-diff");
+        config.raw_data = matches.get_flag("raw-data");
+        config.message_index = matches.get_flag("message-index");
+        config.use_color = !matches.get_flag("no-color");
+        config.compact_mode = matches.get_flag("compact");
+        
+        if let Some(max_lines) = matches.get_one::<u32>("max-lines") {
+            config.max_display_lines = *max_lines as usize;
+        }
+        
+        if matches.get_flag("export") {
+            let mut export_enabled = self.export_enabled.write().await;
+            *export_enabled = true;
+            log::info!("Debug plugin: Export functionality enabled");
+        }
+        
+        log::debug!("Debug plugin configured with clap: verbose={}, compact={}, max_lines={}", 
+                   config.verbose, config.compact_mode, config.max_display_lines);
+        
+        Ok(())
     }
 }
 

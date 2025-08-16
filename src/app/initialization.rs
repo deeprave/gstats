@@ -6,17 +6,13 @@ use log::{info, debug, error};
 use crate::{cli, config, logging, display, plugin};
 
 pub fn load_configuration(args: &cli::Args) -> Result<config::ConfigManager> {
-    let mut manager = if let Some(config_file) = &args.config_file {
+    let manager = if let Some(config_file) = &args.config_file {
         debug!("Loading configuration from explicit file: {}", config_file.display());
         config::ConfigManager::load_from_file(config_file.clone())?
     } else {
         config::ConfigManager::load()?
     };
     
-    if let Some(section_name) = &args.config_name {
-        debug!("Selecting configuration section: {}", section_name);
-        manager.select_section(section_name.clone());
-    }
     
     Ok(manager)
 }
@@ -161,33 +157,28 @@ pub async fn initialize_builtin_plugins(
     
     debug!("Initializing builtin plugins");
     
-    // Register all plugins as inactive first
+    // Register all builtin plugins discovered dynamically
     {
         let mut registry = plugin_registry.inner().write().await;
         
-        // Debug Plugin - for testing queue message flow
-        let debug_plugin = Box::new(plugin::builtin::debug::DebugPlugin::new());
-        registry.register_plugin_inactive(debug_plugin).await
-            .with_context(|| "Failed to register debug plugin")?;
+        // Use centralized plugin creation to avoid hardcoded names
+        let builtin_plugins = create_all_builtin_plugins();
+        for plugin in builtin_plugins {
+            let plugin_name = plugin.plugin_info().name.clone();
+            registry.register_plugin_inactive(plugin).await
+                .with_context(|| format!("Failed to register builtin plugin: {}", plugin_name))?;
+        }
         
-        // Metrics Plugin  
-        let metrics_plugin = Box::new(plugin::builtin::metrics::MetricsPlugin::new());
-        registry.register_plugin_inactive(metrics_plugin).await
-            .with_context(|| "Failed to register metrics plugin")?;
-        
-        // Commits Plugin
-        let commits_plugin = Box::new(plugin::builtin::commits::CommitsPlugin::new());
-        registry.register_plugin_inactive(commits_plugin).await
-            .with_context(|| "Failed to register commits plugin")?;
-        
-        // Export Plugin
-        let export_plugin = Box::new(plugin::builtin::export::ExportPlugin::new());
-        registry.register_plugin_inactive(export_plugin).await
-            .with_context(|| "Failed to register export plugin")?;
-        
-        // Auto-activate plugins marked with load_by_default = true
-        registry.auto_activate_default_plugins().await
-            .with_context(|| "Failed to auto-activate default plugins")?;
+        // Activate plugins marked with load_by_default = true
+        let plugin_names = registry.list_plugins();
+        for plugin_name in plugin_names {
+            if let Some(plugin) = registry.get_plugin(&plugin_name) {
+                if plugin.plugin_info().load_by_default {
+                    registry.activate_plugin(&plugin_name).await
+                        .with_context(|| format!("Failed to activate default plugin: {}", plugin_name))?;
+                }
+            }
+        }
     }
     
     info!("Builtin plugins initialized successfully");
@@ -211,4 +202,16 @@ pub fn create_plugin_context(_repo_path: &PathBuf) -> Result<plugin::PluginConte
     
     Ok(plugin::PluginContext::new(scanner_config, query_params)
         .with_notification_manager(notification_manager))
+}
+
+/// Centralized helper function to create all builtin plugins
+/// This is the ONLY place where builtin plugin instantiation should be hardcoded
+/// All other code should use plugin discovery mechanisms
+fn create_all_builtin_plugins() -> Vec<Box<dyn plugin::Plugin>> {
+    vec![
+        Box::new(plugin::builtin::debug::DebugPlugin::new()),
+        Box::new(plugin::builtin::export::ExportPlugin::new()),
+        Box::new(plugin::builtin::commits::CommitsPlugin::new()),
+        Box::new(plugin::builtin::metrics::MetricsPlugin::new()),
+    ]
 }

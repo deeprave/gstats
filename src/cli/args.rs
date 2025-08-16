@@ -10,6 +10,7 @@ use super::help_formatter::HelpFormatter;
 #[derive(Parser, Debug)]
 #[command(name = "gstats")]
 #[command(about = "Fast, local-first git analytics tool")]
+#[command(disable_help_flag = true)]
 #[command(long_about = "gstats - Fast, local-first git analytics tool
 
 COMMON WORKFLOWS:
@@ -80,9 +81,6 @@ pub struct Args {
     #[arg(long, value_name = "FILE")]
     pub config_file: Option<PathBuf>,
     
-    /// Configuration section name
-    #[arg(long, value_name = "SECTION")]
-    pub config_name: Option<String>,
     
     // ============ BRANCH SELECTION FLAGS ============
     
@@ -199,10 +197,6 @@ pub struct Args {
     pub plugin_info: Option<String>,
     
     
-    /// List plugins by category
-    /// Examples: --list-by-type scanner, --list-by-type output
-    #[arg(long = "list-by-type", value_name = "TYPE", help = "List plugins by type (scanner, output, etc.)")]
-    pub list_by_type: Option<String>,
     
     /// Override default plugin discovery directory
     /// Example: --plugin-dir ./custom_plugins
@@ -237,6 +231,10 @@ pub struct Args {
     /// Example: --export-config gstats-config.toml
     #[arg(long = "export-config", value_name = "FILE", help = "Export complete configuration to specified TOML file")]
     pub export_config: Option<PathBuf>,
+    
+    /// Print help information
+    #[arg(short = 'h', long = "help", help = "Print help information")]
+    pub help: bool,
 }
 
 impl Args {
@@ -264,15 +262,6 @@ impl Args {
 /// Parse command line arguments
 pub fn parse_args() -> Args {
     debug!("Parsing command line arguments");
-    
-    // Check for help flag before parsing to intercept it
-    let args: Vec<String> = std::env::args().collect();
-    if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
-        let no_color = args.contains(&"--no-color".to_string());
-        let color = args.contains(&"--color".to_string());
-        display_enhanced_help(no_color, color);
-        std::process::exit(0);
-    }
     
     let args = Args::parse().apply_enhanced_parsing();
     debug!("Parsed CLI arguments with enhanced parsing: {:?}", args);
@@ -345,7 +334,6 @@ mod tests {
             no_color: false,
             compact: false,
             config_file: None,
-            config_name: None,
             since: None,
             until: None,
             include_path: Vec::new(),
@@ -365,7 +353,6 @@ mod tests {
             show_plugins: false,
             plugins_help: false,
             plugin_info: None,
-            list_by_type: None,
             plugin_dir: None,
             plugins_dir: Vec::new(),
             plugin_load: None,
@@ -377,6 +364,7 @@ mod tests {
             show_branch: false,
             fallback_branch: None,
             remote: None,
+            help: false,
         }
     }
 

@@ -96,7 +96,24 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let args = cli::args::parse_args();
+    // Stage 1: Parse minimal configuration arguments for early initialization
+    let initial_args = cli::initial_args::InitialArgs::parse_from_env();
+    
+    // Handle early exit cases (help/version) before any heavy initialization
+    if initial_args.is_early_exit() {
+        if initial_args.help_requested {
+            // Use enhanced help system but fall back to traditional parsing for compatibility
+            cli::args::display_enhanced_help(false, false);
+            return Ok(());
+        }
+        if initial_args.version_requested {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+    }
+    
+    // Stage 2: Segment command line and parse with plugin-aware help
+    let args = segment_and_parse_args(&initial_args)?;
     
     cli::args::validate_args(&args)?;
     
@@ -118,8 +135,14 @@ fn run() -> Result<()> {
         .enable_all()
         .build()?;
     
+    // Handle help command
+    if args.help {
+        cli::args::display_enhanced_help(args.no_color, args.color);
+        return Ok(());
+    }
+    
     // Handle plugin management commands
-    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.list_by_type.is_some() || args.list_formats {
+    if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.list_formats {
         return runtime.block_on(async {
             let config_manager = app::load_configuration(&args)?;
             app::handle_plugin_commands(&args, &config_manager).await
@@ -146,6 +169,93 @@ fn run() -> Result<()> {
     // Runtime will be dropped when runtime_arc goes out of scope
     
     result
+}
+
+/// Parse command line arguments with plugin-aware segmentation
+/// 
+/// This function implements the two-stage parsing approach for GS-81:
+/// 1. Uses initial_args for configuration discovery
+/// 2. Segments command line by plugin boundaries 
+/// 3. Handles plugin-specific help routing
+/// 4. Parses global arguments using traditional clap derive
+fn segment_and_parse_args(initial_args: &cli::initial_args::InitialArgs) -> Result<cli::Args> {
+    use crate::cli::converter::PluginConfig;
+    use crate::cli::plugin_handler::PluginHandler;
+    use crate::cli::command_segmenter::CommandSegmenter;
+    
+    // Get raw command line arguments
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    
+    // Early check for plugin help requests
+    if raw_args.len() >= 2 && (raw_args.contains(&"--help".to_string()) || raw_args.contains(&"-h".to_string())) {
+        // Check if this might be a plugin help request
+        if let Some(help_result) = handle_potential_plugin_help(&raw_args, initial_args)? {
+            println!("{}", help_result);
+            std::process::exit(0);
+        }
+    }
+    
+    // For now, fall back to traditional parsing for global arguments
+    // The segmentation logic will be used in the next phase for plugin execution
+    let args = cli::args::parse_args();
+    Ok(args)
+}
+
+/// Handle potential plugin help requests
+/// 
+/// Checks if the command line contains a pattern like "plugin --help" and routes to plugin help
+fn handle_potential_plugin_help(raw_args: &[String], initial_args: &cli::initial_args::InitialArgs) -> Result<Option<String>> {
+    use crate::cli::converter::PluginConfig;
+    use crate::cli::plugin_handler::PluginHandler;
+    use crate::cli::command_segmenter::CommandSegmenter;
+    
+    // Create plugin configuration from initial_args
+    let plugin_config = PluginConfig {
+        directories: if let Some(dir) = &initial_args.plugin_dir {
+            vec![dir.clone()]
+        } else {
+            vec!["plugins".to_string()]
+        },
+        plugin_exclude: if let Some(exclude) = &initial_args.plugin_exclude {
+            exclude.split(',').map(|s| s.trim().to_string()).collect()
+        } else {
+            Vec::new()
+        },
+        plugin_load: Vec::new(),
+    };
+    
+    // Create runtime for async operations
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+        
+    runtime.block_on(async {
+        // Create plugin handler and build command mappings
+        let plugin_handler = PluginHandler::with_plugin_config(plugin_config)
+            .map_err(|e| anyhow::anyhow!("Failed to create plugin handler: {}", e))?;
+        
+        let mut plugin_handler = plugin_handler;
+        plugin_handler.build_command_mappings().await
+            .map_err(|e| anyhow::anyhow!("Failed to build command mappings: {}", e))?;
+        
+        // Create command segmenter
+        let segmenter = CommandSegmenter::new(plugin_handler).await
+            .map_err(|e| anyhow::anyhow!("Failed to create command segmenter: {}", e))?;
+        
+        // Segment the arguments
+        let segmented = segmenter.segment_arguments(raw_args)?;
+        
+        // Check each plugin segment for help requests
+        for segment in &segmented.plugin_segments {
+            if segmenter.is_help_request(segment) {
+                let help_text = segmenter.get_plugin_help(&segment.plugin_name, segment.function_name.as_deref()).await
+                    .map_err(|e| anyhow::anyhow!("Failed to get plugin help: {}", e))?;
+                return Ok(Some(help_text));
+            }
+        }
+        
+        Ok(None)
+    })
 }
 
 /// Utility function to estimate line count from file size

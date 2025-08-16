@@ -4,8 +4,10 @@
 
 use crate::cli::date_parser::{parse_date, validate_date_range, DateParseError};
 use crate::cli::memory_parser::{parse_memory_size, MemoryParseError};
+use crate::cli::matches_parser::ParsedArgs;
 use crate::scanner::query::{QueryParams, DateRange, FilePathFilter, AuthorFilter};
 use crate::scanner::config::ScannerConfig;
+use clap::ArgMatches;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -328,7 +330,6 @@ mod tests {
             no_color: false,
             compact: false,
             config_file: None,
-            config_name: None,
             since: None,
             until: None,
             include_path: Vec::new(),
@@ -346,7 +347,6 @@ mod tests {
             plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
-            list_by_type: None,
             plugin_dir: None,
             plugins_dir: Vec::new(),
             plugin_load: None,
@@ -360,6 +360,7 @@ mod tests {
             show_branch: false,
             fallback_branch: None,
             remote: None,
+            help: false,
         }
     }
 
@@ -482,7 +483,6 @@ mod tests {
             no_color: false,
             compact: false,
             config_file: None,
-            config_name: None,
             since: Some("2023-01-01".to_string()),
             until: Some("2023-12-31".to_string()),
             include_path: vec!["src/".to_string()],
@@ -500,7 +500,6 @@ mod tests {
             plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
-            list_by_type: None,
             plugin_dir: None,
             plugins_dir: Vec::new(),
             plugin_load: None,
@@ -514,6 +513,7 @@ mod tests {
             show_branch: false,
             fallback_branch: None,
             remote: None,
+            help: false,
         };
         
         let result = args_to_query_params(&args, None).unwrap();
@@ -671,8 +671,7 @@ mod tests {
                 no_color: false,
                 compact: false,
                 config_file: None,
-                config_name: None,
-                since: None,
+                    since: None,
                 until: None,
                 include_path: vec![],
                 exclude_path: vec![],
@@ -689,8 +688,7 @@ mod tests {
                 plugin_args: Vec::new(),
                 list_plugins: false,
                 plugin_info: None,
-                list_by_type: None,
-                plugin_dir: None,
+                    plugin_dir: None,
                 plugins_dir: Vec::new(),
                 plugin_load: None,
                 plugin_exclude: None,
@@ -703,6 +701,7 @@ mod tests {
                 show_branch: false,
                 fallback_branch: None,
                 remote: None,
+                help: false,
             };
             
             let result = args_to_scanner_config(&args, None).unwrap();
@@ -861,7 +860,6 @@ mod tests {
             no_color: false,
             compact: false,
             config_file: None,
-            config_name: None,
             since: None,
             until: None,
             include_path: vec![],
@@ -879,7 +877,6 @@ mod tests {
             plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
-            list_by_type: None,
             plugin_dir: None,
             plugins_dir: Vec::new(),
             plugin_load: None,
@@ -893,6 +890,7 @@ mod tests {
             show_branch: false,
             fallback_branch: None,
             remote: None,
+            help: false,
         };
         
         let result = args_to_scanner_config(&args, None);
@@ -918,7 +916,6 @@ mod tests {
             no_color: false,
             compact: false,
             config_file: None,
-            config_name: None,
             since: None,
             until: None,
             include_path: vec![],
@@ -936,7 +933,6 @@ mod tests {
             plugin_args: Vec::new(),
             list_plugins: false,
             plugin_info: None,
-            list_by_type: None,
             plugin_dir: None,
             plugins_dir: Vec::new(),
             plugin_load: None,
@@ -950,6 +946,7 @@ mod tests {
             show_branch: false,
             fallback_branch: None,
             remote: None,
+            help: false,
         };
         
         let result = args_to_scanner_config(&args, None);
