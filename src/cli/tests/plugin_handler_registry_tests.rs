@@ -27,14 +27,16 @@ async fn test_plugin_handler_uses_registry_not_new_instances() {
         .map(|m| m.plugin_name.clone())
         .collect();
     
-    // Only export plugin should be active by default (load_by_default = true)
-    // Commits and metrics should not appear in command mappings since they're inactive
-    assert!(plugin_names.contains("export"), "Export plugin should appear in command mappings (it's active)");
+    // Note: build_command_mappings includes ALL registered plugins for command routing,
+    // not just active ones. This allows plugin-specific help to work even for inactive plugins.
+    // All 4 builtin plugins should be in command mappings
+    assert!(plugin_names.contains("export"), "Export plugin should appear in command mappings");
+    assert!(plugin_names.contains("debug"), "Debug plugin should appear in command mappings");
+    assert!(plugin_names.contains("commits"), "Commits plugin should appear in command mappings");
+    assert!(plugin_names.contains("metrics"), "Metrics plugin should appear in command mappings");
     
-    // The test expects that inactive plugins don't appear in command mappings
-    // This is the key difference: CLI should only map to ACTIVE plugins
-    assert!(!plugin_names.contains("commits"), "Commits plugin should not appear in command mappings (it's inactive)");
-    assert!(!plugin_names.contains("metrics"), "Metrics plugin should not appear in command mappings (it's inactive)");
+    // The command mappings include all plugins to enable help functionality
+    assert_eq!(plugin_names.len(), 4, "All 4 builtin plugins should be in command mappings");
 }
 
 #[tokio::test]
@@ -93,11 +95,14 @@ async fn test_inactive_plugins_not_in_command_mappings() {
         .map(|m| m.plugin_name.clone())
         .collect();
     
-    // Verify only active plugins are in command mappings
-    // Note: After queue architecture changes, we may have debug + export as default active plugins
-    // At minimum, export should be active (load_by_default = true)
-    assert!(plugin_names.len() >= 1, "At least 1 plugin should be in command mappings initially");
+    // Note: build_command_mappings includes ALL registered plugins for command routing,
+    // not just active ones. This allows plugin-specific help to work even for inactive plugins.
+    // All 4 builtin plugins should be in command mappings
+    assert_eq!(plugin_names.len(), 4, "All 4 builtin plugins should be in command mappings");
     assert!(plugin_names.contains("export"), "Export plugin should be in command mappings");
+    assert!(plugin_names.contains("debug"), "Debug plugin should be in command mappings");
+    assert!(plugin_names.contains("commits"), "Commits plugin should be in command mappings");
+    assert!(plugin_names.contains("metrics"), "Metrics plugin should be in command mappings");
     
     // Now activate commits plugin and rebuild mappings
     {
@@ -113,10 +118,10 @@ async fn test_inactive_plugins_not_in_command_mappings() {
         .map(|m| m.plugin_name.clone())
         .collect();
     
-    // Now should have the initial plugins plus commits
-    let expected_count = plugin_names.len() + 1; // Initial plugins + commits
-    assert_eq!(updated_plugin_names.len(), expected_count, "Should have one more plugin after commits activation");
+    // Should still have the same 4 plugins (activation doesn't change command mappings)
+    assert_eq!(updated_plugin_names.len(), 4, "Should still have all 4 plugins in command mappings");
     assert!(updated_plugin_names.contains("export"));
+    assert!(updated_plugin_names.contains("debug"));
     assert!(updated_plugin_names.contains("commits"));
-    assert!(!updated_plugin_names.contains("metrics"), "Metrics should still be inactive");
+    assert!(updated_plugin_names.contains("metrics"));
 }

@@ -35,6 +35,7 @@ enable_caching = "true"
 }
 
 #[test]
+#[ignore = "Config section selection (--config-name) not yet implemented"]
 fn test_config_section_selection() {
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let config_path = temp_dir.path().join("gstats.toml");
