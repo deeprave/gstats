@@ -4,10 +4,8 @@
 
 use crate::cli::date_parser::{parse_date, validate_date_range, DateParseError};
 use crate::cli::memory_parser::{parse_memory_size, MemoryParseError};
-use crate::cli::matches_parser::ParsedArgs;
 use crate::scanner::query::{QueryParams, DateRange, FilePathFilter, AuthorFilter};
 use crate::scanner::config::ScannerConfig;
-use clap::ArgMatches;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -328,7 +326,6 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
-            compact: false,
             config_file: None,
             since: None,
             until: None,
@@ -481,7 +478,6 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
-            compact: false,
             config_file: None,
             since: Some("2023-01-01".to_string()),
             until: Some("2023-12-31".to_string()),
@@ -669,8 +665,7 @@ mod tests {
                 log_file_level: None,
                 color: false,
                 no_color: false,
-                compact: false,
-                config_file: None,
+                    config_file: None,
                     since: None,
                 until: None,
                 include_path: vec![],
@@ -858,7 +853,6 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
-            compact: false,
             config_file: None,
             since: None,
             until: None,
@@ -914,7 +908,6 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
-            compact: false,
             config_file: None,
             since: None,
             until: None,

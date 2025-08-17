@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use log::{info, debug, error, warn};
+use log::{info, debug, error};
 use crate::{cli, config, display, plugin, scanner};
 use crate::scanner::branch_detection::BranchDetection;
 use crate::scanner::traits::QueueMessageProducer;
@@ -292,17 +292,6 @@ pub async fn run_scanner(
         // Get the plugin and configure it with arguments
         let mut plugin_registry_guard = plugin_registry.inner().write().await;
         if let Some(plugin) = plugin_registry_guard.get_plugin_mut(plugin_name) {
-            // Plugin-specific configuration
-            if !filtered_plugin_args.is_empty() && plugin_name == "debug" {
-                // For debug plugin, check if compact mode should be enabled
-                if filtered_plugin_args.contains(&"--compact".to_string()) {
-                    info!("Debug plugin: compact mode detected in arguments");
-                    // Unfortunately, trait object downcast doesn't work here
-                    // This is a known architectural limitation that needs to be addressed
-                    // For now, compact mode would need to be configured during plugin creation
-                }
-            }
-            
             if let Some(consumer_plugin) = plugin.as_consumer_plugin_mut() {
                 consumer_plugin.start_consuming(consumer).await
                     .map_err(|e| anyhow::anyhow!("Failed to start consuming for plugin {}: {}", plugin_name, e))?;
