@@ -489,6 +489,11 @@ impl Plugin for MetricsPlugin {
         Some(PluginClapParser::generate_help(self))
     }
     
+    fn get_plugin_help_with_colors(&self, no_color: bool, color: bool) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help_with_colors(self, no_color, color))
+    }
+    
     fn build_clap_command(&self) -> Option<clap::Command> {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))

@@ -2,58 +2,37 @@
 
 use anyhow::Result;
 use crate::display;
+use prettytable::{Table, Row, Cell, format};
 
-/// Format a compact table with headers and rows
+/// Format a compact table with headers and rows using prettytable-rs clean format
 pub fn format_compact_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     if rows.is_empty() {
         return String::new();
     }
     
-    // Calculate column widths
-    let mut column_widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_CLEAN);
+    
+    // Add header row
+    let header_cells: Vec<Cell> = headers.iter()
+        .map(|header| Cell::new(header))
+        .collect();
+    table.add_row(Row::new(header_cells));
+    
+    // Add data rows
     for row in rows {
-        for (i, cell) in row.iter().enumerate() {
-            if i < column_widths.len() {
-                column_widths[i] = column_widths[i].max(cell.len());
-            }
-        }
+        let data_cells: Vec<Cell> = row.iter()
+            .map(|cell| Cell::new(cell))
+            .collect();
+        table.add_row(Row::new(data_cells));
     }
     
+    // Add 2-space indent to match --plugins-help format
+    let table_output = table.to_string();
     let mut result = String::new();
-    
-    // Header row
-    result.push_str("  ");
-    for (i, header) in headers.iter().enumerate() {
-        if i > 0 {
-            result.push(' ');
-        }
-        result.push_str(&format!("{:<width$}", header, width = column_widths[i]));
-    }
-    result.push('\n');
-    
-    // Separator row
-    result.push_str("  ");
-    for (i, width) in column_widths.iter().enumerate() {
-        if i > 0 {
-            result.push(' ');
-        }
-        result.push_str(&"-".repeat(*width));
-    }
-    result.push('\n');
-    
-    // Data rows
-    for row in rows {
+    for line in table_output.lines() {
         result.push_str("  ");
-        for (i, cell) in row.iter().enumerate() {
-            if i > 0 {
-                result.push(' ');
-            }
-            if i < column_widths.len() {
-                result.push_str(&format!("{:<width$}", cell, width = column_widths[i]));
-            } else {
-                result.push_str(cell);
-            }
-        }
+        result.push_str(line);
         result.push('\n');
     }
     

@@ -154,6 +154,15 @@ pub fn create_colour_manager(args: &cli::Args, config: &config::ConfigManager) -
 pub async fn initialize_builtin_plugins(
     plugin_registry: &plugin::SharedPluginRegistry,
 ) -> Result<()> {
+    // Create a default colour manager for backward compatibility
+    let colour_manager = display::ColourManager::from_color_args(false, false, None);
+    initialize_builtin_plugins_with_context(plugin_registry, &colour_manager).await
+}
+
+pub async fn initialize_builtin_plugins_with_context(
+    plugin_registry: &plugin::SharedPluginRegistry,
+    colour_manager: &display::ColourManager,
+) -> Result<()> {
     
     debug!("Initializing builtin plugins");
     
@@ -179,13 +188,69 @@ pub async fn initialize_builtin_plugins(
                 }
             }
         }
+        // Create plugin context with colour manager and initialize all plugins
+        let plugin_context = create_plugin_context(&std::env::current_dir()?, colour_manager)?;
+        
+        // Initialize all plugins with the context
+        let initialization_results = registry.initialize_all(&plugin_context).await;
+        
+        // Check for initialization failures
+        for (plugin_name, result) in initialization_results {
+            if let Err(e) = result {
+                error!("Failed to initialize plugin '{}': {}", plugin_name, e);
+                return Err(anyhow::anyhow!("Plugin initialization failed for '{}': {}", plugin_name, e));
+            } else {
+                debug!("Successfully initialized plugin: {}", plugin_name);
+            }
+        }
     }
     
-    info!("Builtin plugins initialized successfully");
+    info!("Builtin plugins initialized successfully with color context");
     Ok(())
 }
 
-pub fn create_plugin_context(_repo_path: &PathBuf) -> Result<plugin::PluginContext> {
+/// Initialize builtin plugins with color context and compact mode detection
+pub async fn initialize_builtin_plugins_with_compact_mode(
+    plugin_registry: &plugin::SharedPluginRegistry,
+    colour_manager: &display::ColourManager,
+    debug_compact_mode: bool,
+) -> Result<()> {
+    debug!("Initializing builtin plugins with compact mode: {}", debug_compact_mode);
+    
+    let context = create_plugin_context(&std::env::current_dir()?, colour_manager)?;
+    
+    // Get builtin plugins with compact mode consideration
+    let plugins = create_all_builtin_plugins_with_config(debug_compact_mode);
+    
+    for mut plugin in plugins {
+        let plugin_name = plugin.plugin_info().name.clone();
+        
+        debug!("Initializing plugin with context: {}", plugin_name);
+        
+        if let Err(e) = plugin.initialize(&context).await {
+            error!("Failed to initialize plugin '{}': {}", plugin_name, e);
+            return Err(anyhow::anyhow!("Plugin initialization failed for '{}': {}", plugin_name, e));
+        } else {
+            debug!("Successfully initialized plugin: {}", plugin_name);
+        }
+        
+        // Register plugin in the registry
+        {
+            let mut registry_guard = plugin_registry.inner().write().await;
+            if let Err(e) = registry_guard.register_plugin(plugin).await {
+                error!("Failed to register plugin '{}': {}", plugin_name, e);
+                return Err(anyhow::anyhow!("Plugin registration failed for '{}': {}", plugin_name, e));
+            } else {
+                debug!("Successfully registered plugin: {}", plugin_name);
+            }
+        }
+    }
+    
+    info!("Builtin plugins initialized successfully with compact mode configuration");
+    Ok(())
+}
+
+pub fn create_plugin_context(_repo_path: &PathBuf, colour_manager: &display::ColourManager) -> Result<plugin::PluginContext> {
     use crate::scanner::{ScannerConfig, QueryParams};
     use crate::notifications::AsyncNotificationManager;
     use crate::notifications::events::PluginEvent;
@@ -201,7 +266,8 @@ pub fn create_plugin_context(_repo_path: &PathBuf) -> Result<plugin::PluginConte
     );
     
     Ok(plugin::PluginContext::new(scanner_config, query_params)
-        .with_notification_manager(notification_manager))
+        .with_notification_manager(notification_manager)
+        .with_colour_manager(Arc::new(colour_manager.clone())))
 }
 
 /// Centralized helper function to create all builtin plugins
@@ -210,6 +276,16 @@ pub fn create_plugin_context(_repo_path: &PathBuf) -> Result<plugin::PluginConte
 fn create_all_builtin_plugins() -> Vec<Box<dyn plugin::Plugin>> {
     vec![
         Box::new(plugin::builtin::debug::DebugPlugin::new()),
+        Box::new(plugin::builtin::export::ExportPlugin::new()),
+        Box::new(plugin::builtin::commits::CommitsPlugin::new()),
+        Box::new(plugin::builtin::metrics::MetricsPlugin::new()),
+    ]
+}
+
+/// Create all builtin plugins with configuration options
+fn create_all_builtin_plugins_with_config(debug_compact_mode: bool) -> Vec<Box<dyn plugin::Plugin>> {
+    vec![
+        Box::new(plugin::builtin::debug::DebugPlugin::new_with_compact(debug_compact_mode)),
         Box::new(plugin::builtin::export::ExportPlugin::new()),
         Box::new(plugin::builtin::commits::CommitsPlugin::new()),
         Box::new(plugin::builtin::metrics::MetricsPlugin::new()),

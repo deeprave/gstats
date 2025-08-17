@@ -23,8 +23,6 @@ pub struct DebugConfig {
     /// Display message sequence numbers
     pub message_index: bool,
     
-    /// Use colored output
-    pub use_color: bool,
     
     /// Use compact display mode
     pub compact_mode: bool,
@@ -53,7 +51,6 @@ impl Default for DebugConfig {
             file_diff: false,
             raw_data: false,
             message_index: false,
-            use_color: true,
             compact_mode: false,
             max_display_lines: 100,
             truncate_paths: true,
@@ -94,7 +91,6 @@ impl DebugConfig {
             raw_data: true,
             full_commit_message: true,
             message_index: true,
-            use_color: false,
             ..Self::default()
         }
     }
@@ -146,7 +142,6 @@ mod tests {
         assert!(!config.verbose);
         assert!(!config.full_commit_message);
         assert!(!config.raw_data);
-        assert!(config.use_color);
         assert_eq!(config.max_display_lines, 100);
     }
     
@@ -177,7 +172,6 @@ mod tests {
         assert!(config.raw_data);
         assert!(config.full_commit_message);
         assert!(config.message_index);
-        assert!(!config.use_color);
     }
     
     #[test]

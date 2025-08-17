@@ -31,6 +31,7 @@ use crate::cli::plugin_args::{PluginArguments, PluginArgValue};
 use crate::notifications::AsyncNotificationManager;
 use crate::notifications::events::PluginEvent;
 use crate::notifications::traits::NotificationManager;
+use crate::display::ColourManager;
 
 mod display;
 mod config;
@@ -64,6 +65,9 @@ pub struct DebugPlugin {
     
     /// Whether export functionality is enabled via CLI flag
     export_enabled: Arc<RwLock<bool>>,
+    
+    /// Color management from global context
+    colour_manager: Arc<RwLock<Option<Arc<ColourManager>>>>,
 }
 
 /// Statistics for debug plugin operation
@@ -88,6 +92,11 @@ struct DebugStats {
 impl DebugPlugin {
     /// Create a new debug plugin instance
     pub fn new() -> Self {
+        Self::new_with_compact(false)
+    }
+    
+    /// Create a new debug plugin instance with optional compact mode
+    pub fn new_with_compact(compact_mode: bool) -> Self {
         let info = PluginInfo::new(
             "debug".to_string(),
             "1.0.0".to_string(),
@@ -99,7 +108,11 @@ impl DebugPlugin {
         .with_priority(0) // Normal priority
         .with_load_by_default(false); // Manual activation
         
-        let config = Arc::new(RwLock::new(DebugConfig::verbose()));
+        let config = if compact_mode {
+            Arc::new(RwLock::new(DebugConfig::compact()))
+        } else {
+            Arc::new(RwLock::new(DebugConfig::verbose()))
+        };
         let formatter = MessageFormatter::new(config.clone());
         
         Self {
@@ -112,6 +125,7 @@ impl DebugPlugin {
             notification_manager: None,
             current_scan_id: Arc::new(RwLock::new(None)),
             export_enabled: Arc::new(RwLock::new(false)),
+            colour_manager: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -272,6 +286,22 @@ impl Plugin for DebugPlugin {
             log::debug!("DebugPlugin: No notification manager available in context");
         }
         
+        // Store colour manager if available and update formatter
+        if let Some(ref colour_manager) = context.colour_manager {
+            let mut manager_guard = self.colour_manager.write().await;
+            *manager_guard = Some(colour_manager.clone());
+            
+            // Update the formatter with the colour manager
+            self.formatter = MessageFormatter::with_colour_manager(
+                Arc::clone(&self.config), 
+                Some(colour_manager.clone())
+            );
+            
+            log::debug!("DebugPlugin: Color manager configured");
+        } else {
+            log::debug!("DebugPlugin: No color manager available in context");
+        }
+        
         Ok(())
     }
     
@@ -349,6 +379,11 @@ impl Plugin for DebugPlugin {
         Some(PluginClapParser::generate_help(self))
     }
     
+    fn get_plugin_help_with_colors(&self, no_color: bool, color: bool) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help_with_colors(self, no_color, color))
+    }
+    
     fn build_clap_command(&self) -> Option<clap::Command> {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))
@@ -387,7 +422,14 @@ impl ConsumerPlugin for DebugPlugin {
         
         // Start the message processing loop in a background task
         let stats = Arc::clone(&self.stats);
-        let formatter = MessageFormatter::new(Arc::clone(&self.config));
+        let colour_manager_option = {
+            let guard = self.colour_manager.read().await;
+            guard.clone()
+        };
+        let formatter = MessageFormatter::with_colour_manager(
+            Arc::clone(&self.config),
+            colour_manager_option
+        );
         let consuming_flag = Arc::clone(&self.consuming);
         let consumer_store = Arc::clone(&self.consumer);
         let export_enabled_flag = Arc::clone(&self.export_enabled);
@@ -605,6 +647,7 @@ impl PluginDataRequirements for DebugPlugin {
 impl PluginArgumentParser for DebugPlugin {
     async fn parse_plugin_args(&mut self, args: &[String]) -> PluginResult<()> {
         // Parse arguments into DebugConfig
+        log::info!("DebugPlugin: parse_plugin_args called with args: {:?}", args);
         let mut config = self.config.write().await;
         
         for arg in args {
@@ -614,8 +657,10 @@ impl PluginArgumentParser for DebugPlugin {
                 "--file-diff" => config.file_diff = true,
                 "--raw-data" => config.raw_data = true,
                 "--message-index" => config.message_index = true,
-                "--no-color" => config.use_color = false,
-                "--compact" => config.compact_mode = true,
+                "--compact" => {
+                    config.compact_mode = true;
+                    log::info!("DebugPlugin: Compact mode enabled");
+                },
                 "--export" => {
                     // Enable export functionality
                     let mut export_enabled = self.export_enabled.write().await;
@@ -678,14 +723,6 @@ impl PluginArgumentParser for DebugPlugin {
                 examples: vec!["--message-index".to_string()],
             },
             PluginArgDefinition {
-                name: "--no-color".to_string(),
-                description: "Disable colored output".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--no-color".to_string()],
-            },
-            PluginArgDefinition {
                 name: "--compact".to_string(),
                 description: "Use compact display mode".to_string(),
                 required: false,
@@ -717,11 +754,24 @@ impl PluginArgumentParser for DebugPlugin {
 #[async_trait]
 impl PluginClapParser for DebugPlugin {
     fn build_clap_command(&self) -> clap::Command {
-        use clap::{Arg, ArgAction, Command};
+        use clap::{Arg, ArgAction, Command, ColorChoice};
         
-        Command::new("debug")
+        let mut command = Command::new("debug");
+        
+        // Configure colors based on environment variables
+        // Using Auto lets clap properly detect terminal capabilities
+        // Only disable colors when NO_COLOR is explicitly set
+        let color_choice = if std::env::var("NO_COLOR").is_ok() {
+            ColorChoice::Never
+        } else {
+            ColorChoice::Auto
+        };
+        
+        command = command.color(color_choice);
+        
+        command
             .override_usage("debug [OPTIONS]")
-            .help_template("Usage: {usage}\n\nInspects git scan message streams\n\nOptions:\n{options}\n{after-help}")
+            .about("Inspects git scan message streams")
             .after_help("Use --export to send results to the export plugin for formatted output.")
             .arg(Arg::new("verbose")
                 .short('v')
@@ -744,10 +794,6 @@ impl PluginClapParser for DebugPlugin {
                 .long("message-index")
                 .action(ArgAction::SetTrue)
                 .help("Include message index numbers in output"))
-            .arg(Arg::new("no-color")
-                .long("no-color")
-                .action(ArgAction::SetTrue)
-                .help("Disable colored output"))
             .arg(Arg::new("compact")
                 .long("compact")
                 .action(ArgAction::SetTrue)
@@ -765,6 +811,7 @@ impl PluginClapParser for DebugPlugin {
     }
     
     async fn configure_from_matches(&mut self, matches: &clap::ArgMatches) -> PluginResult<()> {
+        log::info!("DebugPlugin: configure_from_matches called with args: {:?}", matches);
         let mut config = self.config.write().await;
         
         config.verbose = matches.get_flag("verbose");
@@ -772,8 +819,8 @@ impl PluginClapParser for DebugPlugin {
         config.file_diff = matches.get_flag("file-diff");
         config.raw_data = matches.get_flag("raw-data");
         config.message_index = matches.get_flag("message-index");
-        config.use_color = !matches.get_flag("no-color");
         config.compact_mode = matches.get_flag("compact");
+        log::info!("DebugPlugin: PluginClapParser parsed compact_mode={}", config.compact_mode);
         
         if let Some(max_lines) = matches.get_one::<u32>("max-lines") {
             config.max_display_lines = *max_lines as usize;
@@ -819,11 +866,6 @@ pub fn apply_plugin_arguments(config: &mut DebugConfig, args: &PluginArguments) 
             "message-index" => {
                 if let PluginArgValue::Flag(v) = value {
                     config.message_index = *v;
-                }
-            }
-            "no-color" => {
-                if let PluginArgValue::Flag(v) = value {
-                    config.use_color = !v; // Invert for no-color flag
                 }
             }
             "compact" => {

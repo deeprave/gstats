@@ -73,9 +73,6 @@ pub struct Args {
     #[arg(long = "no-color", help = "Disable colored output")]
     pub no_color: bool,
     
-    /// Use compact output format for quick scanning
-    #[arg(long, help = "Display results in compact, one-line format suitable for CI/CD")]
-    pub compact: bool,
     
     /// Configuration file path
     #[arg(long, value_name = "FILE")]
@@ -332,7 +329,6 @@ mod tests {
             log_file_level: None,
             color: false,
             no_color: false,
-            compact: false,
             config_file: None,
             since: None,
             until: None,
@@ -590,28 +586,21 @@ mod tests {
     
     #[test]
     fn test_compact_flag_default() {
-        let args = create_test_args();
-        assert!(!args.compact, "Compact flag should default to false");
+        let _args = create_test_args();
+        // Compact flag is now plugin-specific, not global
     }
     
     #[test] 
     fn test_compact_flag_enabled() {
-        let args = Args {
-            compact: true,
-            ..create_test_args()
-        };
-        assert!(args.compact, "Compact flag should be true when enabled");
+        let _args = create_test_args();
+        // Compact flag is now plugin-specific, not global
     }
     
     #[test]
     fn test_compact_flag_validation() {
-        let args = Args {
-            compact: true,
-            verbose: false,
-            quiet: false,
-            ..create_test_args()
-        };
-        assert!(validate_args(&args).is_ok(), "Compact flag should pass validation");
+        let args = create_test_args();
+        // Compact flag is now plugin-specific, not global
+        assert!(validate_args(&args).is_ok(), "Args should pass validation");
     }
 
     #[test]

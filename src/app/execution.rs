@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use log::{info, debug, error};
+use log::{info, debug, error, warn};
 use crate::{cli, config, display, plugin, scanner};
 use crate::scanner::branch_detection::BranchDetection;
 use crate::scanner::traits::QueueMessageProducer;
@@ -68,8 +68,11 @@ pub async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigMan
     if args.plugins_help {
         handler.build_command_mappings().await?;
         
-        println!("Available Plugin Functions and Commands:");
-        println!("========================================");
+        // Create color manager for styled output
+        let colour_manager = display::ColourManager::from_color_args(args.no_color, args.color, None);
+        
+        println!("{}", colour_manager.highlight("Available Plugin Functions and Commands:"));
+        println!("{}", colour_manager.info("========================================"));
         
         let mappings = handler.get_function_mappings();
         if mappings.is_empty() {
@@ -92,9 +95,14 @@ pub async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigMan
             // Calculate column widths for proper alignment
             let max_plugin_width = plugin_names.iter().map(|name| name.len()).max().unwrap_or(6).max(6); // "Plugin" length
             
-            // Print sleek header with underline
-            println!(" {:<width$} Functions & Description", "Plugin", width = max_plugin_width);
-            println!(" {} {}", "-".repeat(max_plugin_width), "--");
+            // Print sleek header with underline using colors
+            println!(" {:<width$} {}", 
+                colour_manager.highlight("Plugin"), 
+                colour_manager.highlight("Functions & Description"), 
+                width = max_plugin_width);
+            println!(" {} {}", 
+                colour_manager.info(&"-".repeat(max_plugin_width)), 
+                colour_manager.info("--"));
             
             // Print each plugin row
             for plugin_name in &plugin_names {
@@ -127,19 +135,28 @@ pub async fn handle_plugin_commands(args: &cli::Args, config: &config::ConfigMan
                         .and_then(|f| if !f.description.is_empty() { Some(f.description.as_str()) } else { None })
                         .unwrap_or("Plugin for data processing");
                     
-                    // Print plugin row with functions on first line, description on second
-                    println!(" {:<width$} {}", plugin_name, functions_str, width = max_plugin_width);
-                    println!(" {:<width$} {}", "", description, width = max_plugin_width);
+                    // Print plugin row with functions on first line, description on second using colors
+                    println!(" {:<width$} {}", 
+                        colour_manager.command(plugin_name), 
+                        colour_manager.success(&functions_str), 
+                        width = max_plugin_width);
+                    println!(" {:<width$} {}", 
+                        "", 
+                        colour_manager.info(description), 
+                        width = max_plugin_width);
                 }
             }
             
             println!();
-            println!("Usage Examples:");
-            println!("  gstats <function>              # Use function if unambiguous");
-            println!("  gstats <plugin>                # Use plugin's default function");  
-            println!("  gstats <plugin>:<function>     # Explicit plugin:function syntax");
+            println!("{}", colour_manager.highlight("Usage Examples:"));
+            println!("  {}              # Use function if unambiguous",
+                colour_manager.command("gstats <function>"));
+            println!("  {}                # Use plugin's default function",
+                colour_manager.command("gstats <plugin>"));
+            println!("  {}     # Explicit plugin:function syntax",
+                colour_manager.command("gstats <plugin>:<function>"));
             println!();
-            println!("* = default function for plugin");
+            println!("{}", colour_manager.orange("* = default function for plugin"));
         }
         
         // Show any ambiguities as warnings
@@ -225,8 +242,15 @@ pub async fn run_scanner(
     
     debug!("Initializing scanner system");
     
-    // Initialise built-in plugins
-    super::initialization::initialize_builtin_plugins(&plugin_registry).await?;
+    // Create colour manager early for plugin initialization
+    let colour_manager = super::initialization::create_colour_manager(&args, &config_manager);
+    
+    // Detect plugin configuration before initialization
+    let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
+    let debug_compact_mode = filtered_plugin_args.contains(&"--compact".to_string());
+    
+    // Initialise built-in plugins with color context and configuration hints
+    super::initialization::initialize_builtin_plugins_with_compact_mode(&plugin_registry, &colour_manager, debug_compact_mode).await?;
     
     // Create a plugin handler with enhanced configuration
     let mut plugin_handler = cli::plugin_handler::PluginHandler::with_plugin_config(plugin_config)?;
@@ -252,9 +276,8 @@ pub async fn run_scanner(
     debug!("Active plugins: {:?}", plugin_names);
     debug!("Plugin arguments (original): {:?}", args.plugin_args);
 
-    // Filter out global flags from plugin arguments to improve UX
-    let filtered_plugin_args = cli::filter_global_flags(&args.plugin_args);
-    debug!("Plugin arguments (filtered): {:?}", filtered_plugin_args);
+    info!("Original plugin arguments: {:?}", args.plugin_args);
+    info!("Plugin arguments (filtered): {:?}", filtered_plugin_args);
     
     // 1. CREATE THE QUEUE FIRST
     let queue = crate::queue::SharedMessageQueue::new("main-scan".to_string());
@@ -266,9 +289,20 @@ pub async fn run_scanner(
     for plugin_name in &plugin_names {
         let consumer = queue.register_consumer(plugin_name.clone()).await?;
         
-        // Get the plugin and start consuming
+        // Get the plugin and configure it with arguments
         let mut plugin_registry_guard = plugin_registry.inner().write().await;
         if let Some(plugin) = plugin_registry_guard.get_plugin_mut(plugin_name) {
+            // Plugin-specific configuration
+            if !filtered_plugin_args.is_empty() && plugin_name == "debug" {
+                // For debug plugin, check if compact mode should be enabled
+                if filtered_plugin_args.contains(&"--compact".to_string()) {
+                    info!("Debug plugin: compact mode detected in arguments");
+                    // Unfortunately, trait object downcast doesn't work here
+                    // This is a known architectural limitation that needs to be addressed
+                    // For now, compact mode would need to be configured during plugin creation
+                }
+            }
+            
             if let Some(consumer_plugin) = plugin.as_consumer_plugin_mut() {
                 consumer_plugin.start_consuming(consumer).await
                     .map_err(|e| anyhow::anyhow!("Failed to start consuming for plugin {}: {}", plugin_name, e))?;
@@ -304,8 +338,7 @@ pub async fn run_scanner(
     
     debug!("Starting the repository scan");
     
-    // Create progress indicators
-    let colour_manager = super::initialization::create_colour_manager(&args, &config_manager);
+    // Create progress indicators (reusing colour_manager from plugin initialization)
     let progress = display::ProgressIndicator::new(colour_manager.clone());
     
     // Show repository information  

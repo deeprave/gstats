@@ -23,9 +23,6 @@ pub fn get_global_flags() -> HashSet<&'static str> {
     flags.insert("--color");
     flags.insert("--no-color");
     
-    // Output format flags
-    flags.insert("--compact");
-    
     // Configuration flags
     flags.insert("--config-file");
     flags.insert("--config-name");
@@ -138,6 +135,7 @@ mod tests {
         assert_eq!(filtered, vec![
             "--output".to_string(),
             "test.json".to_string(),
+            "--compact".to_string(),
             "--format".to_string(),
             "json".to_string(),
         ]);
@@ -181,7 +179,6 @@ mod tests {
     #[test]
     fn test_only_global_flags() {
         let plugin_args = vec![
-            "--compact".to_string(),
             "--verbose".to_string(),
             "--since".to_string(),
             "1 week ago".to_string(),

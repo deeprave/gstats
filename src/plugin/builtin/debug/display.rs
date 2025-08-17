@@ -11,31 +11,43 @@ use colored::Colorize;
 use crate::scanner::messages::{ScanMessage, MessageData};
 use crate::scanner::async_engine::events::ChangeType;
 use crate::plugin::error::PluginResult;
+use crate::display::ColourManager;
 use super::config::DebugConfig;
 
 /// Message formatter for debug plugin display
 pub struct MessageFormatter {
     /// Configuration for formatting
     config: Arc<RwLock<DebugConfig>>,
+    /// Color manager for consistent output formatting
+    colour_manager: Option<Arc<ColourManager>>,
 }
 
 impl MessageFormatter {
     /// Create a new message formatter
     pub fn new(config: Arc<RwLock<DebugConfig>>) -> Self {
-        Self { config }
+        Self { 
+            config,
+            colour_manager: None,
+        }
+    }
+    
+    /// Create a new message formatter with color manager
+    pub fn with_colour_manager(config: Arc<RwLock<DebugConfig>>, colour_manager: Option<Arc<ColourManager>>) -> Self {
+        Self { 
+            config,
+            colour_manager,
+        }
     }
     
     /// Format and display a scan message
     pub async fn format_message(&self, message: &ScanMessage) -> PluginResult<()> {
         let config = self.config.read().await;
         
-        // Display message index if enabled
-        if config.message_index {
-            self.display_message_index(message, &config);
-        }
-        
-        // Display raw data if enabled
+        // Display raw data if enabled (takes precedence)
         if config.raw_data {
+            if config.message_index {
+                self.display_message_index(message, &config);
+            }
             self.display_raw_data(message);
             return Ok(());
         }
@@ -46,20 +58,23 @@ impl MessageFormatter {
                 let file_paths: Vec<String> = changed_files.iter()
                     .map(|f| f.path.clone())
                     .collect();
-                self.format_commit_info(hash, author, commit_msg, *timestamp, &file_paths, &config);
+                self.format_commit_info(message, hash, author, commit_msg, *timestamp, &file_paths, &config);
             }
             MessageData::FileChange { path, change_type, old_path, insertions, deletions, is_binary, commit_hash, commit_timestamp, .. } => {
                 self.format_file_change(
-                    path, change_type, old_path.as_deref(), 
+                    message, path, change_type, old_path.as_deref(), 
                     *insertions, *deletions, *is_binary,
                     commit_hash, *commit_timestamp, &config
                 );
             }
             MessageData::FileInfo { path, size, lines } => {
-                self.format_file_info(path, *size, *lines as u64, &config);
+                self.format_file_info(message, path, *size, *lines as u64, &config);
             }
             _ => {
                 if config.verbose {
+                    if config.message_index {
+                        self.display_message_index(message, &config);
+                    }
                     println!("Unknown message type: {:?}", message.data());
                 }
             }
@@ -69,15 +84,25 @@ impl MessageFormatter {
     }
     
     /// Display message index/sequence number
-    fn display_message_index(&self, message: &ScanMessage, config: &DebugConfig) {
+    fn display_message_index(&self, message: &ScanMessage, _config: &DebugConfig) {
         let header = message.header();
         let index_str = format!("[MSG #{}]", header.sequence);
         
-        if config.use_color {
-            print!("{} ", index_str.bright_blue());
+        if let Some(ref colour_manager) = self.colour_manager {
+            if colour_manager.colours_enabled() {
+                print!("{} ", index_str.bright_blue());
+            } else {
+                print!("{} ", index_str);
+            }
         } else {
             print!("{} ", index_str);
         }
+    }
+    
+    /// Get message index as string for compact mode
+    fn get_message_index_string(&self, message: &ScanMessage) -> String {
+        let header = message.header();
+        format!("[MSG #{}]", header.sequence)
     }
     
     /// Display raw message data
@@ -91,6 +116,7 @@ impl MessageFormatter {
     /// Format commit info message
     fn format_commit_info(
         &self,
+        scan_message: &ScanMessage,
         hash: &str,
         author: &str,
         message: &str,
@@ -99,29 +125,64 @@ impl MessageFormatter {
         config: &DebugConfig,
     ) {
         if config.compact_mode {
-            // Compact format: single line
-            let short_hash = &hash[..8.min(hash.len())];
+            // Ultra-compact format: [MSG #N] hash, author, date, message on one line
             let first_line = message.lines().next().unwrap_or("");
-            let truncated_msg = if first_line.len() > 50 {
-                format!("{}...", &first_line[..50])
-            } else {
-                first_line.to_string()
+            
+            // Format timestamp as YYYY-MM-DD HH:MM:SS
+            let dt = match Utc.timestamp_opt(timestamp, 0) {
+                chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                _ => "Invalid Date".to_string(),
             };
             
-            if config.use_color {
-                println!("{} {} - {} ({})",
-                    "COMMIT".green().bold(),
-                    short_hash.yellow(),
-                    truncated_msg,
-                    changed_files.len()
-                );
+            // Get message index prefix if enabled
+            let index_prefix = if config.message_index {
+                format!("{} ", self.get_message_index_string(scan_message))
             } else {
-                println!("COMMIT {} - {} ({})", short_hash, truncated_msg, changed_files.len());
+                String::new()
+            };
+            
+            if let Some(ref colour_manager) = self.colour_manager {
+                if colour_manager.colours_enabled() {
+                    println!("{}{}, {}, {}, {}",
+                        if config.message_index { index_prefix.bright_blue() } else { index_prefix.into() },
+                        hash.yellow(),
+                        author.cyan(),
+                        dt.blue(),
+                        first_line
+                    );
+                } else {
+                    println!("{}{}, {}, {}, {}", index_prefix, hash, author, dt, first_line);
+                }
+            } else {
+                println!("{}{}, {}, {}, {}", index_prefix, hash, author, dt, first_line);
+            }
+            
+            // Show file count summary
+            let file_count = changed_files.len();
+            if file_count > 0 {
+                if let Some(ref colour_manager) = self.colour_manager {
+                    if colour_manager.colours_enabled() {
+                        println!("{} files changed:", file_count.to_string().green());
+                    } else {
+                        println!("{} files changed:", file_count);
+                    }
+                } else {
+                    println!("{} files changed:", file_count);
+                }
             }
         } else {
             // Full format
-            if config.use_color {
-                println!("{}: {}", "CommitInfo".green().bold(), hash.yellow());
+            // Display message index if enabled
+            if config.message_index {
+                self.display_message_index(scan_message, config);
+            }
+            
+            if let Some(ref colour_manager) = self.colour_manager {
+                if colour_manager.colours_enabled() {
+                    println!("{}: {}", "CommitInfo".green().bold(), hash.yellow());
+                } else {
+                    println!("CommitInfo: {}", hash);
+                }
             } else {
                 println!("CommitInfo: {}", hash);
             }
@@ -163,6 +224,7 @@ impl MessageFormatter {
     /// Format file change message
     fn format_file_change(
         &self,
+        scan_message: &ScanMessage,
         path: &str,
         change_type: &ChangeType,
         old_path: Option<&str>,
@@ -176,48 +238,63 @@ impl MessageFormatter {
         let truncated_path = config.truncate_path(path);
         
         if config.compact_mode {
-            // Compact format: single line
+            // Ultra-compact format: simple single line per file  
             let change_symbol = match change_type {
-                ChangeType::Added => "+",
-                ChangeType::Modified => "M",
-                ChangeType::Deleted => "-",
-                ChangeType::Renamed => "R",
-                ChangeType::Copied => "C",
+                ChangeType::Added => "Added",
+                ChangeType::Modified => "Modified", 
+                ChangeType::Deleted => "Deleted",
+                ChangeType::Renamed => "Renamed",
+                ChangeType::Copied => "Copied",
             };
             
-            if config.use_color {
-                let colored_symbol = match change_type {
-                    ChangeType::Added => change_symbol.green(),
-                    ChangeType::Modified => change_symbol.yellow(),
-                    ChangeType::Deleted => change_symbol.red(),
-                    ChangeType::Renamed => change_symbol.cyan(),
-                    ChangeType::Copied => change_symbol.blue(),
-                };
-                
-                if is_binary {
-                    println!("{} {} (binary)", colored_symbol, truncated_path);
+            if let Some(ref colour_manager) = self.colour_manager {
+                if colour_manager.colours_enabled() {
+                    if is_binary {
+                        println!("  {}, {}, {}", 
+                            truncated_path.white(), 
+                            change_symbol.yellow(), 
+                            "binary".blue()
+                        );
+                    } else {
+                        println!("  {}, {}, +{}, -{}, {}", 
+                            truncated_path.white(),
+                            change_symbol.yellow(),
+                            insertions.to_string().green(),
+                            deletions.to_string().red(),
+                            "false".blue()
+                        );
+                    }
                 } else {
-                    println!("{} {} (+{} -{}) [{}]", 
-                        colored_symbol, truncated_path, 
-                        insertions, deletions,
-                        &commit_hash[..8.min(commit_hash.len())]
-                    );
+                    if is_binary {
+                        println!("  {}, {}, true", truncated_path, change_symbol);
+                    } else {
+                        println!("  {}, {}, +{}, -{}, false", 
+                            truncated_path, change_symbol, insertions, deletions
+                        );
+                    }
                 }
             } else {
                 if is_binary {
-                    println!("{} {} (binary)", change_symbol, truncated_path);
+                    println!("  {}, {}, true", truncated_path, change_symbol);
                 } else {
-                    println!("{} {} (+{} -{}) [{}]", 
-                        change_symbol, truncated_path, 
-                        insertions, deletions,
-                        &commit_hash[..8.min(commit_hash.len())]
+                    println!("  {}, {}, +{}, -{}, false", 
+                        truncated_path, change_symbol, insertions, deletions
                     );
                 }
             }
         } else {
             // Full format
-            if config.use_color {
-                println!("{}: {}", "FileChange".blue().bold(), truncated_path.cyan());
+            // Display message index if enabled
+            if config.message_index {
+                self.display_message_index(scan_message, config);
+            }
+            
+            if let Some(ref colour_manager) = self.colour_manager {
+                if colour_manager.colours_enabled() {
+                    println!("{}: {}", "FileChange".blue().bold(), truncated_path.cyan());
+                } else {
+                    println!("FileChange: {}", truncated_path);
+                }
             } else {
                 println!("FileChange: {}", truncated_path);
             }
@@ -238,9 +315,14 @@ impl MessageFormatter {
             }
             
             if !is_binary {
-                if config.use_color {
-                    println!("├─ Insertions: {}", format!("+{}", insertions).green());
-                    println!("├─ Deletions: {}", format!("-{}", deletions).red());
+                if let Some(ref colour_manager) = self.colour_manager {
+                    if colour_manager.colours_enabled() {
+                        println!("├─ Insertions: {}", format!("+{}", insertions).green());
+                        println!("├─ Deletions: {}", format!("-{}", deletions).red());
+                    } else {
+                        println!("├─ Insertions: +{}", insertions);
+                        println!("├─ Deletions: -{}", deletions);
+                    }
                 } else {
                     println!("├─ Insertions: +{}", insertions);
                     println!("├─ Deletions: -{}", deletions);
@@ -255,14 +337,23 @@ impl MessageFormatter {
     }
     
     /// Format file info message
-    fn format_file_info(&self, path: &str, size: u64, lines: u64, config: &DebugConfig) {
+    fn format_file_info(&self, scan_message: &ScanMessage, path: &str, size: u64, lines: u64, config: &DebugConfig) {
         let truncated_path = config.truncate_path(path);
         
         if config.compact_mode {
             println!("FILE {} ({} bytes, {} lines)", truncated_path, size, lines);
         } else {
-            if config.use_color {
-                println!("{}: {}", "FileInfo".magenta().bold(), truncated_path);
+            // Display message index if enabled
+            if config.message_index {
+                self.display_message_index(scan_message, config);
+            }
+            
+            if let Some(ref colour_manager) = self.colour_manager {
+                if colour_manager.colours_enabled() {
+                    println!("{}: {}", "FileInfo".magenta().bold(), truncated_path);
+                } else {
+                    println!("FileInfo: {}", truncated_path);
+                }
             } else {
                 println!("FileInfo: {}", truncated_path);
             }
@@ -293,10 +384,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_format_commit_info_message() {
-        let config = Arc::new(RwLock::new(DebugConfig {
-            use_color: false, // Disable color for testing
-            ..Default::default()
-        }));
+        let config = Arc::new(RwLock::new(DebugConfig::default()));
         let formatter = MessageFormatter::new(config);
         
         let header = MessageHeader::new(1);
@@ -326,10 +414,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_format_file_change_message() {
-        let config = Arc::new(RwLock::new(DebugConfig {
-            use_color: false,
-            ..Default::default()
-        }));
+        let config = Arc::new(RwLock::new(DebugConfig::default()));
         let formatter = MessageFormatter::new(config);
         
         let header = MessageHeader::new(2);
@@ -355,7 +440,6 @@ mod tests {
     async fn test_format_with_message_index() {
         let config = Arc::new(RwLock::new(DebugConfig {
             message_index: true,
-            use_color: false,
             ..Default::default()
         }));
         let formatter = MessageFormatter::new(config);
@@ -375,7 +459,6 @@ mod tests {
     async fn test_format_raw_data() {
         let config = Arc::new(RwLock::new(DebugConfig {
             raw_data: true,
-            use_color: false,
             ..Default::default()
         }));
         let formatter = MessageFormatter::new(config);
@@ -395,7 +478,6 @@ mod tests {
     async fn test_format_compact_mode() {
         let config = Arc::new(RwLock::new(DebugConfig {
             compact_mode: true,
-            use_color: false,
             ..Default::default()
         }));
         let formatter = MessageFormatter::new(config);

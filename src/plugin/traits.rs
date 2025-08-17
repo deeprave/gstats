@@ -54,6 +54,16 @@ pub trait Plugin: Send + Sync {
         None // Override in implementations that support argument parsing
     }
     
+    /// Generate help text with color configuration
+    /// 
+    /// This method generates help text with explicit color control.
+    /// Plugins that implement PluginClapParser should override this.
+    fn get_plugin_help_with_colors(&self, no_color: bool, color: bool) -> Option<String> {
+        // Default implementation just calls get_plugin_help
+        // Plugins should override this to provide color-aware help
+        self.get_plugin_help()
+    }
+    
     /// Build a clap Command for this plugin if it supports clap-based parsing
     /// 
     /// This provides a unified way to access plugin clap commands without
@@ -587,6 +597,42 @@ pub trait PluginClapParser {
     /// Plugins can override this for custom help formatting.
     fn generate_help(&self) -> String {
         let mut command = self.build_clap_command();
+        let mut help_output = Vec::new();
+        let _ = command.write_help(&mut help_output);
+        String::from_utf8_lossy(&help_output).to_string()
+    }
+    
+    /// Generate help text with color configuration
+    /// 
+    /// This provides help generation with explicit color control.
+    /// The default implementation uses clap's ColorChoice to control ANSI colors.
+    fn generate_help_with_colors(&self, no_color: bool, color: bool) -> String {
+        use clap::ColorChoice;
+        
+        let mut command = self.build_clap_command();
+        
+        // Configure color output based on flags with explicit terminal control
+        let color_choice = if no_color {
+            ColorChoice::Never
+        } else if color {
+            // Force colors when explicitly requested
+            ColorChoice::Always
+        } else {
+            // Use auto-detection for default behavior
+            ColorChoice::Auto
+        };
+        
+        command = command.color(color_choice);
+        
+        // Set environment variables to reinforce color choice
+        if color {
+            std::env::set_var("CLICOLOR_FORCE", "1");
+            std::env::remove_var("NO_COLOR");
+        } else if no_color {
+            std::env::set_var("NO_COLOR", "1");
+            std::env::remove_var("CLICOLOR_FORCE");
+        }
+        
         let mut help_output = Vec::new();
         let _ = command.write_help(&mut help_output);
         String::from_utf8_lossy(&help_output).to_string()

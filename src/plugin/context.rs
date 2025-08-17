@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use crate::scanner::{ScannerConfig, QueryParams};
 use crate::scanner::messages::ScanMessage;
-use crate::display::CompactFormat;
+use crate::display::{CompactFormat, ColourManager};
 use crate::notifications::AsyncNotificationManager;
 use crate::notifications::events::PluginEvent;
 
@@ -34,6 +34,9 @@ pub struct PluginContext {
     
     /// Notification manager for plugin-to-plugin communication
     pub notification_manager: Option<Arc<AsyncNotificationManager<PluginEvent>>>,
+    
+    /// Color manager for consistent output formatting
+    pub colour_manager: Option<Arc<ColourManager>>,
 }
 
 /// Runtime environment information
@@ -184,6 +187,7 @@ impl PluginContext {
             capabilities: Vec::new(),
             aggregated_data: None,
             notification_manager: None,
+            colour_manager: None,
         }
     }
     
@@ -213,6 +217,12 @@ impl PluginContext {
     /// Check if capability is available
     pub fn has_capability(&self, capability: &str) -> bool {
         self.capabilities.contains(&capability.to_string())
+    }
+    
+    /// Add colour manager to the context
+    pub fn with_colour_manager(mut self, colour_manager: Arc<ColourManager>) -> Self {
+        self.colour_manager = Some(colour_manager);
+        self
     }
 }
 

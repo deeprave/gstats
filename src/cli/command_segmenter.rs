@@ -170,29 +170,21 @@ impl CommandSegmenter {
     
     /// Get plugin help for a specific plugin
     pub async fn get_plugin_help(&self, plugin_name: &str, function_name: Option<&str>) -> PluginResult<String> {
+        self.get_plugin_help_with_colors(plugin_name, function_name, false, false).await
+    }
+
+    /// Get plugin help for a specific plugin with color support
+    pub async fn get_plugin_help_with_colors(&self, plugin_name: &str, function_name: Option<&str>, no_color: bool, color: bool) -> PluginResult<String> {
         // Try to create the plugin and get its help
         if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin(plugin_name).await {
-            // Check if plugin implements PluginClapParser for automatic help
-            if let Some(clap_command) = plugin.build_clap_command() {
-                let mut help_output = Vec::new();
-                let mut command = clap_command;
-                
-                // If a specific function is requested, try to show function-specific help
-                if let Some(func) = function_name {
-                    // For now, show the general plugin help with function context
-                    // Future enhancement: function-specific help
-                    let _ = command.write_help(&mut help_output);
-                    let help_text = String::from_utf8_lossy(&help_output);
-                    return Ok(help_text.to_string());
-                } else {
-                    let _ = command.write_help(&mut help_output);
-                    return Ok(String::from_utf8_lossy(&help_output).to_string());
-                }
+            // Use the new color-aware help method
+            if let Some(help_text) = plugin.get_plugin_help_with_colors(no_color, color) {
+                return Ok(help_text);
             }
             
-            // Fallback to plugin's built-in help
-            if let Some(help) = plugin.get_plugin_help() {
-                return Ok(help);
+            // Fallback to regular help if color-aware method not implemented
+            if let Some(help_text) = plugin.get_plugin_help() {
+                return Ok(help_text);
             }
         }
         

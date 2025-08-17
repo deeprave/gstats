@@ -17,7 +17,9 @@ use crate::notifications::events::PluginEvent;
 use crate::notifications::traits::{Subscriber, NotificationManager};
 use crate::notifications::{NotificationResult};
 use crate::notifications::error::NotificationError;
+use crate::display::ColourManager;
 use async_trait::async_trait;
+use prettytable::{Table, Row, Cell};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -39,6 +41,8 @@ pub struct ExportPlugin {
     // Scan tracking
     current_scan_id: Arc<RwLock<Option<String>>>,
     export_triggered: Arc<RwLock<bool>>,
+    // Color management
+    colour_manager: Arc<RwLock<Option<Arc<ColourManager>>>>,
 }
 
 impl ExportPlugin {
@@ -89,6 +93,7 @@ impl ExportPlugin {
             )),
             current_scan_id: Arc::new(RwLock::new(None)),
             export_triggered: Arc::new(RwLock::new(false)),
+            colour_manager: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -153,73 +158,164 @@ impl ExportPlugin {
             // Format based on data type
             match &export.data {
                 DataPayload::Rows(rows) => {
-                    // Create table for tabular data
+                    // Create clean table format using prettytable
                     if !export.schema.columns.is_empty() && !rows.is_empty() {
-                        // Calculate column widths
-                        let mut widths: Vec<usize> = export.schema.columns
-                            .iter()
-                            .map(|c| c.name.len())
+                        let mut table = Table::new();
+                        
+                        // Use default format to include both pipe separators and dashes
+                        // Tests expect both "|" and "-" characters in table formatting
+                        
+                        // Create header row
+                        let header_cells: Vec<Cell> = export.schema.columns.iter()
+                            .map(|col| Cell::new(&col.name))
                             .collect();
+                        table.add_row(Row::new(header_cells));
                         
+                        // Add data rows
                         for row in rows.iter() {
-                            for (i, value) in row.values.iter().enumerate() {
-                                if i < widths.len() {
-                                    widths[i] = widths[i].max(value.to_string().len());
-                                }
-                            }
+                            let data_cells: Vec<Cell> = row.values.iter()
+                                .map(|value| Cell::new(&value.to_string()))
+                                .collect();
+                            table.add_row(Row::new(data_cells));
                         }
                         
-                        // Print header
-                        for (i, col) in export.schema.columns.iter().enumerate() {
-                            if i > 0 {
-                                output.push_str(" | ");
-                            }
-                            output.push_str(&format!("{:width$}", col.name, width = widths[i]));
-                        }
-                        output.push('\n');
-                        
-                        // Print separator
-                        for (i, width) in widths.iter().enumerate() {
-                            if i > 0 {
-                                output.push_str("-+-");
-                            }
-                            output.push_str(&"-".repeat(*width));
-                        }
-                        output.push('\n');
-                        
-                        // Print rows
-                        for row in rows.iter() {
-                            for (i, value) in row.values.iter().enumerate() {
-                                if i > 0 {
-                                    output.push_str(" | ");
-                                }
-                                if i < widths.len() {
-                                    let str_val = value.to_string();
-                                    // Right-align numbers
-                                    let is_numeric = matches!(export.schema.columns.get(i).map(|c| c.data_type), 
-                                                            Some(ColumnType::Integer | ColumnType::Float));
-                                    if is_numeric {
-                                        output.push_str(&format!("{:>width$}", str_val, width = widths[i]));
-                                    } else {
-                                        output.push_str(&format!("{:width$}", str_val, width = widths[i]));
-                                    }
-                                }
-                            }
+                        // Add 2-space indent to each line
+                        let table_output = table.to_string();
+                        for line in table_output.lines() {
+                            output.push_str("  ");
+                            output.push_str(line);
                             output.push('\n');
                         }
                     }
                 }
                 DataPayload::KeyValue(map) => {
-                    // Format key-value pairs
-                    let max_key_len = map.keys().map(|k| k.len()).max().unwrap_or(0);
-                    for (key, value) in map.iter() {
-                        output.push_str(&format!("{:width$} : {}\n", key, value.to_string(), width = max_key_len));
+                    // Format key-value pairs as simple key: value lines for console readability
+                    if !map.is_empty() {
+                        for (key, value) in map.iter() {
+                            output.push_str(&format!("  {}: {}\n", key, value.to_string()));
+                        }
                     }
                 }
                 DataPayload::Tree(root) => {
                     // Simple tree representation
                     output.push_str(&format!("Tree: {}\n", root.label));
                     // TODO: Implement proper tree formatting
+                }
+                DataPayload::Raw(text) => {
+                    output.push_str(text);
+                    output.push('\n');
+                }
+                DataPayload::Empty => {
+                    output.push_str("(no data)\n");
+                }
+            }
+            
+            output.push('\n');
+        }
+        
+        Ok(output)
+    }
+
+    pub async fn format_console_with_colors(&self, data: &[Arc<PluginDataExport>], colour_manager: &ColourManager) -> PluginResult<String> {
+        if data.is_empty() {
+            return Ok("No data available for export.\n".to_string());
+        }
+        
+        let mut output = String::new();
+        
+        for export in data {
+            output.push_str(&format!("## {}\n", export.title));
+            if let Some(description) = &export.description {
+                output.push_str(&format!("{}\n", description));
+            }
+            output.push('\n');
+            
+            match &export.data {
+                DataPayload::Rows(rows) => {
+                    // Create clean table format with colors using prettytable
+                    if !export.schema.columns.is_empty() && !rows.is_empty() {
+                        let mut table = Table::new();
+                        // Use default table format (includes borders and separators)
+                        
+                        // Create header row with colors
+                        let header_cells: Vec<Cell> = export.schema.columns.iter()
+                            .map(|col| {
+                                let header_text = if colour_manager.colours_enabled() {
+                                    colour_manager.highlight(&col.name).to_string()
+                                } else {
+                                    col.name.clone()
+                                };
+                                Cell::new(&header_text)
+                            })
+                            .collect();
+                        table.add_row(Row::new(header_cells));
+                        
+                        // Add data rows with colors
+                        for row in rows.iter() {
+                            let data_cells: Vec<Cell> = row.values.iter()
+                                .enumerate()
+                                .map(|(i, value)| {
+                                    let str_val = value.to_string();
+                                    let is_numeric = matches!(export.schema.columns.get(i).map(|c| c.data_type), 
+                                                            Some(ColumnType::Integer | ColumnType::Float));
+                                    
+                                    let formatted_value = if colour_manager.colours_enabled() && is_numeric {
+                                        colour_manager.info(&str_val).to_string()
+                                    } else {
+                                        str_val
+                                    };
+                                    
+                                    Cell::new(&formatted_value)
+                                })
+                                .collect();
+                            table.add_row(Row::new(data_cells));
+                        }
+                        
+                        // Add 2-space indent to each line
+                        let table_output = table.to_string();
+                        for line in table_output.lines() {
+                            output.push_str("  ");
+                            output.push_str(line);
+                            output.push('\n');
+                        }
+                    }
+                }
+                DataPayload::KeyValue(map) => {
+                    // Format key-value pairs using prettytable with clean format and colors
+                    if !map.is_empty() {
+                        let mut table = Table::new();
+                        // Use default table format (includes borders and separators)
+                        
+                        // Add header with colors
+                        let key_header = if colour_manager.colours_enabled() {
+                            colour_manager.highlight("Key").to_string()
+                        } else {
+                            "Key".to_string()
+                        };
+                        let value_header = if colour_manager.colours_enabled() {
+                            colour_manager.highlight("Value").to_string()
+                        } else {
+                            "Value".to_string()
+                        };
+                        table.add_row(Row::new(vec![Cell::new(&key_header), Cell::new(&value_header)]));
+                        
+                        // Add key-value pairs
+                        for (key, value) in map.iter() {
+                            table.add_row(Row::new(vec![Cell::new(key), Cell::new(&value.to_string())]));
+                        }
+                        
+                        // Add 2-space indent to each line
+                        let table_output = table.to_string();
+                        for line in table_output.lines() {
+                            output.push_str("  ");
+                            output.push_str(line);
+                            output.push('\n');
+                        }
+                    }
+                }
+                DataPayload::Tree(root) => {
+                    output.push_str(&format!("Tree: {}\n", root.label));
+                    // TODO: Implement proper tree formatting with prettytable
                 }
                 DataPayload::Raw(text) => {
                     output.push_str(text);
@@ -512,6 +608,15 @@ impl Plugin for ExportPlugin {
             log::debug!("ExportPlugin: No notification manager available in context");
         }
         
+        // Store colour manager if available
+        if let Some(ref colour_manager) = context.colour_manager {
+            let mut manager_guard = self.colour_manager.write().await;
+            *manager_guard = Some(colour_manager.clone());
+            log::debug!("ExportPlugin: Color manager configured");
+        } else {
+            log::debug!("ExportPlugin: No color manager available in context");
+        }
+        
         self.initialized = true;
         log::info!("Export plugin initialized");
         Ok(())
@@ -577,6 +682,11 @@ impl Plugin for ExportPlugin {
         Some(PluginClapParser::generate_help(self))
     }
     
+    fn get_plugin_help_with_colors(&self, no_color: bool, color: bool) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help_with_colors(self, no_color, color))
+    }
+    
     fn build_clap_command(&self) -> Option<clap::Command> {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))
@@ -615,10 +725,20 @@ impl Subscriber<PluginEvent> for ExportPlugin {
                         // Get all data and trigger export
                         let all_data = coordinator.get_all_data();
                         
-                        // Use console format by default for now
-                        let formatted = self.format_console(&all_data).await.map_err(|e| {
-                            NotificationError::processing(format!("Formatting failed: {}", e))
-                        })?;
+                        // Use color-aware console formatting if color manager is available
+                        let formatted = {
+                            let colour_manager_guard = self.colour_manager.read().await;
+                            if let Some(ref colour_manager) = *colour_manager_guard {
+                                self.format_console_with_colors(&all_data, colour_manager).await.map_err(|e| {
+                                    NotificationError::processing(format!("Color formatting failed: {}", e))
+                                })?
+                            } else {
+                                // Fallback to basic console formatting
+                                self.format_console(&all_data).await.map_err(|e| {
+                                    NotificationError::processing(format!("Formatting failed: {}", e))
+                                })?
+                            }
+                        };
                         
                         println!("{}", formatted);
                         
@@ -972,5 +1092,126 @@ mod tests {
         assert_eq!(plugin.plugin_info().name, cloned_plugin.plugin_info().name);
         assert_eq!(plugin.plugin_info().version, cloned_plugin.plugin_info().version);
         assert_eq!(plugin.subscriber_id(), cloned_plugin.subscriber_id());
+        
+        // Verify color manager is cloned properly (both should be None initially)
+        let plugin_cm = plugin.colour_manager.try_read().unwrap();
+        let cloned_cm = cloned_plugin.colour_manager.try_read().unwrap();
+        assert!(plugin_cm.is_none());
+        assert!(cloned_cm.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_console_formatting_with_prettytable() {
+        let plugin = ExportPlugin::new();
+        let export_data = create_test_export_data();
+        let data_vec = vec![export_data];
+        
+        // Test console formatting - should use prettytable-rs clean format
+        let console_result = plugin.format_console(&data_vec).await;
+        assert!(console_result.is_ok());
+        let console_output = console_result.unwrap();
+        
+        // Should contain table formatting
+        assert!(console_output.contains("metric"));
+        assert!(console_output.contains("value"));
+        assert!(console_output.contains("total_commits"));
+        assert!(console_output.contains("100"));
+        
+        // Should have table format with pipe separators
+        assert!(console_output.contains("| metric        | value |"));
+        
+        // Should have 2-space indent for table
+        assert!(console_output.lines().any(|line| line.starts_with("  |")));
+        
+        // Should contain ASCII table borders (the current format)
+        assert!(console_output.contains("+-------+"));
+        assert!(console_output.contains("| metric"));
+        assert!(console_output.contains("| value"));
+        assert!(console_output.contains("| total_commits"));
+        assert!(console_output.contains("| 100"));
+    }
+
+    #[tokio::test]
+    async fn test_console_formatting_with_colors() {
+        use crate::display::ColourManager;
+        
+        let plugin = ExportPlugin::new();
+        let export_data = create_test_export_data();
+        let data_vec = vec![export_data];
+        
+        // Test with color manager enabled
+        let color_manager = ColourManager::with_colours(true);
+        let console_result = plugin.format_console_with_colors(&data_vec, &color_manager).await;
+        assert!(console_result.is_ok());
+        let console_output = console_result.unwrap();
+        
+        // Should contain ANSI color codes when colors are enabled
+        assert!(console_output.contains("\x1b[") || !color_manager.colours_enabled());
+        assert!(console_output.contains("metric"));
+        assert!(console_output.contains("value"));
+        
+        // Test with color manager disabled
+        let no_color_manager = ColourManager::with_colours(false);
+        let no_color_result = plugin.format_console_with_colors(&data_vec, &no_color_manager).await;
+        assert!(no_color_result.is_ok());
+        let no_color_output = no_color_result.unwrap();
+        
+        // Should NOT contain ANSI color codes when colors are disabled
+        assert!(!no_color_output.contains("\x1b["));
+        assert!(no_color_output.contains("metric"));
+        assert!(no_color_output.contains("value"));
+    }
+
+    #[tokio::test]
+    async fn test_table_alignment_and_formatting() {
+        let plugin = ExportPlugin::new();
+        
+        // Create test data with mixed string and numeric columns
+        let schema = DataSchema {
+            columns: vec![
+                ColumnDef::new("name", ColumnType::String),
+                ColumnDef::new("count", ColumnType::Integer),
+                ColumnDef::new("percentage", ColumnType::Float),
+            ],
+            metadata: std::collections::HashMap::new(),
+        };
+
+        let rows = vec![
+            Row::new(vec![
+                Value::String("Short".to_string()),
+                Value::Integer(999),
+                Value::Float(12.5),
+            ]),
+            Row::new(vec![
+                Value::String("Very Long Name".to_string()),
+                Value::Integer(1),
+                Value::Float(100.0),
+            ]),
+        ];
+
+        let export_data = Arc::new(PluginDataExport {
+            plugin_id: "test".to_string(),
+            title: "Alignment Test".to_string(),
+            description: Some("Test data alignment".to_string()),
+            data_type: crate::plugin::data_export::DataExportType::Tabular,
+            schema,
+            data: DataPayload::Rows(Arc::new(rows)),
+            export_hints: crate::plugin::data_export::ExportHints::default(),
+            timestamp: std::time::SystemTime::now(),
+        });
+        
+        let data_vec = vec![export_data];
+        let console_result = plugin.format_console(&data_vec).await;
+        assert!(console_result.is_ok());
+        let console_output = console_result.unwrap();
+        
+        // Should handle different column widths properly
+        assert!(console_output.contains("Very Long Name"));
+        assert!(console_output.contains("999"));
+        assert!(console_output.contains("12.5"));
+        
+        // Should have consistent table structure
+        let lines: Vec<&str> = console_output.lines().collect();
+        assert!(lines.len() >= 4); // Header + separator + 2 data rows minimum
     }
 }

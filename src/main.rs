@@ -65,6 +65,22 @@ impl CompactFormat for ProcessedStatistics {
 }
 
 fn main() {
+    // Set up panic handler with broken pipe handling
+    std::panic::set_hook(Box::new(|panic_info| {
+        let panic_str = panic_info.to_string();
+        
+        // Handle broken pipe errors gracefully (when piping to less, head, etc.)
+        if panic_str.contains("Broken pipe") || panic_str.contains("os error 32") {
+            // Silently exit on broken pipe - this is normal when piping to utilities
+            process::exit(0);
+        }
+        
+        // For other panics, show error and exit with error code
+        error!("Application panicked: {:?}", panic_info);
+        eprintln!("Panic: {:?}", panic_info);
+        process::exit(101);
+    }));
+    
     if let Err(e) = run() {
         let error_msg = e.to_string();
         
@@ -86,13 +102,6 @@ fn main() {
         
         process::exit(1);
     }
-    
-    // Set up panic handler with better error reporting
-    std::panic::set_hook(Box::new(|panic_info| {
-        error!("Application panicked: {:?}", panic_info);
-        eprintln!("Panic: {:?}", panic_info);
-        process::exit(101);
-    }));
 }
 
 fn run() -> Result<()> {
@@ -108,6 +117,26 @@ fn run() -> Result<()> {
         }
         if initial_args.version_requested {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+    }
+    
+    // Stage 1.5: Handle plugin help requests BEFORE clap parsing
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    
+    // Set up early color override based on raw arguments for plugin help
+    if raw_args.contains(&"--no-color".to_string()) {
+        colored::control::set_override(false);
+        std::env::set_var("NO_COLOR", "1");
+    } else if raw_args.contains(&"--color".to_string()) {
+        colored::control::set_override(true);
+        std::env::set_var("CLICOLOR_FORCE", "1");
+    }
+    
+    if raw_args.len() >= 2 && (raw_args.contains(&"--help".to_string()) || raw_args.contains(&"-h".to_string())) {
+        // Check if this might be a plugin help request
+        if let Some(help_result) = handle_potential_plugin_help(&raw_args, &initial_args)? {
+            println!("{}", help_result);
             return Ok(());
         }
     }
@@ -183,17 +212,7 @@ fn segment_and_parse_args(initial_args: &cli::initial_args::InitialArgs) -> Resu
     use crate::cli::plugin_handler::PluginHandler;
     use crate::cli::command_segmenter::CommandSegmenter;
     
-    // Get raw command line arguments
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    
-    // Early check for plugin help requests
-    if raw_args.len() >= 2 && (raw_args.contains(&"--help".to_string()) || raw_args.contains(&"-h".to_string())) {
-        // Check if this might be a plugin help request
-        if let Some(help_result) = handle_potential_plugin_help(&raw_args, initial_args)? {
-            println!("{}", help_result);
-            std::process::exit(0);
-        }
-    }
+    // Plugin help is now handled earlier in run(), so we can proceed with normal parsing
     
     // For now, fall back to traditional parsing for global arguments
     // The segmentation logic will be used in the next phase for plugin execution
@@ -245,10 +264,14 @@ fn handle_potential_plugin_help(raw_args: &[String], initial_args: &cli::initial
         // Segment the arguments
         let segmented = segmenter.segment_arguments(raw_args)?;
         
+        // Extract color flags from raw arguments
+        let no_color = raw_args.contains(&"--no-color".to_string());
+        let color = raw_args.contains(&"--color".to_string());
+        
         // Check each plugin segment for help requests
         for segment in &segmented.plugin_segments {
             if segmenter.is_help_request(segment) {
-                let help_text = segmenter.get_plugin_help(&segment.plugin_name, segment.function_name.as_deref()).await
+                let help_text = segmenter.get_plugin_help_with_colors(&segment.plugin_name, segment.function_name.as_deref(), no_color, color).await
                     .map_err(|e| anyhow::anyhow!("Failed to get plugin help: {}", e))?;
                 return Ok(Some(help_text));
             }
