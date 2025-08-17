@@ -1,7 +1,7 @@
 name: Pull Request Validation
 
 # Step 1.1: Basic PR workflow skeleton (TDD Red Phase)
-# This workflow will initially have missing steps to establish failing baseline
+# This workflow validates PRs and can be manually triggered on any branch
 
 on:
   pull_request:
@@ -11,6 +11,13 @@ on:
       - 'docs/**'
       - '.gitignore'
       - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run the workflow against'
+        required: false
+        default: 'main'
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,8 +42,11 @@ jobs:
             rust: beta
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-        
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
