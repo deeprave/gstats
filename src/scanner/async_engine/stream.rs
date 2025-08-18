@@ -134,29 +134,12 @@ where
     }
 }
 
-/// Stream combinator for merging multiple scan streams
-pub struct MergedScanStream {
-    _streams: Vec<ScanMessageStream>,
-    _active_streams: usize,
+/// Merge streams with fair round-robin polling
+pub fn merge_scan_streams(streams: Vec<ScanMessageStream>) -> impl Stream<Item = ScanResult<ScanMessage>> {
+    futures::stream::select_all(streams)
 }
-
-impl MergedScanStream {
-    /// Create a new merged stream from multiple sources
-    pub fn new(streams: Vec<ScanMessageStream>) -> Self {
-        let active_streams = streams.len();
-        Self {
-            _streams: streams,
-            _active_streams: active_streams,
-        }
-    }
-    
-    /// Merge streams with fair round-robin polling
-    pub fn merge_fair(streams: Vec<ScanMessageStream>) -> impl Stream<Item = ScanResult<ScanMessage>> {
-        futures::stream::select_all(streams)
-    }
-    
-    /// Merge streams with priority ordering
-    pub fn merge_priority(streams: Vec<(ScanMessageStream, u8)>) -> impl Stream<Item = ScanResult<ScanMessage>> {
+/// Merge streams with priority ordering
+pub fn merge_priority_streams(streams: Vec<(ScanMessageStream, u8)>) -> impl Stream<Item = ScanResult<ScanMessage>> {
         // Sort by priority (higher number = higher priority)
         let mut sorted_streams: Vec<_> = streams.into_iter().collect();
         sorted_streams.sort_by_key(|(_, priority)| std::cmp::Reverse(*priority));
@@ -164,7 +147,6 @@ impl MergedScanStream {
         // Convert to stream
         let prioritized: Vec<_> = sorted_streams.into_iter().map(|(stream, _)| stream).collect();
         futures::stream::select_all(prioritized)
-    }
 }
 
 /// Progress tracking for streaming operations
@@ -408,7 +390,7 @@ mod tests {
         let stream2: ScanMessageStream = Box::pin(stream::iter(messages2));
         
         let streams = vec![stream1, stream2];
-        let merged = MergedScanStream::merge_fair(streams);
+        let merged = merge_scan_streams(streams);
         
         let results: Vec<_> = merged.collect().await;
         assert_eq!(results.len(), 6);

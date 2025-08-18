@@ -280,7 +280,8 @@ pub async fn run_scanner(
     info!("Plugin arguments (filtered): {:?}", filtered_plugin_args);
     
     // 1. CREATE THE QUEUE FIRST
-    let queue = crate::queue::SharedMessageQueue::new("main-scan".to_string());
+    let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+    let queue = crate::queue::SharedMessageQueue::new("main-scan".to_string(), notification_manager);
     queue.start().await?;
     
     debug!("Queue created and started");
@@ -308,11 +309,16 @@ pub async fn run_scanner(
         "ScannerProducer".to_string()
     ));
     
+    // Create notification manager for scanner lifecycle events
+    let notification_manager = Arc::new(crate::notifications::manager::AsyncNotificationManager::new());
+    
     // Create a scanner engine with the repository path and queue producer
     let mut engine_builder = scanner::AsyncScannerEngineBuilder::new()
         .repository_path(repo_path.clone())
         .config(scanner_config.clone())
         .message_producer(message_producer as Arc<dyn scanner::MessageProducer + Send + Sync>)
+        .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry.clone())
         .runtime(runtime);
     
     // Create an event-driven scanner - no plugin wrapping needed, uses queue directly

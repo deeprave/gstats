@@ -14,9 +14,11 @@
 //!
 //! ```rust
 //! use gstats::queue::{MultiConsumerQueue, QueueConsumer};
+//! use std::sync::Arc;
 //!
 //! # tokio_test::block_on(async {
-//! let queue = MultiConsumerQueue::new("scan-001".to_string());
+//! let notification_manager = Arc::new(gstats::notifications::AsyncNotificationManager::new());
+//! let queue = MultiConsumerQueue::new("scan-001".to_string(), notification_manager);
 //! queue.start().await.unwrap();
 //!
 //! // Register consumer
@@ -41,7 +43,6 @@ use crate::queue::{QueueError, QueueResult, MultiConsumerQueue};
 use crate::scanner::messages::ScanMessage;
 
 /// Consumer handle for reading messages from the multi-consumer queue
-#[derive(Debug)]
 pub struct QueueConsumer {
     /// Unique consumer identifier
     consumer_id: String,
@@ -152,11 +153,6 @@ impl QueueConsumer {
         // Update local priority
         *self.priority.write().await = priority;
         
-        // Update priority in queue registry
-        let mut registry = self.queue.consumer_registry.write().await;
-        if let Some(progress) = registry.consumers.get_mut(&self.consumer_id) {
-            progress.priority = priority;
-        }
         Ok(())
     }
     
@@ -506,7 +502,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_creation() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         let consumer = queue.register_consumer("test-plugin".to_string()).await.unwrap();
@@ -520,7 +517,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_read_next() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add a message
@@ -539,7 +537,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_acknowledgment() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add a message
@@ -557,7 +556,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_batch_read() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add multiple messages
@@ -578,7 +578,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_seek() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add multiple messages
@@ -600,7 +601,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_lag() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add multiple messages
@@ -622,7 +624,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_statistics() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add a message
@@ -639,7 +642,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_multiple_consumers() {
-        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string()));
+        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue = Arc::new(MultiConsumerQueue::new("test-scan".to_string(), notification_manager));
         queue.start().await.unwrap();
         
         // Add multiple messages

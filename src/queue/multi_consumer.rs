@@ -23,10 +23,12 @@
 use std::collections::{VecDeque, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{RwLock, broadcast, Mutex};
+use tokio::sync::{RwLock, Mutex};
 
-use crate::queue::{QueueError, QueueResult, QueueEvent, QueueEventNotifier, MemoryMonitor};
+use crate::queue::{QueueError, QueueResult, MemoryMonitor};
+use crate::notifications::AsyncNotificationManager;
+use crate::notifications::events::QueueEvent;
+use crate::notifications::traits::{Publisher, NotificationManager};
 use crate::scanner::messages::ScanMessage;
 
 /// Configuration for multi-consumer queue
@@ -105,9 +107,14 @@ impl SequenceTracker {
         self.min_sequence = new_min;
     }
     
-    /// Get current sequence range
+    /// Get the current sequence range (min, max)
     pub fn get_range(&self) -> (u64, u64) {
         (self.min_sequence, self.max_sequence)
+    }
+    
+    /// Check if a sequence number is currently valid (within range)
+    pub fn is_valid_sequence(&self, sequence: u64) -> bool {
+        sequence >= self.min_sequence && sequence <= self.max_sequence
     }
     
     /// Get total messages processed
@@ -115,10 +122,6 @@ impl SequenceTracker {
         self.total_messages
     }
     
-    /// Check if a sequence is within current range
-    pub fn is_valid_sequence(&self, sequence: u64) -> bool {
-        sequence >= self.min_sequence && sequence <= self.max_sequence
-    }
 }
 
 impl Default for SequenceTracker {
@@ -145,7 +148,6 @@ pub struct QueueStatistics {
 }
 
 /// Multi-consumer queue with sequence-based tracking
-#[derive(Debug)]
 pub struct MultiConsumerQueue {
     /// Unique identifier for this queue
     scan_id: String,
@@ -163,7 +165,7 @@ pub struct MultiConsumerQueue {
     config: MultiConsumerConfig,
     
     /// Event notification system
-    event_notifier: QueueEventNotifier,
+    notification_manager: Arc<AsyncNotificationManager<QueueEvent>>,
     
     /// Memory monitoring
     memory_monitor: MemoryMonitor,
@@ -177,8 +179,6 @@ pub struct MultiConsumerQueue {
     /// Whether the queue is active
     active: Arc<RwLock<bool>>,
     
-    /// Backpressure controller
-    backpressure: Arc<BackpressureController>,
 }
 
 /// Consumer registry for tracking active consumers
@@ -187,33 +187,19 @@ pub struct ConsumerRegistry {
     /// Active consumers and their progress
     pub(crate) consumers: HashMap<String, ConsumerProgress>,
     
-    /// Consumer timeout configuration
-    timeout: Duration,
-    
-    /// Last cleanup time
-    last_cleanup: Instant,
 }
 
 /// Progress tracking for individual consumers
 #[derive(Debug, Clone)]
 pub struct ConsumerProgress {
-    /// Unique consumer identifier
-    pub consumer_id: String,
-    
-    /// Plugin name this consumer belongs to
-    pub plugin_name: String,
     
     /// Last acknowledged sequence number
     pub last_acknowledged_seq: u64,
     
-    /// Current read position
-    pub current_read_seq: u64,
     
     /// Number of messages processed
     pub messages_processed: u64,
     
-    /// Number of processing errors
-    pub error_count: u64,
     
     /// Last update timestamp
     pub last_update: Instant,
@@ -224,8 +210,6 @@ pub struct ConsumerProgress {
     /// Average processing rate (messages/second)
     pub processing_rate: f64,
     
-    /// Consumer priority (higher = more important)
-    pub priority: i32,
 }
 
 /// Garbage collection state and statistics
@@ -249,12 +233,12 @@ struct GarbageCollectionState {
 
 impl MultiConsumerQueue {
     /// Create a new multi-consumer queue
-    pub fn new(scan_id: String) -> Self {
-        Self::with_config(scan_id, MultiConsumerConfig::default())
+    pub fn new(scan_id: String, notification_manager: Arc<AsyncNotificationManager<QueueEvent>>) -> Self {
+        Self::with_config(scan_id, MultiConsumerConfig::default(), notification_manager)
     }
     
     /// Create a new multi-consumer queue with custom configuration
-    pub fn with_config(scan_id: String, config: MultiConsumerConfig) -> Self {
+    pub fn with_config(scan_id: String, config: MultiConsumerConfig, notification_manager: Arc<AsyncNotificationManager<QueueEvent>>) -> Self {
         let stats = QueueStatistics {
             queue_size: 0,
             memory_usage: 0,
@@ -270,42 +254,21 @@ impl MultiConsumerQueue {
             last_low_water_mark: 0,
         };
         
-        let backpressure_config = BackpressureConfig {
-            memory_threshold: config.memory_threshold,
-            queue_size_threshold: config.max_queue_size / 2, // Activate at 50% capacity
-            min_active_duration: Duration::from_millis(10), // Short duration for testing
-            ..BackpressureConfig::default()
-        };
-        
         Self {
             scan_id,
             messages: Arc::new(RwLock::new(VecDeque::new())),
             sequence_tracker: Arc::new(RwLock::new(SequenceTracker::new())),
             consumer_registry: Arc::new(RwLock::new(ConsumerRegistry::new(config.consumer_timeout))),
             config,
-            event_notifier: QueueEventNotifier::with_default_capacity(),
+            notification_manager,
             memory_monitor: MemoryMonitor::new(),
             gc_state: Arc::new(Mutex::new(gc_state)),
             stats: Arc::new(RwLock::new(stats)),
             active: Arc::new(RwLock::new(false)),
-            backpressure: Arc::new(BackpressureController::new(backpressure_config)),
         }
     }
     
-    /// Get the scan ID for this queue
-    pub fn scan_id(&self) -> &str {
-        &self.scan_id
-    }
     
-    /// Get queue configuration
-    pub fn config(&self) -> &MultiConsumerConfig {
-        &self.config
-    }
-    
-    /// Subscribe to queue events
-    pub fn subscribe_events(&self) -> broadcast::Receiver<QueueEvent> {
-        self.event_notifier.subscribe()
-    }
     
     /// Start the queue for message processing
     pub async fn start(&self) -> QueueResult<()> {
@@ -316,34 +279,11 @@ impl MultiConsumerQueue {
         
         *active = true;
         
-        // Emit start event
-        let event = QueueEvent::scan_started(self.scan_id.clone());
-        self.event_notifier.emit(event)?;
         
         log::info!("Started multi-consumer queue: {}", self.scan_id);
         Ok(())
     }
     
-    /// Stop the queue and cleanup
-    pub async fn stop(&self) -> QueueResult<()> {
-        let mut active = self.active.write().await;
-        if !*active {
-            return Ok(());
-        }
-        
-        *active = false;
-        
-        // Get final statistics
-        let stats = self.get_statistics().await;
-        
-        // Emit completion event
-        let event = QueueEvent::scan_complete(self.scan_id.clone(), stats.total_messages);
-        self.event_notifier.emit(event)?;
-        
-        log::info!("Stopped multi-consumer queue: {} (total: {} messages)", 
-                  self.scan_id, stats.total_messages);
-        Ok(())
-    }
     
     /// Check if queue is active
     pub async fn is_active(&self) -> bool {
@@ -356,13 +296,6 @@ impl MultiConsumerQueue {
             return Err(QueueError::operation_failed("Queue not active"));
         }
         
-        // Check backpressure before processing message (only apply delay, don't reject)
-        if self.backpressure.is_active() {
-            self.backpressure.record_delay().await;
-            
-            // Apply backpressure delay to slow down producers
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
         
         // Assign sequence number
         let sequence = {
@@ -396,12 +329,6 @@ impl MultiConsumerQueue {
         // Update statistics
         self.update_queue_stats(queue_size).await;
         
-        // Evaluate backpressure conditions
-        self.evaluate_backpressure().await;
-        
-        // Emit message added event
-        let event = QueueEvent::message_added(self.scan_id.clone(), 1, queue_size);
-        self.event_notifier.emit(event)?;
         
         // Check for memory pressure
         if self.should_gc().await {
@@ -733,336 +660,20 @@ impl MultiConsumerQueue {
             .collect()
     }
     
-    /// Check if backpressure is needed based on memory and queue size
-    pub async fn has_backpressure_needed(&self) -> bool {
-        let memory_stats = self.memory_monitor.get_stats().await;
-        let messages = self.messages.read().await;
-        
-        // Check memory threshold
-        if memory_stats.current_size > self.config.memory_threshold {
-            return true;
-        }
-        
-        // Check queue size threshold
-        if messages.len() > self.config.max_queue_size / 2 {
-            return true;
-        }
-        
-        false
-    }
     
-    /// Get consumer statistics summary
-    pub async fn get_consumer_summary(&self) -> ConsumerSummary {
-        let registry = self.consumer_registry.read().await;
-        let consumer_count = registry.consumers.len();
-        
-        ConsumerSummary {
-            total_consumers: consumer_count,
-            active_consumers: consumer_count, // All registered consumers are considered active
-            average_lag: 0, // No longer tracking lag
-            max_lag: 0, // No longer tracking lag
-            min_lag: 0, // No longer tracking lag
-            total_messages_processed: registry.consumers.values()
-                .map(|p| p.messages_processed)
-                .sum(),
-            backpressure_needed: self.has_backpressure_needed().await,
-        }
-    }
     
-    /// Evaluate backpressure conditions and update state
-    async fn evaluate_backpressure(&self) {
-        let consumer_summary = self.get_consumer_summary().await;
-        let memory_stats = self.memory_monitor.get_stats().await;
-        let queue_stats = self.get_statistics().await;
-        
-        self.backpressure.evaluate(
-            consumer_summary.max_lag,
-            memory_stats.current_size,
-            queue_stats.queue_size,
-        ).await;
-    }
-    
-    /// Check if backpressure is currently active
-    pub fn is_backpressure_active(&self) -> bool {
-        self.backpressure.is_active()
-    }
-    
-    /// Get current backpressure reason
-    pub async fn get_backpressure_reason(&self) -> Option<BackpressureReason> {
-        self.backpressure.get_current_reason().await
-    }
-    
-    /// Get backpressure statistics
-    pub async fn get_backpressure_stats(&self) -> BackpressureStats {
-        self.backpressure.get_stats().await
-    }
-    
-    /// Force backpressure evaluation (for testing or manual control)
-    pub async fn force_backpressure_evaluation(&self) -> Option<BackpressureReason> {
-        self.evaluate_backpressure().await;
-        self.get_backpressure_reason().await
-    }
-}
-
-/// Backpressure controller for managing queue flow control
-#[derive(Debug)]
-pub struct BackpressureController {
-    /// Whether backpressure is currently active
-    active: AtomicBool,
-    
-    /// Configuration thresholds
-    config: BackpressureConfig,
-    
-    /// Backpressure statistics
-    stats: Arc<Mutex<BackpressureStats>>,
-}
-
-/// Configuration for backpressure system
-#[derive(Debug, Clone)]
-pub struct BackpressureConfig {
-    /// Maximum consumer lag before activating backpressure
-    pub max_lag_threshold: u64,
-    
-    /// Memory usage threshold (bytes) before activating backpressure  
-    pub memory_threshold: usize,
-    
-    /// Queue size threshold before activating backpressure
-    pub queue_size_threshold: usize,
-    
-    /// Time between backpressure evaluations
-    pub evaluation_interval: Duration,
-    
-    /// Minimum time to keep backpressure active (prevents flapping)
-    pub min_active_duration: Duration,
-}
-
-impl Default for BackpressureConfig {
-    fn default() -> Self {
-        Self {
-            max_lag_threshold: 10_000,           // 10K messages
-            memory_threshold: 256 * 1024 * 1024, // 256MB
-            queue_size_threshold: 50_000,        // 50K messages
-            evaluation_interval: Duration::from_secs(5),  // 5 seconds
-            min_active_duration: Duration::from_secs(10), // 10 seconds
-        }
-    }
-}
-
-/// Statistics for backpressure system
-#[derive(Debug, Clone)]
-pub struct BackpressureStats {
-    /// Total number of times backpressure was activated
-    pub activations: u64,
-    
-    /// Total time spent in backpressure mode
-    pub total_duration: Duration,
-    
-    /// Last activation time
-    pub last_activation: Option<Instant>,
-    
-    /// Last deactivation time
-    pub last_deactivation: Option<Instant>,
-    
-    /// Number of messages delayed due to backpressure
-    pub messages_delayed: u64,
-    
-    /// Current backpressure reason
-    pub current_reason: Option<BackpressureReason>,
-}
-
-/// Reason for backpressure activation
-#[derive(Debug, Clone, PartialEq)]
-pub enum BackpressureReason {
-    /// Consumer lag exceeded threshold
-    ConsumerLag { max_lag: u64, threshold: u64 },
-    
-    /// Memory usage exceeded threshold
-    MemoryPressure { current: usize, threshold: usize },
-    
-    /// Queue size exceeded threshold
-    QueueSize { current: usize, threshold: usize },
-    
-    /// Multiple conditions triggered
-    Multiple(Vec<BackpressureReason>),
-}
-
-impl BackpressureController {
-    /// Create a new backpressure controller
-    pub fn new(config: BackpressureConfig) -> Self {
-        let stats = BackpressureStats {
-            activations: 0,
-            total_duration: Duration::from_secs(0),
-            last_activation: None,
-            last_deactivation: None,
-            messages_delayed: 0,
-            current_reason: None,
-        };
-        
-        Self {
-            active: AtomicBool::new(false),
-            config,
-            stats: Arc::new(Mutex::new(stats)),
-        }
-    }
-    
-    /// Check if backpressure is currently active
-    pub fn is_active(&self) -> bool {
-        self.active.load(Ordering::Acquire)
-    }
-    
-    /// Evaluate backpressure conditions and update state
-    pub async fn evaluate(&self, 
-                         max_consumer_lag: u64,
-                         memory_usage: usize, 
-                         queue_size: usize) -> Option<BackpressureReason> {
-        let mut reasons = Vec::new();
-        
-        // Check consumer lag
-        if max_consumer_lag > self.config.max_lag_threshold {
-            reasons.push(BackpressureReason::ConsumerLag {
-                max_lag: max_consumer_lag,
-                threshold: self.config.max_lag_threshold,
-            });
-        }
-        
-        // Check memory pressure
-        if memory_usage > self.config.memory_threshold {
-            reasons.push(BackpressureReason::MemoryPressure {
-                current: memory_usage,
-                threshold: self.config.memory_threshold,
-            });
-        }
-        
-        // Check queue size
-        if queue_size > self.config.queue_size_threshold {
-            reasons.push(BackpressureReason::QueueSize {
-                current: queue_size,
-                threshold: self.config.queue_size_threshold,
-            });
-        }
-        
-        let should_activate = !reasons.is_empty();
-        let currently_active = self.is_active();
-        
-        // Check minimum active duration to prevent flapping
-        let can_deactivate = if currently_active {
-            let stats = self.stats.lock().await;
-            if let Some(last_activation) = stats.last_activation {
-                last_activation.elapsed() >= self.config.min_active_duration
-            } else {
-                true
-            }
-        } else {
-            true
-        };
-        
-        let new_reason = match reasons.len() {
-            0 => None,
-            1 => Some(reasons.into_iter().next().unwrap()),
-            _ => Some(BackpressureReason::Multiple(reasons)),
-        };
-        
-        // Update backpressure state
-        if should_activate && !currently_active {
-            if let Some(reason) = new_reason.clone() {
-                self.activate(reason).await;
-            }
-        } else if !should_activate && currently_active && can_deactivate {
-            self.deactivate().await;
-        } else if should_activate && currently_active {
-            // Update reason if still active
-            let mut stats = self.stats.lock().await;
-            stats.current_reason = new_reason.clone();
-        }
-        
-        new_reason
-    }
-    
-    /// Activate backpressure
-    async fn activate(&self, reason: BackpressureReason) {
-        self.active.store(true, Ordering::Release);
-        
-        let mut stats = self.stats.lock().await;
-        stats.activations += 1;
-        stats.last_activation = Some(Instant::now());
-        stats.current_reason = Some(reason.clone());
-        
-        log::warn!("Backpressure activated: {:?}", reason);
-    }
-    
-    /// Deactivate backpressure
-    async fn deactivate(&self) {
-        self.active.store(false, Ordering::Release);
-        
-        let mut stats = self.stats.lock().await;
-        let now = Instant::now();
-        stats.last_deactivation = Some(now);
-        
-        if let Some(activation_time) = stats.last_activation {
-            stats.total_duration += now.duration_since(activation_time);
-        }
-        
-        stats.current_reason = None;
-        
-        log::info!("Backpressure deactivated");
-    }
-    
-    /// Record a message delay due to backpressure
-    pub async fn record_delay(&self) {
-        let mut stats = self.stats.lock().await;
-        stats.messages_delayed += 1;
-    }
-    
-    /// Get backpressure statistics
-    pub async fn get_stats(&self) -> BackpressureStats {
-        let stats = self.stats.lock().await;
-        stats.clone()
-    }
-    
-    /// Get current backpressure reason
-    pub async fn get_current_reason(&self) -> Option<BackpressureReason> {
-        let stats = self.stats.lock().await;
-        stats.current_reason.clone()
-    }
-}
-
-/// Summary statistics for all consumers
-#[derive(Debug, Clone)]
-pub struct ConsumerSummary {
-    /// Total number of registered consumers
-    pub total_consumers: usize,
-    
-    /// Number of active consumers
-    pub active_consumers: usize,
-    
-    /// Average lag across all consumers
-    pub average_lag: u64,
-    
-    /// Maximum lag (slowest consumer)
-    pub max_lag: u64,
-    
-    /// Minimum lag (fastest consumer)  
-    pub min_lag: u64,
-    
-    /// Total messages processed by all consumers
-    pub total_messages_processed: u64,
-    
-    /// Whether backpressure is needed
-    pub backpressure_needed: bool,
 }
 
 impl ConsumerRegistry {
     /// Create a new consumer registry
-    pub fn new(timeout: Duration) -> Self {
+    pub fn new(_timeout: Duration) -> Self {
         Self {
             consumers: HashMap::new(),
-            timeout,
-            last_cleanup: Instant::now(),
         }
     }
     
     /// Register a new consumer
-    pub fn register_consumer(&mut self, consumer_id: String, plugin_name: String, priority: i32) -> QueueResult<()> {
+    pub fn register_consumer(&mut self, consumer_id: String, _plugin_name: String, _priority: i32) -> QueueResult<()> {
         if self.consumers.contains_key(&consumer_id) {
             return Err(QueueError::operation_failed(
                 format!("Consumer {} already registered", consumer_id)
@@ -1071,16 +682,11 @@ impl ConsumerRegistry {
         
         let now = Instant::now();
         let progress = ConsumerProgress {
-            consumer_id: consumer_id.clone(),
-            plugin_name,
             last_acknowledged_seq: 0,
-            current_read_seq: 0,
             messages_processed: 0,
-            error_count: 0,
             last_update: now,
             created_at: now,
             processing_rate: 0.0,
-            priority,
         };
         
         self.consumers.insert(consumer_id, progress);
@@ -1118,26 +724,6 @@ impl ConsumerRegistry {
         }
     }
     
-    /// Cleanup stale consumers
-    pub fn cleanup_stale_consumers(&mut self) -> Vec<String> {
-        let now = Instant::now();
-        let mut removed = Vec::new();
-        
-        self.consumers.retain(|id, progress| {
-            if now.duration_since(progress.last_update) > self.timeout {
-                removed.push(id.clone());
-                false
-            } else {
-                true
-            }
-        });
-        
-        if !removed.is_empty() {
-            self.last_cleanup = now;
-        }
-        
-        removed
-    }
     
     /// Get all consumer progress
     pub fn get_all_progress(&self) -> Vec<&ConsumerProgress> {
@@ -1158,13 +744,31 @@ impl Clone for MultiConsumerQueue {
             sequence_tracker: Arc::clone(&self.sequence_tracker),
             consumer_registry: Arc::clone(&self.consumer_registry),
             config: self.config.clone(),
-            event_notifier: self.event_notifier.clone(),
+            notification_manager: Arc::clone(&self.notification_manager),
             memory_monitor: self.memory_monitor.clone(),
             gc_state: Arc::clone(&self.gc_state),
             stats: Arc::clone(&self.stats),
             active: Arc::clone(&self.active),
-            backpressure: Arc::clone(&self.backpressure),
         }
+    }
+}
+
+/// Publisher trait implementation for MultiConsumerQueue
+#[async_trait::async_trait]
+impl Publisher<QueueEvent> for MultiConsumerQueue {
+    /// Publish a queue event to all subscribers
+    async fn publish(&self, event: QueueEvent) -> crate::notifications::error::NotificationResult<()> {
+        self.notification_manager.publish(event).await
+    }
+    
+    /// Publish a queue event to a specific subscriber
+    async fn publish_to(&self, event: QueueEvent, subscriber_id: &str) -> crate::notifications::error::NotificationResult<()> {
+        self.notification_manager.publish_to(event, subscriber_id).await
+    }
+    
+    /// Get the publisher identifier
+    fn publisher_id(&self) -> &str {
+        "queue"
     }
 }
 
@@ -1172,6 +776,10 @@ impl Clone for MultiConsumerQueue {
 mod tests {
     use super::*;
     use crate::scanner::messages::{MessageHeader, MessageData};
+    
+    fn create_test_notification_manager() -> Arc<AsyncNotificationManager<QueueEvent>> {
+        Arc::new(AsyncNotificationManager::new())
+    }
     
     fn create_test_message(sequence: u64) -> ScanMessage {
         let header = MessageHeader::new(sequence);
@@ -1185,9 +793,9 @@ mod tests {
     
     #[tokio::test]
     async fn test_multi_consumer_queue_creation() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         
-        assert_eq!(queue.scan_id(), "test-scan");
+        assert_eq!(queue.scan_id, "test-scan");
         assert!(!queue.is_active().await);
         
         let stats = queue.get_statistics().await;
@@ -1197,20 +805,16 @@ mod tests {
     
     #[tokio::test]
     async fn test_queue_lifecycle() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         
         // Start queue
         queue.start().await.unwrap();
         assert!(queue.is_active().await);
-        
-        // Stop queue
-        queue.stop().await.unwrap();
-        assert!(!queue.is_active().await);
     }
     
     #[tokio::test]
     async fn test_message_enqueue() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         let message = create_test_message(0);
@@ -1265,7 +869,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_low_water_mark_calculation() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // No consumers - should use max sequence
@@ -1285,7 +889,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_queue_statistics() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1302,7 +906,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_get_messages_from() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1335,7 +939,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_get_message_by_seq() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1361,7 +965,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_sequence_range_methods() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Initial range should be (0, 0) with no messages
@@ -1394,7 +998,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_sequence_retrieval_with_gaps() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1440,7 +1044,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_acknowledgment_system() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1483,7 +1087,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_lagging_consumers() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1521,78 +1125,11 @@ mod tests {
         assert_eq!(lagging.len(), 3); // all consumers have some lag
     }
     
-    #[tokio::test]
-    async fn test_backpressure_detection() {
-        // Create queue with low queue size threshold for testing
-        let mut config = MultiConsumerConfig::default();
-        config.max_queue_size = 10; // Small queue for testing backpressure
-        config.auto_gc = false; // Disable auto GC for testing
-        
-        let queue = MultiConsumerQueue::with_config("test-scan".to_string(), config);
-        queue.start().await.unwrap();
-        
-        // Initially no backpressure
-        assert!(!queue.has_backpressure_needed().await);
-        
-        // Add messages beyond queue size threshold (10/2 = 5)
-        for i in 0..6 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // Should need backpressure (6 messages > threshold of 5)
-        assert!(queue.has_backpressure_needed().await);
-        
-        // Remove some messages by dequeuing 
-        let consumer = queue.register_consumer("test-plugin".to_string()).await.unwrap();
-        for _ in 0..3 {
-            consumer.read_next().await.unwrap();
-        }
-        
-        // Still should need backpressure (3 messages remaining but queue still has 6)
-        // Backpressure is based on raw queue size, not consumed messages
-        assert!(queue.has_backpressure_needed().await);
-    }
     
-    #[tokio::test]
-    async fn test_consumer_summary() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
-        queue.start().await.unwrap();
-        
-        // Add messages
-        for i in 0..5 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // Test summary with no consumers
-        let summary = queue.get_consumer_summary().await;
-        assert_eq!(summary.total_consumers, 0);
-        assert_eq!(summary.average_lag, 0);
-        assert_eq!(summary.max_lag, 0);
-        assert_eq!(summary.min_lag, 0);
-        
-        // Register consumers
-        let consumer1 = queue.register_consumer("plugin1".to_string()).await.unwrap();
-        let consumer2 = queue.register_consumer("plugin2".to_string()).await.unwrap();
-        
-        // Acknowledge different amounts
-        queue.acknowledge_consumer(consumer1.consumer_id(), 3).await.unwrap(); // lag = 1
-        queue.acknowledge_consumer(consumer2.consumer_id(), 1).await.unwrap(); // lag = 3
-        
-        let summary = queue.get_consumer_summary().await;
-        assert_eq!(summary.total_consumers, 2);
-        assert_eq!(summary.active_consumers, 2);
-        assert_eq!(summary.average_lag, 0); // No longer tracking lag
-        assert_eq!(summary.max_lag, 0); // No longer tracking lag  
-        assert_eq!(summary.min_lag, 0); // No longer tracking lag
-        assert_eq!(summary.total_messages_processed, 2); // 1 + 1 messages processed
-        assert!(!summary.backpressure_needed); // No backpressure with small queue
-    }
     
     #[tokio::test]
     async fn test_acknowledge_nonexistent_consumer() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string());
+        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
         queue.start().await.unwrap();
         
         // Try to acknowledge for non-existent consumer
@@ -1602,199 +1139,5 @@ mod tests {
         // Try to get lag for non-existent consumer
         let result = queue.get_consumer_lag("nonexistent").await;
         assert!(result.is_err());
-    }
-    
-    #[tokio::test]
-    async fn test_backpressure_system() {
-        // Create queue with low thresholds for testing
-        let mut config = MultiConsumerConfig::default();
-        config.memory_threshold = 1024; // 1KB
-        config.max_queue_size = 8; // Small queue
-        config.auto_gc = false; // Disable auto GC for testing
-        
-        let queue = MultiConsumerQueue::with_config("test-scan".to_string(), config);
-        queue.start().await.unwrap();
-        
-        // Initially no backpressure
-        assert!(!queue.is_backpressure_active());
-        
-        // Add messages to trigger queue size backpressure (threshold is max_queue_size/2 = 4)
-        for i in 0..5 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // Force backpressure evaluation after adding messages
-        let reason = queue.force_backpressure_evaluation().await;
-        
-        // Should have backpressure due to queue size (5 > 4 which is max_queue_size/2)
-        assert!(queue.is_backpressure_active());
-        assert!(reason.is_some());
-        
-        match reason.unwrap() {
-            BackpressureReason::QueueSize { current, threshold } => {
-                assert_eq!(current, 5);
-                assert_eq!(threshold, 4); // max_queue_size (8) / 2
-            }
-            other => panic!("Expected QueueSize backpressure reason, got: {:?}", other),
-        }
-        
-        // Get backpressure stats
-        let stats = queue.get_backpressure_stats().await;
-        assert_eq!(stats.activations, 1);
-        assert!(stats.last_activation.is_some());
-    }
-    
-    #[tokio::test]
-    async fn test_backpressure_queue_size() {
-        // Create queue with small size for testing
-        let mut config = MultiConsumerConfig::default();
-        config.max_queue_size = 6; // Small queue for testing
-        config.auto_gc = false; // Disable auto GC for testing
-        
-        let queue = MultiConsumerQueue::with_config("test-scan".to_string(), config);
-        queue.start().await.unwrap();
-        
-        // Initially no backpressure
-        assert!(!queue.has_backpressure_needed().await);
-        
-        // Add messages to trigger backpressure (threshold is max_queue_size/2 = 3)
-        for i in 0..4 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // Should trigger backpressure due to queue size (4 > 3)
-        assert!(queue.has_backpressure_needed().await);
-        
-        // Force evaluation to activate backpressure
-        let reason = queue.force_backpressure_evaluation().await;
-        
-        assert!(queue.is_backpressure_active());
-        assert!(reason.is_some());
-        
-        match reason.unwrap() {
-            BackpressureReason::QueueSize { current, threshold } => {
-                assert_eq!(current, 4);
-                assert_eq!(threshold, 3);
-            }
-            _ => panic!("Expected QueueSize backpressure reason"),
-        }
-    }
-    
-    #[tokio::test]
-    async fn test_backpressure_multiple_conditions() {
-        // Create queue with very low thresholds
-        let mut config = MultiConsumerConfig::default();
-        config.max_queue_size = 8;
-        config.memory_threshold = 100; // Very low memory threshold
-        config.auto_gc = false; // Disable auto GC for testing
-        
-        let queue = MultiConsumerQueue::with_config("test-scan".to_string(), config);
-        queue.start().await.unwrap();
-        
-        // Add enough messages to trigger queue size backpressure (threshold is 4)
-        for i in 0..5 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // This should trigger at least queue size backpressure
-        let reason = queue.force_backpressure_evaluation().await;
-        
-        assert!(queue.is_backpressure_active());
-        assert!(reason.is_some());
-        
-        // Since we can't reliably trigger multiple conditions, just check that we get a valid reason
-        match reason.unwrap() {
-            BackpressureReason::QueueSize { current, threshold } => {
-                assert_eq!(current, 5);
-                assert_eq!(threshold, 4);
-            }
-            BackpressureReason::MemoryPressure { .. } => {
-                // Memory pressure is also acceptable
-            }
-            BackpressureReason::Multiple(reasons) => {
-                // Multiple reasons are fine too
-                assert!(!reasons.is_empty());
-            }
-            _ => panic!("Expected valid backpressure reason"),
-        }
-    }
-    
-    #[tokio::test]
-    async fn test_backpressure_message_rejection() {
-        // Create queue with very low threshold
-        let mut config = MultiConsumerConfig::default();
-        config.max_queue_size = 4;
-        
-        let queue = MultiConsumerQueue::with_config("test-scan".to_string(), config);
-        queue.start().await.unwrap();
-        
-        // Add messages to trigger backpressure
-        for i in 0..3 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // Force backpressure activation
-        queue.force_backpressure_evaluation().await;
-        assert!(queue.is_backpressure_active());
-        
-        // Try to add another message - should be delayed/rejected
-        let message = create_test_message(10);
-        let result = queue.enqueue(message).await;
-        
-        // Should either succeed after delay or fail due to backpressure
-        // The exact behavior depends on timing, but backpressure should be recorded
-        let stats = queue.get_backpressure_stats().await;
-        
-        if result.is_err() {
-            // Message was rejected due to backpressure
-            assert!(stats.messages_delayed > 0 || result.unwrap_err().to_string().contains("Backpressure active"));
-        }
-    }
-    
-    #[tokio::test]
-    async fn test_backpressure_deactivation() {
-        use tokio::time::{sleep, Duration};
-        
-        // Create queue with very low thresholds
-        let mut config = MultiConsumerConfig::default();
-        config.max_queue_size = 6; // threshold will be 3
-        
-        let queue = MultiConsumerQueue::with_config("test-scan".to_string(), config);
-        queue.start().await.unwrap();
-        
-        // Add messages to trigger backpressure
-        for i in 0..4 {
-            let message = create_test_message(i);
-            queue.enqueue(message).await.unwrap();
-        }
-        
-        // Force backpressure activation (4 > 3 which is max_queue_size/2)
-        queue.force_backpressure_evaluation().await;
-        
-        // Debug: Check if backpressure was activated
-        if !queue.is_backpressure_active() {
-            let reason = queue.get_backpressure_reason().await;
-            panic!("Backpressure not activated! Reason: {:?}, Queue size: 4, Threshold: 3", reason);
-        }
-        
-        // Register fast consumer that processes all messages
-        let consumer = queue.register_consumer("fast-plugin".to_string()).await.unwrap();
-        
-        // Consumer processes all messages, reducing queue size and lag
-        queue.acknowledge_consumer(consumer.consumer_id(), 3).await.unwrap();
-        
-        // Wait a bit to allow for minimum active duration
-        sleep(Duration::from_millis(50)).await;
-        
-        // Force evaluation - should deactivate backpressure
-        queue.force_backpressure_evaluation().await;
-        
-        // Backpressure should be deactivated (low lag and queue size)
-        let stats = queue.get_backpressure_stats().await;
-        assert!(stats.last_deactivation.is_some() || !queue.is_backpressure_active());
     }
 }

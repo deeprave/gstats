@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::path::PathBuf;
 use crate::notifications::manager::AsyncNotificationManager;
+use crate::plugin::SharedPluginRegistry;
 
 struct TestMessageProducer {
     messages: Arc<tokio::sync::Mutex<Vec<ScanMessage>>>,
@@ -93,10 +94,12 @@ async fn test_engine_builder() {
     let producer = Arc::new(TestMessageProducer::new());
     
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .build();
     
     assert!(engine.is_ok());
@@ -108,10 +111,12 @@ async fn test_engine_without_scanners() {
     let producer = Arc::new(TestMessageProducer::new());
     let notification_manager = Arc::new(AsyncNotificationManager::new());
     
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .build()
         .unwrap();
     
@@ -131,10 +136,12 @@ async fn test_single_scanner_operation() {
     });
     
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .add_scanner(scanner)
         .build()
         .unwrap();
@@ -163,10 +170,12 @@ async fn test_scanner_operation() {
     });
     
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .add_scanner(scanner)
         .build()
         .unwrap();
@@ -187,10 +196,12 @@ async fn test_cancellation() {
     });
     
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = Arc::new(AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .add_scanner(scanner)
         .build()
         .unwrap());
@@ -224,10 +235,12 @@ async fn test_engine_stats() {
     });
     
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .add_scanner(scanner)
         .build()
         .unwrap();

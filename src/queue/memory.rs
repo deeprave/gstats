@@ -87,8 +87,8 @@ impl QueueMemoryStats {
     pub fn is_memory_concerning(&self) -> bool {
         self.current_size > self.warning_threshold
     }
-
-    /// Get memory usage as a percentage of the warning threshold
+    
+    /// Get memory usage as percentage of threshold
     pub fn memory_usage_percentage(&self) -> f64 {
         if self.warning_threshold == 0 {
             0.0
@@ -96,6 +96,18 @@ impl QueueMemoryStats {
             (self.current_size as f64 / self.warning_threshold as f64) * 100.0
         }
     }
+    
+    /// Get a human readable summary of memory statistics
+    pub fn summary(&self) -> String {
+        format!(
+            "{} bytes ({:.1}% of threshold), {} messages, peak {} bytes",
+            self.current_size,
+            self.memory_usage_percentage(),
+            self.message_count,
+            self.peak_size
+        )
+    }
+
 
     /// Update the average message size calculation
     fn update_average(&mut self) {
@@ -105,28 +117,6 @@ impl QueueMemoryStats {
                 (self.total_messages_processed.saturating_sub(self.message_count as u64) as usize * self.average_message_size);
             self.average_message_size = total_size_estimate / self.total_messages_processed as usize;
         }
-    }
-
-    /// Reset statistics (useful for new scan sessions)
-    pub fn reset(&mut self) {
-        self.current_size = 0;
-        self.message_count = 0;
-        self.peak_size = 0;
-        self.total_messages_processed = 0;
-        self.average_message_size = 0;
-        log::debug!("Queue memory statistics reset");
-    }
-
-    /// Get a summary string for logging
-    pub fn summary(&self) -> String {
-        format!(
-            "Queue Memory: {} bytes ({:.1}% of threshold), {} messages, peak: {} bytes, avg msg: {} bytes",
-            self.current_size,
-            self.memory_usage_percentage(),
-            self.message_count,
-            self.peak_size,
-            self.average_message_size
-        )
     }
 }
 
@@ -149,7 +139,7 @@ impl MemoryMonitor {
             stats: Arc::new(RwLock::new(QueueMemoryStats::new())),
         }
     }
-
+    
     /// Create a new memory monitor with custom threshold
     pub fn with_threshold(threshold: usize) -> Self {
         Self {
@@ -175,38 +165,12 @@ impl MemoryMonitor {
     pub async fn get_stats(&self) -> QueueMemoryStats {
         self.stats.read().await.clone()
     }
-
-    /// Check if memory usage is concerning
+    
+    /// Check if current memory usage is concerning
     pub async fn is_memory_concerning(&self) -> bool {
         self.stats.read().await.is_memory_concerning()
     }
 
-    /// Reset statistics
-    pub async fn reset(&self) {
-        self.stats.write().await.reset();
-    }
-
-    /// Log current memory status at debug level
-    pub async fn log_status(&self) {
-        let stats = self.stats.read().await;
-        log::debug!("{}", stats.summary());
-    }
-
-    /// Log current memory status at trace level with detailed info
-    pub async fn log_detailed_status(&self) {
-        let stats = self.stats.read().await;
-        log::trace!(
-            "Detailed Queue Memory Stats: current={} bytes, messages={}, peak={} bytes, \
-             total_processed={}, avg_size={} bytes, threshold={} bytes, usage={:.1}%",
-            stats.current_size,
-            stats.message_count,
-            stats.peak_size,
-            stats.total_messages_processed,
-            stats.average_message_size,
-            stats.warning_threshold,
-            stats.memory_usage_percentage()
-        );
-    }
 }
 
 impl Clone for MemoryMonitor {

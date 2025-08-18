@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Barrier;
 use crate::notifications::manager::AsyncNotificationManager;
+use crate::plugin::SharedPluginRegistry;
 
 struct ConcurrentScanner {
     name: String,
@@ -103,10 +104,12 @@ async fn test_multiple_concurrent_scanners() {
     let producer_ref = Arc::clone(&producer);
     let notification_manager = Arc::new(AsyncNotificationManager::new());
     
+    let plugin_registry = SharedPluginRegistry::new();
     let mut builder = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
-        .notification_manager(notification_manager);
+        .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry);
     
     // Add multiple scanners
     builder = builder
@@ -148,11 +151,13 @@ async fn test_task_concurrency_limit() {
     let mut config = crate::scanner::config::ScannerConfig::default();
     config.max_threads = Some(2); // Limit to 2 concurrent tasks
     
+    let plugin_registry = SharedPluginRegistry::new();
     let mut builder = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .config(config)
         .message_producer(producer)
-        .notification_manager(notification_manager);
+        .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry);
     
     // Add 3 scanners that will try to run concurrently
     // Remove barrier to avoid synchronization issues
@@ -260,10 +265,12 @@ async fn test_concurrent_error_handling() {
         }
     }
     
+    let plugin_registry = SharedPluginRegistry::new();
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
         .notification_manager(notification_manager)
+        .plugin_registry(plugin_registry)
         .add_scanner(Arc::new(ErrorScanner {
             name: "GoodScanner".to_string(),
             error_after: 10, // Won't error within 5 messages

@@ -7,7 +7,6 @@ pub mod error;
 pub mod task_manager;
 pub mod engine;
 pub mod stream;
-pub mod streaming_producer;
 pub mod scanners;
 pub mod events;
 pub mod processors;

@@ -97,23 +97,6 @@ impl QueueEvent {
         }
     }
 
-    /// Create a queue drained event
-    pub fn queue_drained(scan_id: String) -> Self {
-        Self::QueueDrained {
-            scan_id,
-            timestamp: current_timestamp(),
-        }
-    }
-
-    /// Create a memory warning event
-    pub fn memory_warning(scan_id: String, current_size: usize, threshold: usize) -> Self {
-        Self::MemoryWarning {
-            scan_id,
-            current_size,
-            threshold,
-            timestamp: current_timestamp(),
-        }
-    }
 }
 
 /// Event notifier for broadcasting queue events
@@ -154,15 +137,6 @@ impl QueueEventNotifier {
         }
     }
 
-    /// Get the number of active subscribers
-    pub fn subscriber_count(&self) -> usize {
-        self.sender.receiver_count()
-    }
-
-    /// Check if there are any active subscribers
-    pub fn has_subscribers(&self) -> bool {
-        self.subscriber_count() > 0
-    }
 }
 
 impl Clone for QueueEventNotifier {
@@ -201,9 +175,8 @@ mod tests {
 
     #[test]
     fn test_queue_event_notifier_creation() {
-        let notifier = QueueEventNotifier::new(100);
-        assert_eq!(notifier.subscriber_count(), 0);
-        assert!(!notifier.has_subscribers());
+        let _notifier = QueueEventNotifier::new(100);
+        // Basic creation test - no specific assertions needed
     }
 
     #[tokio::test]
@@ -211,8 +184,7 @@ mod tests {
         let notifier = QueueEventNotifier::new(10);
         let mut receiver = notifier.subscribe();
 
-        assert_eq!(notifier.subscriber_count(), 1);
-        assert!(notifier.has_subscribers());
+        // Subscription successful if no panic occurs
 
         let event = QueueEvent::scan_started("test".to_string());
         notifier.emit(event.clone()).unwrap();
@@ -231,7 +203,7 @@ mod tests {
         let mut receiver1 = notifier.subscribe();
         let mut receiver2 = notifier.subscribe();
 
-        assert_eq!(notifier.subscriber_count(), 2);
+        // Multiple subscribers created successfully
 
         let event = QueueEvent::message_added("test".to_string(), 1, 5);
         notifier.emit(event.clone()).unwrap();

@@ -108,6 +108,24 @@ pub enum QueueEvent {
         pressure_level: MemoryPressureLevel,
         detected_at: SystemTime,
     },
+    
+    /// Consumer registered with queue
+    ConsumerRegistered {
+        queue_id: String,
+        consumer_id: String,
+        plugin_name: String,
+        total_consumers: usize,
+        registered_at: SystemTime,
+    },
+    
+    /// Consumer deregistered from queue
+    ConsumerDeregistered {
+        queue_id: String,
+        consumer_id: String,
+        plugin_name: String,
+        total_consumers: usize,
+        deregistered_at: SystemTime,
+    },
 }
 
 /// Plugin lifecycle and coordination events

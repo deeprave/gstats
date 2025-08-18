@@ -166,11 +166,6 @@ pub struct TaskManager {
     
     /// Resource constraints and limits
     constraints: ResourceConstraints,
-    
-    
-    
-    /// Task scheduler handle
-    _scheduler_handle: Option<JoinHandle<()>>,
 }
 
 impl TaskManager {
@@ -189,7 +184,6 @@ impl TaskManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
-            _scheduler_handle: None,
         }
     }
     
@@ -203,7 +197,6 @@ impl TaskManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
-            _scheduler_handle: None,
         }
     }
     
@@ -286,9 +279,6 @@ impl TaskManager {
         let active_tasks = Arc::clone(&self.active_tasks);
         let completed_count = Arc::clone(&self.completed_count);
         let errors = Arc::clone(&self.errors);
-        let pending_tasks = Arc::clone(&self.pending_tasks);
-        let semaphore_clone = Arc::clone(&self.semaphore);
-        let constraints = self.constraints.clone();
         let task_id_clone = task_id.clone();
         
         // Spawn the actual task
@@ -317,17 +307,7 @@ impl TaskManager {
             // Update counters
             active_tasks.remove(&task_id_clone);
             
-            // Try to process pending tasks when this task completes
-            // This enables automatic scheduling of queued tasks
-            tokio::spawn(async move {
-                if let Err(e) = Self::try_process_pending_static(
-                    pending_tasks,
-                    semaphore_clone,
-                    constraints,
-                ).await {
-                    log::debug!("Failed to process pending tasks after completion: {e}");
-                }
-            });
+            // Task completed - automatic scheduling could be added here if needed
             
             result
         });
@@ -496,16 +476,6 @@ impl TaskManager {
         Ok(task_id)
     }
     
-    /// Static method to process pending tasks (used in spawned task)
-    async fn try_process_pending_static(
-        _pending_tasks: Arc<Mutex<BinaryHeap<PendingTask>>>,
-        _semaphore: Arc<Semaphore>,
-        _constraints: ResourceConstraints,
-    ) -> ScanResult<usize> {
-        // This is a simplified version that just tries to notify about available resources
-        // The actual processing should be done through the main TaskManager instance
-        Ok(0)
-    }
     
     /// Cancel all active tasks
     pub async fn cancel_all(&self) {

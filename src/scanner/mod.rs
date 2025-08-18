@@ -16,8 +16,8 @@
 //! 
 //! // Configure scanner
 //! let config = ScannerConfig::builder()
-//!     .max_threads(4)
-//!     .performance_mode(true)
+//!     .with_max_memory(128 * 1024 * 1024)
+//!     .with_queue_size(2000)
 //!     .build()
 //!     .unwrap();
 //! 

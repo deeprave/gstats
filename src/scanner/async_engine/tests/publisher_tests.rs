@@ -12,6 +12,7 @@ use crate::scanner::messages::ScanMessage;
 use crate::notifications::traits::Publisher;
 use crate::notifications::events::ScanEvent;
 use crate::notifications::manager::AsyncNotificationManager;
+use crate::plugin::SharedPluginRegistry;
 
 /// Mock message producer for testing
 #[derive(Debug)]
@@ -45,12 +46,14 @@ async fn test_async_scanner_engine_implements_publisher_trait() {
     let producer = Arc::new(MockMessageProducer);
     
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     
     let engine = AsyncScannerEngine::new_for_test(
         temp_dir.path(),
         config,
         producer,
         notification_manager,
+        plugin_registry,
     ).expect("Failed to create scanner engine");
     
     // This should compile once Publisher trait is implemented
@@ -76,12 +79,14 @@ async fn test_async_scanner_engine_has_notification_manager() {
     
     // Create notification manager
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     
     let engine = AsyncScannerEngine::new_for_test(
         temp_dir.path(),
         config,
         producer,
         notification_manager.clone(),
+        plugin_registry,
     ).expect("Failed to create scanner engine");
     // Verify the engine was created successfully with the notification manager
     // Test that the Publisher trait is working by calling publisher_id()
@@ -102,12 +107,14 @@ async fn test_scanner_publish_methods_delegate_to_manager() {
     let config = ScannerConfig::default();
     let producer = Arc::new(MockMessageProducer);
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     
     let engine = AsyncScannerEngine::new_for_test(
         temp_dir.path(),
         config,
         producer,
         notification_manager,
+        plugin_registry,
     ).expect("Failed to create scanner engine");
     
     // Test that publish method works (should succeed even with no subscribers)
@@ -143,12 +150,14 @@ async fn test_scan_publishes_scan_started_event() {
     let config = ScannerConfig::default();
     let producer = Arc::new(MockMessageProducer);
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     
     let engine = AsyncScannerEngine::new_for_test(
         temp_dir.path(),
         config,
         producer,
         notification_manager.clone(),
+        plugin_registry,
     ).expect("Failed to create scanner engine");
     
     // Since we can't easily mock the notification manager to capture events,
@@ -184,12 +193,14 @@ async fn test_scan_publishes_periodic_events() {
     let config = ScannerConfig::default();
     let producer = Arc::new(MockMessageProducer);
     let notification_manager = Arc::new(AsyncNotificationManager::new());
+    let plugin_registry = SharedPluginRegistry::new();
     
     let engine = AsyncScannerEngine::new_for_test(
         temp_dir.path(),
         config,
         producer,
         notification_manager.clone(),
+        plugin_registry,
     ).expect("Failed to create scanner engine");
     
     // This test verifies that periodic events are attempted during scan execution

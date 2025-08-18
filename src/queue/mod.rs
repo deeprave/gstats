@@ -19,10 +19,12 @@
 //! ```rust
 //! use gstats::queue::SharedMessageQueue;
 //! use gstats::scanner::messages::{ScanMessage, MessageHeader, MessageData};
+//! use std::sync::Arc;
 //!
 //! # tokio_test::block_on(async {
 //! // Create a queue for a scanning session
-//! let queue = SharedMessageQueue::new("scan-001".to_string());
+//! let notification_manager = Arc::new(gstats::notifications::AsyncNotificationManager::new());
+//! let queue = SharedMessageQueue::new("scan-001".to_string(), notification_manager);
 //!
 //! // Producer: Start scanning and add messages
 //! queue.start().await.unwrap();
@@ -39,7 +41,6 @@
 //! let scan_message = ScanMessage::new(header, data);
 //!
 //! queue.enqueue(scan_message).await.unwrap();
-//! queue.stop().await.unwrap();
 //!
 //! // Consumer: Register consumer and process messages
 //! let consumer = queue.register_consumer("debug".to_string()).await.unwrap();
@@ -57,12 +58,11 @@ pub mod queue_consumer;
 
 // Re-export main types for convenience
 pub use error::{QueueError, QueueResult};
-pub use notifications::{QueueEvent, QueueEventNotifier};
+pub use notifications::QueueEvent;
 pub use shared_queue::SharedMessageQueue;
 pub use memory::MemoryMonitor;
 pub use multi_consumer::{
-    MultiConsumerQueue, MultiConsumerConfig, QueueStatistics, ConsumerSummary, 
-    BackpressureReason
+    MultiConsumerQueue, QueueStatistics
 };
 pub use queue_consumer::QueueConsumer;
 
