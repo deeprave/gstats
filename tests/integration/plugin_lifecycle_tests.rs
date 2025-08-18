@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
-use gstats::plugin::traits::{Plugin, ConsumerPlugin, PluginArgumentParser};
+use gstats::plugin::traits::{Plugin, ConsumerPlugin};
 use gstats::plugin::context::{PluginContext, PluginRequest, PluginResponse};
 use gstats::plugin::builtin::{
     commits::CommitsPlugin,

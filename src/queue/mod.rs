@@ -66,8 +66,6 @@ pub use multi_consumer::{
 };
 pub use queue_consumer::QueueConsumer;
 
-/// Queue system version for compatibility tracking
-pub const QUEUE_API_VERSION: u32 = 1;
 
 #[cfg(test)]
 mod tests {

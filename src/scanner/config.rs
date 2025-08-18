@@ -94,6 +94,149 @@ pub struct ScannerConfig {
     pub plugin_requirements: PluginRequirementsConfig,
 }
 
+impl Default for ScannerConfig {
+    fn default() -> Self {
+        Self {
+            max_memory_bytes: 64 * 1024 * 1024, // 64MB
+            queue_size: 1000,
+            max_threads: None,
+            default_branch: None,
+            branch_fallbacks: vec!["main".to_string(), "master".to_string(), "develop".to_string(), "trunk".to_string()],
+            default_remote: None,
+            plugin_requirements: PluginRequirementsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ConfigError {
+    InvalidMaxMemory,
+    InsufficientMemory,
+    InvalidQueueSize,
+    InsufficientQueueSize,
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::InvalidMaxMemory => write!(f, "Invalid max memory configuration"),
+            ConfigError::InsufficientMemory => write!(f, "Insufficient memory configuration"),
+            ConfigError::InvalidQueueSize => write!(f, "Invalid queue size configuration"),
+            ConfigError::InsufficientQueueSize => write!(f, "Insufficient queue size configuration"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+impl ScannerConfig {
+    /// Create a new configuration builder
+    pub fn new() -> ScannerConfigBuilder {
+        ScannerConfigBuilder::new()
+    }
+    
+    /// Validate the configuration
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.max_memory_bytes == 0 {
+            return Err(ConfigError::InvalidMaxMemory);
+        }
+        
+        if self.max_memory_bytes < 1024 * 1024 { // Less than 1MB
+            return Err(ConfigError::InsufficientMemory);
+        }
+        
+        if self.queue_size == 0 {
+            return Err(ConfigError::InvalidQueueSize);
+        }
+        
+        if self.queue_size < 10 {
+            return Err(ConfigError::InsufficientQueueSize);
+        }
+        
+        Ok(())
+    }
+    
+    /// Get a human-readable memory display
+    pub fn memory_display(&self) -> String {
+        let bytes = self.max_memory_bytes as f64;
+        if bytes >= 1024.0 * 1024.0 * 1024.0 {
+            format!("{:.1} GB", bytes / (1024.0 * 1024.0 * 1024.0))
+        } else if bytes >= 1024.0 * 1024.0 {
+            format!("{} MB", (bytes / (1024.0 * 1024.0)) as u64)
+        } else if bytes >= 1024.0 {
+            format!("{} KB", (bytes / 1024.0) as u64)
+        } else {
+            format!("{} B", bytes as u64)
+        }
+    }
+    
+    /// Analyze plugins to create runtime configuration
+    pub fn analyze_plugins(&self, plugins: &[Box<dyn PluginDataRequirements>]) -> RuntimeScannerConfig {
+        let requires_current_content = plugins.iter().any(|p| p.requires_current_file_content());
+        let requires_historical_content = plugins.iter().any(|p| p.requires_historical_file_content());
+        let requires_checkout = requires_current_content || requires_historical_content;
+        
+        let effective_checkout_dir = if requires_checkout {
+            self.plugin_requirements.checkout_base_dir.clone()
+                .or_else(|| Some(std::env::temp_dir().join("gstats-checkout")))
+        } else {
+            None
+        };
+        
+        RuntimeScannerConfig {
+            requires_checkout,
+            requires_current_content,
+            requires_historical_content,
+            base_config: self.clone(),
+            effective_checkout_dir,
+        }
+    }
+}
+
+/// Builder for ScannerConfig
+#[derive(Debug)]
+pub struct ScannerConfigBuilder {
+    config: ScannerConfig,
+}
+
+impl ScannerConfigBuilder {
+    pub fn new() -> Self {
+        Self {
+            config: ScannerConfig::default(),
+        }
+    }
+    
+    pub fn with_max_memory(mut self, max_memory_bytes: usize) -> Self {
+        self.config.max_memory_bytes = max_memory_bytes;
+        self
+    }
+    
+    pub fn with_queue_size(mut self, queue_size: usize) -> Self {
+        self.config.queue_size = queue_size;
+        self
+    }
+    
+    pub fn with_default_branch(mut self, branch: String) -> Self {
+        self.config.default_branch = Some(branch);
+        self
+    }
+    
+    pub fn with_branch_fallbacks(mut self, fallbacks: Vec<String>) -> Self {
+        self.config.branch_fallbacks = fallbacks;
+        self
+    }
+    
+    pub fn with_default_remote(mut self, remote: String) -> Self {
+        self.config.default_remote = Some(remote);
+        self
+    }
+    
+    pub fn build(self) -> Result<ScannerConfig, ConfigError> {
+        self.config.validate()?;
+        Ok(self.config)
+    }
+}
+
 /// Configuration for plugin data requirements and file checkout
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginRequirementsConfig {
@@ -150,207 +293,6 @@ pub struct RuntimeScannerConfig {
     
     /// Effective checkout directory
     pub effective_checkout_dir: Option<PathBuf>,
-}
-
-/// Configuration builder for fluent API
-#[derive(Debug)]
-pub struct ScannerConfigBuilder {
-    max_memory_bytes: usize,
-    queue_size: usize,
-    max_threads: Option<usize>,
-    default_branch: Option<String>,
-    branch_fallbacks: Vec<String>,
-    default_remote: Option<String>,
-}
-
-/// Configuration validation error
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("Maximum memory bytes must be greater than zero")]
-    InvalidMaxMemory,
-    #[error("Queue size must be greater than zero")]
-    InvalidQueueSize,
-    #[error("Maximum memory bytes must be at least 1MB")]
-    InsufficientMemory,
-    #[error("Queue size must be at least 10")]
-    InsufficientQueueSize,
-}
-
-impl Default for ScannerConfig {
-    fn default() -> Self {
-        Self {
-            max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
-            queue_size: 1000,
-            max_threads: None, // Use system default (num_cpus)
-            default_branch: None,
-            branch_fallbacks: vec![
-                "main".to_string(),
-                "master".to_string(),
-                "develop".to_string(),
-                "trunk".to_string(),
-            ],
-            default_remote: None,
-            plugin_requirements: PluginRequirementsConfig::default(),
-        }
-    }
-}
-
-impl ScannerConfig {
-    /// Create a new configuration builder
-    pub fn builder() -> ScannerConfigBuilder {
-        ScannerConfigBuilder {
-            max_memory_bytes: 64 * 1024 * 1024, // 64 MB default
-            queue_size: 1000,
-            max_threads: None,
-            default_branch: None,
-            branch_fallbacks: vec![
-                "main".to_string(),
-                "master".to_string(),
-                "develop".to_string(),
-                "trunk".to_string(),
-            ],
-            default_remote: None,
-        }
-    }
-    
-    /// Create a new configuration builder (deprecated, use builder())
-    pub fn new() -> ScannerConfigBuilder {
-        Self::builder()
-    }
-
-    /// Validate the configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.max_memory_bytes == 0 {
-            return Err(ConfigError::InvalidMaxMemory);
-        }
-
-        if self.max_memory_bytes < 1024 * 1024 {
-            return Err(ConfigError::InsufficientMemory);
-        }
-
-        if self.queue_size == 0 {
-            return Err(ConfigError::InvalidQueueSize);
-        }
-
-        if self.queue_size < 10 {
-            return Err(ConfigError::InsufficientQueueSize);
-        }
-
-        Ok(())
-    }
-
-    /// Get memory usage as a human-readable string
-    pub fn memory_display(&self) -> String {
-        let mb = self.max_memory_bytes / (1024 * 1024);
-        if mb >= 1024 {
-            let gb = mb as f64 / 1024.0;
-            format!("{:.1} GB", gb)
-        } else {
-            format!("{} MB", mb)
-        }
-    }
-    
-    /// Analyze plugins and create runtime configuration
-    pub fn analyze_plugins(
-        &self,
-        plugins: &[Box<dyn PluginDataRequirements>],
-    ) -> RuntimeScannerConfig {
-        let requires_current_content = plugins.iter()
-            .any(|p| p.requires_current_file_content());
-        
-        let requires_historical_content = plugins.iter()
-            .any(|p| p.requires_historical_file_content());
-        
-        let requires_checkout = self.plugin_requirements.enable_conditional_checkout 
-            && (requires_current_content || requires_historical_content);
-        
-        // Determine effective checkout directory
-        let effective_checkout_dir = if requires_checkout {
-            self.plugin_requirements.checkout_base_dir.clone()
-                .or_else(|| Some(std::env::temp_dir().join("gstats-checkout")))
-        } else {
-            None
-        };
-        
-        RuntimeScannerConfig {
-            requires_checkout,
-            requires_current_content,
-            requires_historical_content,
-            base_config: self.clone(),
-            effective_checkout_dir,
-        }
-    }
-}
-
-impl ScannerConfigBuilder {
-    /// Set maximum memory usage in bytes
-    pub fn with_max_memory(mut self, bytes: usize) -> Self {
-        self.max_memory_bytes = bytes;
-        self
-    }
-
-    /// Set queue size
-    pub fn with_queue_size(mut self, size: usize) -> Self {
-        self.queue_size = size;
-        self
-    }
-    
-    /// Set maximum threads
-    pub fn max_threads(mut self, threads: usize) -> Self {
-        self.max_threads = Some(threads);
-        self
-    }
-    
-    /// Set chunk size (stub for API compatibility)
-    pub fn chunk_size(self, _size: usize) -> Self {
-        // TODO: Implement when chunking is added
-        self
-    }
-    
-    /// Set buffer size (stub for API compatibility)
-    pub fn buffer_size(self, _size: usize) -> Self {
-        // TODO: Implement when buffering is added
-        self
-    }
-    
-    /// Enable/disable performance mode (stub for API compatibility)
-    pub fn performance_mode(self, _enabled: bool) -> Self {
-        // TODO: Implement when performance mode is added
-        self
-    }
-
-    /// Set default branch
-    pub fn with_default_branch(mut self, branch: String) -> Self {
-        self.default_branch = Some(branch);
-        self
-    }
-
-    /// Set branch fallbacks
-    pub fn with_branch_fallbacks(mut self, fallbacks: Vec<String>) -> Self {
-        self.branch_fallbacks = fallbacks;
-        self
-    }
-
-    /// Set default remote
-    pub fn with_default_remote(mut self, remote: String) -> Self {
-        self.default_remote = Some(remote);
-        self
-    }
-
-    /// Build the configuration
-    pub fn build(self) -> Result<ScannerConfig, ConfigError> {
-        let config = ScannerConfig {
-            max_memory_bytes: self.max_memory_bytes,
-            queue_size: self.queue_size,
-            max_threads: self.max_threads,
-            default_branch: self.default_branch,
-            branch_fallbacks: self.branch_fallbacks,
-            default_remote: self.default_remote,
-            plugin_requirements: PluginRequirementsConfig::default(),
-        };
-        config.validate()?;
-        Ok(config)
-    }
 }
 
 impl RuntimeScannerConfig {

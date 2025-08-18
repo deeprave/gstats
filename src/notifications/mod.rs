@@ -43,15 +43,19 @@ pub use events::ScanEvent;
 pub use error::NotificationResult;
 
 /// Module metadata
+#[allow(dead_code)]
 pub const MODULE_NAME: &str = "Generic Notification System";
+#[allow(dead_code)]
 pub const MODULE_VERSION: &str = "1.0.0";
 
 /// Check if notification system is available
+#[allow(dead_code)]
 pub fn is_available() -> bool {
     true
 }
 
 /// Get notification system information
+#[allow(dead_code)]
 pub fn get_system_info() -> String {
     format!(
         "{} v{} - Generic pub/sub event system",

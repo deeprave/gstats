@@ -7,7 +7,6 @@
 //! They will eventually be moved to their appropriate plugin modules.
 
 pub mod complexity_calculator;
-pub mod debt_assessor;
 pub mod duplication_detector;
 pub mod format_detection;
 pub mod hotspot_detector;

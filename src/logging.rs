@@ -52,7 +52,6 @@ impl std::str::FromStr for LogFormat {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogDestination {
     Console,
-    File(PathBuf),
     Both(PathBuf),
 }
 
@@ -92,17 +91,12 @@ impl Default for LogConfig {
 
 impl LogConfig {
     /// Create a new LogConfig with color support
+    #[cfg(test)]
     pub fn with_colors(mut self, enable: bool) -> Self {
         self.enable_colours = enable;
         self
     }
     
-    /// Create a new LogConfig with specific color configuration
-    pub fn with_color_config(mut self, color_config: ColourConfig) -> Self {
-        self.colour_config = Some(color_config);
-        self.enable_colours = true;
-        self
-    }
 }
 
 /// Custom logger implementation
@@ -290,16 +284,6 @@ impl log::Log for GstatsLogger {
                 if self.should_log_to_console(level) {
                     if let Err(e) = self.write_to_console(&formatted_message) {
                         eprintln!("Console logging error: {}", e);
-                    }
-                }
-            }
-            LogDestination::File(path) => {
-                if self.should_log_to_file(level) {
-                    if let Err(e) = self.write_to_file(&formatted_message, path) {
-                        eprintln!("File logging error: {}. Falling back to console.", e);
-                        if let Err(console_err) = self.write_to_console(&formatted_message) {
-                            eprintln!("Console fallback error: {}", console_err);
-                        }
                     }
                 }
             }

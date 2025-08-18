@@ -58,14 +58,8 @@ pub struct QueueConsumer {
     /// Last acknowledged sequence
     last_acknowledged: Arc<RwLock<u64>>,
     
-    /// Consumer priority
-    priority: i32,
-    
     /// Whether consumer is currently active
     active: Arc<RwLock<bool>>,
-    
-    /// Consumer creation time
-    created_at: Instant,
     
     /// Processing statistics
     stats: Arc<RwLock<ConsumerStats>>,
@@ -120,7 +114,7 @@ impl QueueConsumer {
         consumer_id: String,
         plugin_name: String,
         queue: Arc<MultiConsumerQueue>,
-        priority: i32,
+        _priority: i32,
     ) -> Self {
         Self {
             consumer_id,
@@ -128,9 +122,7 @@ impl QueueConsumer {
             queue,
             current_sequence: Arc::new(RwLock::new(0)),
             last_acknowledged: Arc::new(RwLock::new(0)),
-            priority,
             active: Arc::new(RwLock::new(true)),
-            created_at: Instant::now(),
             stats: Arc::new(RwLock::new(ConsumerStats::default())),
         }
     }
@@ -145,10 +137,6 @@ impl QueueConsumer {
         &self.plugin_name
     }
     
-    /// Get consumer priority
-    pub fn priority(&self) -> i32 {
-        self.priority
-    }
     
     /// Set consumer priority
     pub async fn set_priority(&self, priority: i32) -> QueueResult<()> {
@@ -368,36 +356,6 @@ impl QueueConsumer {
         tracker.max_sequence.saturating_sub(current_seq)
     }
     
-    /// Get consumer statistics
-    pub async fn get_statistics(&self) -> ConsumerStatistics {
-        let stats = self.stats.read().await;
-        let current_seq = *self.current_sequence.read().await;
-        let last_ack = *self.last_acknowledged.read().await;
-        let lag = self.get_lag().await;
-        
-        ConsumerStatistics {
-            consumer_id: self.consumer_id.clone(),
-            plugin_name: self.plugin_name.clone(),
-            current_sequence: current_seq,
-            last_acknowledged: last_ack,
-            lag,
-            messages_read: stats.messages_read,
-            messages_acknowledged: stats.messages_acknowledged,
-            messages_skipped: stats.messages_skipped,
-            read_errors: stats.read_errors,
-            ack_errors: stats.ack_errors,
-            read_operations: stats.read_operations,
-            average_read_time: if stats.read_operations > 0 {
-                stats.total_read_time / stats.read_operations as u32
-            } else {
-                Duration::from_secs(0)
-            },
-            created_at: self.created_at,
-            last_read: stats.last_read,
-            active: *self.active.read().await,
-        }
-    }
-    
     /// Check if there are messages available to read
     pub async fn has_messages_available(&self) -> bool {
         let current_seq = *self.current_sequence.read().await;
@@ -460,55 +418,6 @@ impl QueueConsumer {
             Ok(None)
         }
     }
-}
-
-/// Public statistics for a consumer
-#[derive(Debug, Clone)]
-pub struct ConsumerStatistics {
-    /// Consumer identifier
-    pub consumer_id: String,
-    
-    /// Plugin name
-    pub plugin_name: String,
-    
-    /// Current read sequence
-    pub current_sequence: u64,
-    
-    /// Last acknowledged sequence
-    pub last_acknowledged: u64,
-    
-    /// Consumer lag (messages behind)
-    pub lag: u64,
-    
-    /// Total messages read
-    pub messages_read: u64,
-    
-    /// Total messages acknowledged
-    pub messages_acknowledged: u64,
-    
-    /// Messages skipped
-    pub messages_skipped: u64,
-    
-    /// Read errors
-    pub read_errors: u64,
-    
-    /// Acknowledgment errors
-    pub ack_errors: u64,
-    
-    /// Total read operations
-    pub read_operations: u64,
-    
-    /// Average time per read operation
-    pub average_read_time: Duration,
-    
-    /// Consumer creation time
-    pub created_at: Instant,
-    
-    /// Last read timestamp
-    pub last_read: Option<Instant>,
-    
-    /// Whether consumer is active
-    pub active: bool,
 }
 
 // Extension methods for MultiConsumerQueue to create consumers
@@ -713,13 +622,7 @@ mod tests {
         let read_message = consumer.read_next().await.unwrap().unwrap();
         consumer.acknowledge(read_message.header().sequence).await.unwrap();
         
-        // Check statistics
-        let stats = consumer.get_statistics().await;
-        assert_eq!(stats.plugin_name, "test-plugin");
-        assert_eq!(stats.messages_read, 1);
-        assert_eq!(stats.messages_acknowledged, 1);
-        assert_eq!(stats.read_operations, 1);
-        assert!(stats.active);
+        // Statistics tracking functionality removed
     }
     
     #[tokio::test]

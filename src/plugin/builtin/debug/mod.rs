@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use crate::plugin::traits::{
     Plugin, PluginInfo, PluginType, ConsumerPlugin, PluginDataRequirements,
-    ConsumerPreferences, PluginArgumentParser, PluginClapParser, PluginArgDefinition,
+    ConsumerPreferences, PluginClapParser,
 };
 use crate::plugin::error::{PluginError, PluginResult};
 use crate::plugin::context::{PluginContext, PluginRequest, PluginResponse};
@@ -30,7 +30,7 @@ use crate::queue::{QueueEvent, QueueConsumer};
 use crate::cli::plugin_args::{PluginArguments, PluginArgValue};
 use crate::notifications::AsyncNotificationManager;
 use crate::notifications::events::PluginEvent;
-use crate::notifications::traits::NotificationManager;
+use crate::notifications::traits::{NotificationManager, Publisher};
 use crate::display::ColourManager;
 
 mod display;
@@ -369,9 +369,7 @@ impl Plugin for DebugPlugin {
     }
     
     fn get_arg_schema(&self) -> Vec<crate::plugin::traits::PluginArgDefinition> {
-        // Forward to PluginArgumentParser implementation to maintain DRY principle
-        use crate::plugin::traits::PluginArgumentParser;
-        PluginArgumentParser::get_arg_schema(self)
+        vec![]
     }
     
     fn get_plugin_help(&self) -> Option<String> {
@@ -398,6 +396,31 @@ impl Plugin for DebugPlugin {
                 is_default: true,
             }
         ]
+    }
+}
+
+#[async_trait]
+impl Publisher<PluginEvent> for DebugPlugin {
+    async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
+        if let Some(ref manager) = self.notification_manager {
+            manager.publish(event).await
+        } else {
+            log::warn!("No notification manager available for publishing events");
+            Ok(())
+        }
+    }
+    
+    async fn publish_to(&self, event: PluginEvent, subscriber_id: &str) -> crate::notifications::NotificationResult<()> {
+        if let Some(ref manager) = self.notification_manager {
+            manager.publish_to(event, subscriber_id).await
+        } else {
+            log::warn!("No notification manager available for publishing events");
+            Ok(())
+        }
+    }
+    
+    fn publisher_id(&self) -> &str {
+        "debug"
     }
 }
 
@@ -549,7 +572,7 @@ impl ConsumerPlugin for DebugPlugin {
                 // Create and publish data export if export is enabled and we have a notification manager
                 let export_enabled = *self.export_enabled.read().await;
                 if export_enabled {
-                    if let Some(ref manager) = self.notification_manager {
+                    if self.notification_manager.is_some() {
                         if let Ok(export_data) = self.create_data_export(scan_id).await {
                             let event = PluginEvent::DataReady {
                                 plugin_id: "debug".to_string(),
@@ -557,7 +580,7 @@ impl ConsumerPlugin for DebugPlugin {
                                 export: Arc::new(export_data),
                             };
                             
-                            if let Err(e) = manager.publish(event).await {
+                            if let Err(e) = self.publish(event).await {
                                 log::warn!("Failed to publish DataReady event: {}", e);
                             } else {
                                 log::debug!("Published DataReady event for debug plugin");
@@ -640,113 +663,6 @@ impl PluginDataRequirements for DebugPlugin {
     
     fn handles_binary_files(&self) -> bool {
         false // Only display metadata for binary files
-    }
-}
-
-#[async_trait]
-impl PluginArgumentParser for DebugPlugin {
-    async fn parse_plugin_args(&mut self, args: &[String]) -> PluginResult<()> {
-        // Parse arguments into DebugConfig
-        log::info!("DebugPlugin: parse_plugin_args called with args: {:?}", args);
-        let mut config = self.config.write().await;
-        
-        for arg in args {
-            match arg.as_str() {
-                "--verbose" | "-v" => config.verbose = true,
-                "--full-commit-message" => config.full_commit_message = true,
-                "--file-diff" => config.file_diff = true,
-                "--raw-data" => config.raw_data = true,
-                "--message-index" => config.message_index = true,
-                "--compact" => {
-                    config.compact_mode = true;
-                    log::info!("DebugPlugin: Compact mode enabled");
-                },
-                "--export" => {
-                    // Enable export functionality
-                    let mut export_enabled = self.export_enabled.write().await;
-                    *export_enabled = true;
-                    log::info!("Debug plugin: Export functionality enabled");
-                }
-                arg if arg.starts_with("--max-lines=") => {
-                    let value = arg.strip_prefix("--max-lines=").unwrap();
-                    config.max_display_lines = value.parse().unwrap_or(100);
-                }
-                _ => {
-                    log::warn!("Unknown debug plugin argument: {}", arg);
-                }
-            }
-        }
-        
-        Ok(())
-    }
-    
-    fn get_arg_schema(&self) -> Vec<PluginArgDefinition> {
-        vec![
-            PluginArgDefinition {
-                name: "--verbose".to_string(),
-                description: "Enable verbose output".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["-v".to_string(), "--verbose".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--full-commit-message".to_string(),
-                description: "Show complete commit messages".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--full-commit-message".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--file-diff".to_string(),
-                description: "Display file diffs if available".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--file-diff".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--raw-data".to_string(),
-                description: "Show all raw message fields".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--raw-data".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--message-index".to_string(),
-                description: "Display message sequence numbers".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--message-index".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--compact".to_string(),
-                description: "Use compact display mode".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--compact".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--max-lines".to_string(),
-                description: "Maximum lines to display per message".to_string(),
-                required: false,
-                default_value: Some("100".to_string()),
-                arg_type: "number".to_string(),
-                examples: vec!["--max-lines=50".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--export".to_string(),
-                description: "Enable data export interface to export plugin (default: console output only)".to_string(),
-                required: false,
-                default_value: Some("false".to_string()),
-                arg_type: "boolean".to_string(),
-                examples: vec!["--export".to_string()],
-            },
-        ]
     }
 }
 
@@ -964,16 +880,20 @@ mod tests {
     
     #[tokio::test]
     async fn test_debug_plugin_argument_parsing() {
+        use crate::plugin::traits::PluginClapParser;
+        
         let mut plugin = DebugPlugin::new();
         
-        let args = vec![
-            "--verbose".to_string(),
-            "--full-commit-message".to_string(),
-            "--message-index".to_string(),
-            "--max-lines=50".to_string(),
-        ];
+        let command = PluginClapParser::build_clap_command(&plugin);
+        let matches = command.try_get_matches_from(vec![
+            "debug",
+            "--verbose",
+            "--full-commit-message", 
+            "--message-index",
+            "--max-lines=50"
+        ]).unwrap();
         
-        plugin.parse_plugin_args(&args).await.unwrap();
+        plugin.configure_from_matches(&matches).await.unwrap();
         
         let config = plugin.config.read().await;
         assert!(config.verbose);
@@ -1064,8 +984,14 @@ mod tests {
         assert!(*plugin.export_enabled.read().await);
         
         // Test argument parsing sets export mode
-        let args = vec!["--export".to_string(), "--verbose".to_string()];
-        plugin.parse_plugin_args(&args).await.unwrap();
+        use crate::plugin::traits::PluginClapParser;
+        let command = PluginClapParser::build_clap_command(&plugin);
+        let matches = command.try_get_matches_from(vec![
+            "debug",
+            "--export",
+            "--verbose"
+        ]).unwrap();
+        plugin.configure_from_matches(&matches).await.unwrap();
         
         assert!(*plugin.export_enabled.read().await);
         {
@@ -1076,7 +1002,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_debug_plugin_dataready_event_publishing() {
-        use crate::notifications::{AsyncNotificationManager, traits::NotificationManager};
+        use crate::notifications::AsyncNotificationManager;
         use crate::notifications::events::PluginEvent;
         use crate::queue::notifications::QueueEvent;
         

@@ -2,6 +2,8 @@
 //! 
 //! Hybrid filtering system with built-in filters and functional callbacks using zero-cost abstractions.
 
+#![allow(dead_code)]
+
 use std::ops::ControlFlow;
 use std::time::SystemTime;
 use std::path::Path;

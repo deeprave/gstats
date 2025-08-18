@@ -65,16 +65,6 @@ where
         }
     }
     
-    /// Create a new notification manager with custom configuration
-    pub fn with_config(default_timeout: Duration, max_subscribers: Option<usize>) -> Self {
-        Self {
-            subscribers: Arc::new(RwLock::new(HashMap::new())),
-            global_stats: Arc::new(RwLock::new(DeliveryStats::default())),
-            default_timeout,
-            shutdown: Arc::new(RwLock::new(false)),
-            max_subscribers,
-        }
-    }
     
     /// Check if the system is shutting down
     async fn is_shutting_down(&self) -> bool {
@@ -100,14 +90,6 @@ where
             if subscriber_info.last_event_times.len() >= rate_limit.max_events_per_second as usize {
                 match rate_limit.overflow_action {
                     OverflowAction::Drop => {
-                        subscriber_info.stats.events_dropped += 1;
-                        return false;
-                    }
-                    OverflowAction::Error => {
-                        return false;
-                    }
-                    OverflowAction::Queue => {
-                        // For now, treat queue as drop - could implement actual queuing later
                         subscriber_info.stats.events_dropped += 1;
                         return false;
                     }
@@ -176,45 +158,6 @@ where
         }
     }
     
-    /// Get delivery statistics
-    pub async fn get_stats(&self) -> DeliveryStats {
-        self.global_stats.read().await.clone()
-    }
-    
-    /// Get subscriber-specific statistics
-    pub async fn get_subscriber_stats(&self, subscriber_id: &str) -> Option<SubscriberStats> {
-        let subscribers = self.subscribers.read().await;
-        subscribers.get(subscriber_id).map(|info| info.stats.clone())
-    }
-    
-    /// List all subscriber IDs
-    pub async fn list_subscribers(&self) -> Vec<String> {
-        let subscribers = self.subscribers.read().await;
-        subscribers.keys().cloned().collect()
-    }
-    
-    /// Clear all statistics
-    pub async fn clear_stats(&self) {
-        let mut global_stats = self.global_stats.write().await;
-        *global_stats = DeliveryStats::default();
-        
-        let mut subscribers = self.subscribers.write().await;
-        for subscriber_info in subscribers.values_mut() {
-            subscriber_info.stats = SubscriberStats::default();
-        }
-    }
-    
-    /// Unsubscribe a subscriber by ID (public method that works with &self)
-    pub async fn unsubscribe_by_id(&self, subscriber_id: &str) -> NotificationResult<()> {
-        let mut subscribers = self.subscribers.write().await;
-        
-        if subscribers.remove(subscriber_id).is_some() {
-            debug!("Unsubscribed '{}' from notifications", subscriber_id);
-            Ok(())
-        } else {
-            Err(NotificationError::subscriber_not_found(subscriber_id))
-        }
-    }
 }
 
 #[async_trait::async_trait]

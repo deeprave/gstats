@@ -8,7 +8,7 @@ pub mod config;
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
-    PluginResult, PluginError, traits::{PluginType, PluginArgumentParser, PluginClapParser, PluginArgDefinition, PluginDataRequirements}
+    PluginResult, PluginError, traits::{PluginType, PluginClapParser, PluginDataRequirements}
 };
 use crate::plugin::data_export::{PluginDataExport, DataPayload, ColumnType};
 use crate::plugin::data_coordinator::DataCoordinator;
@@ -672,9 +672,7 @@ impl Plugin for ExportPlugin {
     }
     
     fn get_arg_schema(&self) -> Vec<crate::plugin::traits::PluginArgDefinition> {
-        // Forward to PluginArgumentParser implementation to maintain DRY principle
-        use crate::plugin::traits::PluginArgumentParser;
-        PluginArgumentParser::get_arg_schema(self)
+        vec![]
     }
     
     fn get_plugin_help(&self) -> Option<String> {
@@ -757,89 +755,6 @@ impl Subscriber<PluginEvent> for ExportPlugin {
                 Ok(())
             }
         }
-    }
-}
-
-#[async_trait]
-impl PluginArgumentParser for ExportPlugin {
-    fn get_arg_schema(&self) -> Vec<PluginArgDefinition> {
-        vec![
-            PluginArgDefinition {
-                name: "--outfile".to_string(),
-                description: "Output file path (if not specified, output to console)".to_string(),
-                required: false,
-                default_value: None,
-                arg_type: "path".to_string(),
-                examples: vec!["report.json".to_string(), "data.csv".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--format".to_string(),
-                description: "Output format (json, csv, xml, yaml, html, markdown)".to_string(),
-                required: false,
-                default_value: Some("console".to_string()),
-                arg_type: "string".to_string(),
-                examples: vec!["json".to_string(), "csv".to_string()],
-            },
-            PluginArgDefinition {
-                name: "--template".to_string(),
-                description: "Template file for custom formatting".to_string(),
-                required: false,
-                default_value: None,
-                arg_type: "path".to_string(),
-                examples: vec!["report.tera".to_string()],
-            },
-        ]
-    }
-    
-    async fn parse_plugin_args(&mut self, args: &[String]) -> PluginResult<()> {
-        let mut config = self.export_config.write().await;
-        
-        for i in 0..args.len() {
-            match args[i].as_str() {
-                "--outfile" | "-o" => {
-                    if i + 1 < args.len() {
-                        config.output_file = Some(PathBuf::from(&args[i + 1]));
-                        
-                        // Auto-detect format from extension
-                        match self.format_detector.detect_format_from_path(&args[i + 1]) {
-                            FormatDetectionResult::Detected(format) => {
-                                config.output_format = format;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                "--format" | "-f" => {
-                    if i + 1 < args.len() {
-                        config.output_format = match args[i + 1].to_lowercase().as_str() {
-                            "json" => ExportFormat::Json,
-                            "csv" => ExportFormat::Csv,
-                            "xml" => ExportFormat::Xml,
-                            "yaml" | "yml" => ExportFormat::Yaml,
-                            "html" | "htm" => ExportFormat::Html,
-                            "markdown" | "md" => ExportFormat::Markdown,
-                            _ => return Err(PluginError::invalid_argument(
-                                "--format",
-                                &format!("Unknown format: {}", args[i + 1])
-                            )),
-                        };
-                    }
-                }
-                "--template" | "-t" => {
-                    if i + 1 < args.len() {
-                        let template_path = PathBuf::from(&args[i + 1]);
-                        config.template_file = Some(template_path.clone());
-                        
-                        // Load template
-                        let mut engine = self.template_engine.write().await;
-                        engine.load_template(&template_path)?;
-                    }
-                }
-                _ => {}
-            }
-        }
-        
-        Ok(())
     }
 }
 
@@ -942,7 +857,7 @@ impl Default for ExportPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notifications::{AsyncNotificationManager, traits::NotificationManager};
+    use crate::notifications::AsyncNotificationManager;
     use crate::notifications::events::PluginEvent;
     use crate::plugin::data_export::{PluginDataExport, DataPayload, DataSchema, ColumnDef, ColumnType, Row, Value};
     use crate::scanner::{ScannerConfig, QueryParams};
@@ -1140,7 +1055,9 @@ mod tests {
         let data_vec = vec![export_data];
         
         // Test with color manager enabled
-        let color_manager = ColourManager::with_colours(true);
+        let mut config = crate::display::ColourConfig::default();
+        config.set_enabled(true);
+        let color_manager = ColourManager::with_config(config);
         let console_result = plugin.format_console_with_colors(&data_vec, &color_manager).await;
         assert!(console_result.is_ok());
         let console_output = console_result.unwrap();
@@ -1151,7 +1068,9 @@ mod tests {
         assert!(console_output.contains("value"));
         
         // Test with color manager disabled
-        let no_color_manager = ColourManager::with_colours(false);
+        let mut no_config = crate::display::ColourConfig::default();
+        no_config.set_enabled(false);
+        let no_color_manager = ColourManager::with_config(no_config);
         let no_color_result = plugin.format_console_with_colors(&data_vec, &no_color_manager).await;
         assert!(no_color_result.is_ok());
         let no_color_output = no_color_result.unwrap();

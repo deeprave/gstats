@@ -233,64 +233,6 @@ impl Default for PluginArgumentParser {
     }
 }
 
-impl PluginArgValue {
-    /// Check if this is a flag value
-    pub fn is_flag(&self) -> bool {
-        matches!(self, PluginArgValue::Flag(_))
-    }
-    
-    /// Check if this is a string value
-    pub fn is_string(&self) -> bool {
-        matches!(self, PluginArgValue::String(_))
-    }
-    
-    /// Check if this is a number value
-    pub fn is_number(&self) -> bool {
-        matches!(self, PluginArgValue::Number(_))
-    }
-    
-    /// Check if this is a multiple value
-    pub fn is_multiple(&self) -> bool {
-        matches!(self, PluginArgValue::Multiple(_))
-    }
-    
-    /// Get the string representation of the value
-    pub fn as_string(&self) -> String {
-        match self {
-            PluginArgValue::Flag(b) => b.to_string(),
-            PluginArgValue::String(s) => s.clone(),
-            PluginArgValue::Number(n) => n.to_string(),
-            PluginArgValue::Multiple(values) => values.join(","),
-        }
-    }
-    
-    /// Try to get the value as a boolean
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            PluginArgValue::Flag(b) => Some(*b),
-            PluginArgValue::String(s) => {
-                match s.to_lowercase().as_str() {
-                    "true" | "yes" | "1" | "on" => Some(true),
-                    "false" | "no" | "0" | "off" => Some(false),
-                    _ => None,
-                }
-            }
-            PluginArgValue::Number(n) => Some(*n != 0),
-            _ => None,
-        }
-    }
-    
-    /// Try to get the value as a number
-    pub fn as_number(&self) -> Option<i64> {
-        match self {
-            PluginArgValue::Number(n) => Some(*n),
-            PluginArgValue::String(s) => s.parse().ok(),
-            PluginArgValue::Flag(true) => Some(1),
-            PluginArgValue::Flag(false) => Some(0),
-            _ => None,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -420,25 +362,6 @@ mod tests {
         assert_eq!(config.arguments.len(), 0);
     }
     
-    #[test]
-    fn test_plugin_arg_value_conversions() {
-        let flag_true = PluginArgValue::Flag(true);
-        assert!(flag_true.is_flag());
-        assert_eq!(flag_true.as_bool(), Some(true));
-        assert_eq!(flag_true.as_number(), Some(1));
-        
-        let string_val = PluginArgValue::String("test".to_string());
-        assert!(string_val.is_string());
-        assert_eq!(string_val.as_string(), "test");
-        
-        let number_val = PluginArgValue::Number(42);
-        assert!(number_val.is_number());
-        assert_eq!(number_val.as_number(), Some(42));
-        assert_eq!(number_val.as_bool(), Some(true));
-        
-        let zero_val = PluginArgValue::Number(0);
-        assert_eq!(zero_val.as_bool(), Some(false));
-    }
     
     #[test]
     fn test_configured_plugins_list() {

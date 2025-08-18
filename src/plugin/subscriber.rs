@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use crate::notifications::{ScanEvent, NotificationResult};
-use crate::notifications::traits::Subscriber;
+use crate::notifications::traits::{Subscriber, NotificationManager};
 use crate::plugin::traits::Plugin;
 
 /// Wrapper that implements Subscriber<ScanEvent> for plugins
@@ -216,7 +216,7 @@ impl PluginSubscriber {
             let notification_manager_guard = self.notification_manager.read().await;
             if let Some(ref notification_manager) = *notification_manager_guard {
                 println!("Notification manager reference found, attempting to unsubscribe plugin {}", self.plugin_name);
-                if let Err(e) = notification_manager.unsubscribe_by_id(&self.subscriber_id).await {
+                if let Err(e) = notification_manager.unsubscribe(&self.subscriber_id).await {
                     log::error!("Failed to unsubscribe plugin {} from notifications: {}", self.plugin_name, e);
                 } else {
                     println!("Plugin {} successfully unsubscribed from notifications", self.plugin_name);

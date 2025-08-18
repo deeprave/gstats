@@ -14,7 +14,7 @@ use crate::queue::{QueueConsumer, QueueEvent};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
 use crate::notifications::AsyncNotificationManager;
 use crate::notifications::events::PluginEvent;
-use crate::notifications::traits::NotificationManager;
+use crate::notifications::traits::{NotificationManager, Publisher};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -168,7 +168,7 @@ impl CommitsPlugin {
                           count, author_count, scan_id);
                 
                 // Create and publish data export if we have a notification manager
-                if let Some(ref manager) = self.notification_manager {
+                if self.notification_manager.is_some() {
                     if let Ok(export_data) = self.create_data_export(&scan_id).await {
                         let event = PluginEvent::DataReady {
                             plugin_id: "commits".to_string(),
@@ -176,7 +176,7 @@ impl CommitsPlugin {
                             export: Arc::new(export_data),
                         };
                         
-                        if let Err(e) = manager.publish(event).await {
+                        if let Err(e) = self.publish(event).await {
                             log::warn!("Failed to publish DataReady event: {}", e);
                         } else {
                             log::debug!("Published DataReady event for commits plugin");
@@ -529,6 +529,31 @@ impl Plugin for CommitsPlugin {
     }
 }
 
+#[async_trait]
+impl Publisher<PluginEvent> for CommitsPlugin {
+    async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
+        if let Some(ref manager) = self.notification_manager {
+            manager.publish(event).await
+        } else {
+            log::warn!("No notification manager available for publishing events");
+            Ok(())
+        }
+    }
+    
+    async fn publish_to(&self, event: PluginEvent, subscriber_id: &str) -> crate::notifications::NotificationResult<()> {
+        if let Some(ref manager) = self.notification_manager {
+            manager.publish_to(event, subscriber_id).await
+        } else {
+            log::warn!("No notification manager available for publishing events");
+            Ok(())
+        }
+    }
+    
+    fn publisher_id(&self) -> &str {
+        "commits"
+    }
+}
+
 /// Data requirements implementation for CommitsPlugin
 /// This plugin only needs commit metadata, not file content
 impl PluginDataRequirements for CommitsPlugin {
@@ -618,7 +643,7 @@ impl ConsumerPlugin for CommitsPlugin {
                 );
                 
                 // Create and publish data export if we have a notification manager
-                if let Some(ref manager) = self.notification_manager {
+                if self.notification_manager.is_some() {
                     if let Ok(export_data) = self.create_data_export(scan_id).await {
                         let event = PluginEvent::DataReady {
                             plugin_id: "commits".to_string(),
@@ -626,7 +651,7 @@ impl ConsumerPlugin for CommitsPlugin {
                             export: Arc::new(export_data),
                         };
                         
-                        if let Err(e) = manager.publish(event).await {
+                        if let Err(e) = self.publish(event).await {
                             log::warn!("Failed to publish DataReady event: {}", e);
                         } else {
                             log::debug!("Published DataReady event for commits plugin");

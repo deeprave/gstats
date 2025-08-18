@@ -14,7 +14,7 @@ use crate::plugin::data_export::{
 };
 use crate::notifications::AsyncNotificationManager;
 use crate::notifications::events::PluginEvent;
-use crate::notifications::traits::NotificationManager;
+use crate::notifications::traits::{NotificationManager, Publisher};
 use crate::queue::{QueueConsumer, QueueEvent};
 use crate::scanner::async_engine::processors::{EventProcessor, EventProcessingCoordinator};
 use crate::plugin::processors::{
@@ -289,7 +289,7 @@ impl ConsumerPlugin for MetricsPlugin {
                 );
                 
                 // Create and publish data export if we have a notification manager
-                if let Some(ref manager) = self.notification_manager {
+                if self.notification_manager.is_some() {
                     if let Ok(export_data) = self.create_data_export(scan_id).await {
                         let event = PluginEvent::DataReady {
                             plugin_id: "metrics".to_string(),
@@ -297,7 +297,7 @@ impl ConsumerPlugin for MetricsPlugin {
                             export: Arc::new(export_data),
                         };
                         
-                        if let Err(e) = manager.publish(event).await {
+                        if let Err(e) = self.publish(event).await {
                             log::warn!("Failed to publish DataReady event: {}", e);
                         } else {
                             log::debug!("Published DataReady event for metrics plugin");
@@ -497,6 +497,31 @@ impl Plugin for MetricsPlugin {
     fn build_clap_command(&self) -> Option<clap::Command> {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))
+    }
+}
+
+#[async_trait]
+impl Publisher<PluginEvent> for MetricsPlugin {
+    async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
+        if let Some(ref manager) = self.notification_manager {
+            manager.publish(event).await
+        } else {
+            log::warn!("No notification manager available for publishing events");
+            Ok(())
+        }
+    }
+    
+    async fn publish_to(&self, event: PluginEvent, subscriber_id: &str) -> crate::notifications::NotificationResult<()> {
+        if let Some(ref manager) = self.notification_manager {
+            manager.publish_to(event, subscriber_id).await
+        } else {
+            log::warn!("No notification manager available for publishing events");
+            Ok(())
+        }
+    }
+    
+    fn publisher_id(&self) -> &str {
+        "metrics"
     }
 }
 

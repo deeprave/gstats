@@ -23,6 +23,7 @@ pub struct PluginArgumentSegment {
 #[derive(Debug, Clone)]
 pub struct SegmentedArgs {
     /// Global arguments (before any plugin)
+    #[allow(dead_code)] // Used in tests
     pub global_args: Vec<String>,
     /// Plugin-specific argument segments
     pub plugin_segments: Vec<PluginArgumentSegment>,
@@ -168,13 +169,8 @@ impl CommandSegmenter {
         segment.args.contains(&"--help".to_string()) || segment.args.contains(&"-h".to_string())
     }
     
-    /// Get plugin help for a specific plugin
-    pub async fn get_plugin_help(&self, plugin_name: &str, function_name: Option<&str>) -> PluginResult<String> {
-        self.get_plugin_help_with_colors(plugin_name, function_name, false, false).await
-    }
-
     /// Get plugin help for a specific plugin with color support
-    pub async fn get_plugin_help_with_colors(&self, plugin_name: &str, function_name: Option<&str>, no_color: bool, color: bool) -> PluginResult<String> {
+    pub async fn get_plugin_help_with_colors(&self, plugin_name: &str, _function_name: Option<&str>, no_color: bool, color: bool) -> PluginResult<String> {
         // Try to create the plugin and get its help
         if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin(plugin_name).await {
             // Use the new color-aware help method

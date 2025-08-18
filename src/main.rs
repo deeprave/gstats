@@ -207,11 +207,7 @@ fn run() -> Result<()> {
 /// 2. Segments command line by plugin boundaries 
 /// 3. Handles plugin-specific help routing
 /// 4. Parses global arguments using traditional clap derive
-fn segment_and_parse_args(initial_args: &cli::initial_args::InitialArgs) -> Result<cli::Args> {
-    use crate::cli::converter::PluginConfig;
-    use crate::cli::plugin_handler::PluginHandler;
-    use crate::cli::command_segmenter::CommandSegmenter;
-    
+fn segment_and_parse_args(_initial_args: &cli::initial_args::InitialArgs) -> Result<cli::Args> {
     // Plugin help is now handled earlier in run(), so we can proceed with normal parsing
     
     // For now, fall back to traditional parsing for global arguments

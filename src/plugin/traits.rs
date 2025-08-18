@@ -58,7 +58,7 @@ pub trait Plugin: Send + Sync {
     /// 
     /// This method generates help text with explicit color control.
     /// Plugins that implement PluginClapParser should override this.
-    fn get_plugin_help_with_colors(&self, no_color: bool, color: bool) -> Option<String> {
+    fn get_plugin_help_with_colors(&self, _no_color: bool, _color: bool) -> Option<String> {
         // Default implementation just calls get_plugin_help
         // Plugins should override this to provide color-aware help
         self.get_plugin_help()

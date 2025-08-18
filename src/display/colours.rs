@@ -21,31 +21,11 @@ impl ColourManager {
         Self { config, palette }
     }
     
-    /// Create a ColourManager with explicit colour control
-    pub fn with_colours(enabled: bool) -> Self {
-        let mut config = ColourConfig::default();
-        config.set_enabled(enabled);
-        let palette = config.get_palette();
-        Self { config, palette }
-    }
     
     /// Create a ColourManager with a specific configuration
     pub fn with_config(config: ColourConfig) -> Self {
         let palette = config.get_palette();
         Self { config, palette }
-    }
-    
-    /// Create a ColourManager from CLI arguments and optional configuration
-    pub fn from_args_and_config(no_color_flag: bool, config: Option<ColourConfig>) -> Self {
-        let mut final_config = config.unwrap_or_default();
-        
-        // CLI --no-color flag overrides everything
-        if no_color_flag {
-            final_config.set_enabled(false);
-        }
-        
-        let palette = final_config.get_palette();
-        Self { config: final_config, palette }
     }
     
     /// Create a ColourManager from both CLI color flags and optional configuration
@@ -76,22 +56,6 @@ impl ColourManager {
     /// Check if colours are enabled
     pub fn colours_enabled(&self) -> bool {
         self.config.should_use_colours()
-    }
-    
-    /// Get the current colour configuration
-    pub fn config(&self) -> &ColourConfig {
-        &self.config
-    }
-    
-    /// Get the current colour palette
-    pub fn palette(&self) -> &ColourPalette {
-        &self.palette
-    }
-    
-    /// Update the colour configuration
-    pub fn set_config(&mut self, config: ColourConfig) {
-        self.palette = config.get_palette();
-        self.config = config;
     }
     
     /// Format text as an error using the configured error colour
@@ -217,7 +181,9 @@ mod tests {
     
     #[test]
     fn test_colour_manager_explicit_disable() {
-        let manager = ColourManager::with_colours(false);
+        let mut config = ColourConfig::default();
+        config.set_enabled(false);
+        let manager = ColourManager::with_config(config);
         assert!(!manager.colours_enabled());
     }
     
@@ -238,7 +204,9 @@ mod tests {
         // Force colors for testing by setting FORCE_COLOR env var
         env::set_var("FORCE_COLOR", "1");
         
-        let manager = ColourManager::with_colours(true);
+        let mut config = ColourConfig::default();
+        config.set_enabled(true);
+        let manager = ColourManager::with_config(config);
         
         let error_text = manager.error("test error");
         let warning_text = manager.warning("test warning");
@@ -274,7 +242,9 @@ mod tests {
     
     #[test]
     fn test_colour_formatting_disabled() {
-        let manager = ColourManager::with_colours(false);
+        let mut config = ColourConfig::default();
+        config.set_enabled(false);
+        let manager = ColourManager::with_config(config);
         
         let error_text = manager.error("test error");
         let warning_text = manager.warning("test warning");

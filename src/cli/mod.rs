@@ -13,8 +13,6 @@ pub mod help_formatter;
 pub mod global_flags;
 pub mod plugin_args;
 pub mod initial_args;
-pub mod dynamic_builder;
-pub mod matches_parser;
 pub mod command_segmenter;
 
 #[cfg(test)]

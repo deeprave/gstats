@@ -1,5 +1,7 @@
 //! Author-specific report formatting
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use crate::display;
 

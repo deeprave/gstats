@@ -1,5 +1,7 @@
 //! Report generation and formatting
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use crate::display;
 use prettytable::{Table, Row, Cell, format};

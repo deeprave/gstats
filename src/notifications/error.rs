@@ -29,8 +29,6 @@ pub enum NotificationError {
     /// System shutdown in progress
     SystemShutdown,
     
-    /// Invalid event type
-    InvalidEventType(String),
     
     /// Timeout occurred
     Timeout {
@@ -62,9 +60,6 @@ impl fmt::Display for NotificationError {
             }
             NotificationError::SystemShutdown => {
                 write!(f, "Notification system is shutting down")
-            }
-            NotificationError::InvalidEventType(event_type) => {
-                write!(f, "Invalid event type: {}", event_type)
             }
             NotificationError::Timeout { operation, duration_ms } => {
                 write!(f, "Operation '{}' timed out after {}ms", operation, duration_ms)

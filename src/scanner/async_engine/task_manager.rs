@@ -639,23 +639,6 @@ impl TaskManager {
     }
     
     
-    /// Get resource utilization statistics
-    pub async fn get_resource_stats(&self) -> TaskResourceStats {
-        let pending_count = self.pending_task_count().await;
-        let active_count = self.active_task_count();
-        
-        let memory_pressure = self.estimate_memory_pressure();
-        
-        TaskResourceStats {
-            active_tasks: active_count,
-            pending_tasks: pending_count,
-            completed_tasks: self.completed_task_count().await,
-            memory_pressure,
-            total_capacity: self.constraints.max_total_tasks,
-            semaphore_permits: self.semaphore.available_permits(),
-        }
-    }
-    
     /// Estimate current memory pressure based on task activity
     fn estimate_memory_pressure(&self) -> MemoryPressureLevel {
         let active_count = self.active_task_count();
@@ -740,17 +723,6 @@ impl TaskManager {
         log::info!("Cancelled {} low-priority tasks due to resource pressure", cancelled);
         Ok(())
     }
-}
-
-/// Resource utilization statistics
-#[derive(Debug, Clone)]
-pub struct TaskResourceStats {
-    pub active_tasks: usize,
-    pub pending_tasks: usize,
-    pub completed_tasks: usize,
-    pub memory_pressure: MemoryPressureLevel,
-    pub total_capacity: usize,
-    pub semaphore_permits: usize,
 }
 
 #[cfg(test)]
@@ -922,23 +894,6 @@ mod tests {
         assert_eq!(manager.active_task_count(), 2);
     }
     
-    #[tokio::test]
-    async fn test_resource_stats() {
-        let manager = TaskManager::new(10);
-        
-        // Spawn a task
-        let _task_id = manager.spawn_task("stats-task".to_string(), |_cancel| async {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            Ok(())
-        }).await.unwrap();
-        
-        let stats = manager.get_resource_stats().await;
-        assert_eq!(stats.active_tasks, 1);
-        assert_eq!(stats.pending_tasks, 0);
-        assert_eq!(stats.total_capacity, 10);
-        assert!(stats.semaphore_permits < 10); // One permit should be taken
-        assert_eq!(stats.memory_pressure, MemoryPressureLevel::Normal);
-    }
     
     #[tokio::test]
     async fn test_pressure_detection() {

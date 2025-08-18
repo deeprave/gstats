@@ -21,7 +21,7 @@ use gstats::notifications::traits::{Subscriber, NotificationManager};
 #[tokio::test]
 async fn test_complete_export_pipeline() {
     // Create notification manager
-    let mut notification_manager = AsyncNotificationManager::new();
+    let notification_manager = AsyncNotificationManager::new();
     
     // Create export plugin
     let export_plugin = Arc::new(ExportPlugin::new());
@@ -142,7 +142,7 @@ async fn test_multi_plugin_coordination_timeout() {
 #[tokio::test] 
 async fn test_notification_system_resilience() {
     // Test that the notification system handles errors gracefully
-    let mut notification_manager = AsyncNotificationManager::new();
+    let notification_manager = AsyncNotificationManager::new();
     
     // Create a failing subscriber for testing error handling
     let failing_subscriber = Arc::new(FailingSubscriber::new());

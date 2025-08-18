@@ -19,7 +19,6 @@ pub struct PluginHandler {
     _registry: SharedPluginRegistry,
     discovery: Box<dyn PluginDiscovery>,
     command_mapper: CommandMapper,
-    plugin_config: Option<PluginConfig>,
 }
 
 impl PluginHandler {
@@ -50,7 +49,6 @@ impl PluginHandler {
             _registry: registry,
             discovery,
             command_mapper,
-            plugin_config: None,
         })
     }
     
@@ -103,7 +101,6 @@ impl PluginHandler {
             _registry: registry,
             discovery,
             command_mapper,
-            plugin_config: Some(config),
         })
     }
     
@@ -119,7 +116,6 @@ impl PluginHandler {
             _registry: registry,
             discovery,
             command_mapper,
-            plugin_config: None,
         })
     }
     
@@ -246,38 +242,6 @@ impl PluginHandler {
     
     /// Register built-in plugins with their advertised functions  
     /// For CLI help purposes, we need to instantiate plugins to get their functions
-    async fn register_builtin_plugins(&mut self) -> PluginResult<()> {
-        // Get exclusion list from configuration
-        let excluded = if let Some(ref config) = self.plugin_config {
-            &config.plugin_exclude
-        } else {
-            &Vec::new()
-        };
-        
-        let mut registered: Vec<String> = Vec::new();
-        
-        // Get builtin plugin names from discovery
-        let builtin_names = crate::plugin::builtin::get_builtin_plugins();
-        
-        for name in builtin_names {
-            // Skip if plugin is excluded by configuration
-            if excluded.contains(&name.to_string()) {
-                debug!("Excluded built-in plugin: {}", name);
-                continue;
-            }
-            
-            // Create the plugin instance to get its advertised functions
-            if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin(name).await {
-                let functions = plugin.advertised_functions();
-                self.command_mapper.register_plugin(name, functions);
-                registered.push(name.to_string());
-                debug!("Registered builtin plugin for command mapping: {}", name);
-            }
-        }
-        
-        debug!("Registered built-in plugins for command mapping: {}", registered.join(", "));
-        Ok(())
-    }
     
     /// Extract functions from plugin descriptor (for external plugins)
     fn extract_functions_from_descriptor(&self, descriptor: &PluginDescriptor) -> Vec<PluginFunction> {
@@ -332,68 +296,6 @@ impl PluginHandler {
             .into_iter()
             .map(|report| report.to_string())
             .collect()
-    }
-    
-    /// Get argument schema for a specific plugin using proper discovery
-    /// 
-    /// This method provides access to the argument definitions for any discovered plugin.
-    /// It uses the unified plugin discovery system to maintain SOLID principles and
-    /// consistent plugin handling between builtin and external plugins.
-    pub async fn get_plugin_arg_schema(&self, plugin_name: &str) -> PluginResult<Vec<crate::plugin::traits::PluginArgDefinition>> {
-        // First, discover all plugins using the unified discovery system
-        let discovered_plugins = self.discovery.discover_plugins().await?;
-        
-        // Find the plugin by name in discovered plugins
-        for descriptor in &discovered_plugins {
-            if descriptor.info.name == plugin_name {
-                // Use the builtin plugin creation system to get argument schema
-                // This approach respects the existing architecture while accessing schemas
-                return self.get_plugin_schema_for_discovered_plugin(&descriptor.info.name).await;
-            }
-        }
-        
-        Err(PluginError::PluginNotFound {
-            plugin_name: plugin_name.to_string(),
-        })
-    }
-    
-    /// Helper method to get plugin argument schema for a discovered plugin
-    /// 
-    /// This method creates a temporary plugin instance to access its argument schema.
-    /// It maintains the principle of using the unified plugin creation system.
-    async fn get_plugin_schema_for_discovered_plugin(&self, plugin_name: &str) -> PluginResult<Vec<crate::plugin::traits::PluginArgDefinition>> {
-        // Use the proper plugin creation mechanism and access schema through Plugin trait
-        if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin(plugin_name).await {
-            // Now we can use the unified Plugin trait method
-            Ok(plugin.get_arg_schema())
-        } else {
-            // External plugins - for future implementation
-            Ok(vec![])
-        }
-    }
-    
-    /// Get argument schemas for all discovered plugins
-    /// 
-    /// Returns a mapping of plugin names to their argument definitions.
-    /// This uses the unified plugin discovery system to ensure consistency.
-    pub async fn get_all_plugin_arg_schemas(&self) -> PluginResult<std::collections::HashMap<String, Vec<crate::plugin::traits::PluginArgDefinition>>> {
-        use std::collections::HashMap;
-        
-        let mut schemas = HashMap::new();
-        
-        // Discover all plugins using the unified discovery system
-        let discovered_plugins = self.discovery.discover_plugins().await?;
-        
-        for descriptor in &discovered_plugins {
-            let plugin_name = &descriptor.info.name;
-            
-            // Try to get the argument schema for this plugin
-            if let Ok(schema) = self.get_plugin_arg_schema(plugin_name).await {
-                schemas.insert(plugin_name.clone(), schema);
-            }
-        }
-        
-        Ok(schemas)
     }
     
 }
@@ -460,43 +362,6 @@ mod tests {
         fs::write(&file_path, yaml_content).await
     }
 
-    #[tokio::test]
-    async fn test_plugin_arg_schema_access() {
-        let handler = PluginHandler::new().unwrap();
-        
-        // Test debug plugin schema
-        let debug_schema = handler.get_plugin_arg_schema("debug").await.unwrap();
-        assert!(!debug_schema.is_empty(), "Debug plugin should have argument schema");
-        
-        // Test export plugin schema
-        let export_schema = handler.get_plugin_arg_schema("export").await.unwrap();
-        assert!(!export_schema.is_empty(), "Export plugin should have argument schema");
-        
-        // Test commits plugin (should return empty for now)
-        let commits_schema = handler.get_plugin_arg_schema("commits").await.unwrap();
-        assert!(commits_schema.is_empty(), "Commits plugin should return empty schema for now");
-        
-        // Test unknown plugin
-        let unknown_result = handler.get_plugin_arg_schema("unknown").await;
-        assert!(unknown_result.is_err(), "Unknown plugin should return error");
-    }
-    
-    #[tokio::test]
-    async fn test_all_plugin_arg_schemas() {
-        let handler = PluginHandler::new().unwrap();
-        
-        let all_schemas = handler.get_all_plugin_arg_schemas().await.unwrap();
-        
-        // Should contain entries for all discovered plugins
-        assert!(all_schemas.contains_key("debug"), "Should contain debug plugin schema");
-        assert!(all_schemas.contains_key("export"), "Should contain export plugin schema");
-        assert!(all_schemas.contains_key("commits"), "Should contain commits plugin schema");
-        assert!(all_schemas.contains_key("metrics"), "Should contain metrics plugin schema");
-        
-        // Debug and export should have non-empty schemas
-        assert!(!all_schemas["debug"].is_empty(), "Debug schema should not be empty");
-        assert!(!all_schemas["export"].is_empty(), "Export schema should not be empty");
-    }
 
     #[tokio::test]
     async fn test_plugin_handler_creation() {

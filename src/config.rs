@@ -20,6 +20,7 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     /// Create a new ConfigManager from a Configuration (primarily for testing)
+    #[allow(dead_code)]
     pub fn from_config(config: Configuration) -> Self {
         Self {
             config,
@@ -116,6 +117,7 @@ impl ConfigManager {
     }
     
     /// Select configuration section for --config-name
+    #[cfg(test)]
     pub fn select_section(&mut self, section: String) {
         debug!("Selecting configuration section: {}", section);
         self.selected_section = Some(section);

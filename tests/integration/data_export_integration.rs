@@ -168,7 +168,7 @@ async fn test_data_coordinator_functionality() {
 #[tokio::test]
 async fn test_notification_based_export_pipeline() {
     // Create notification manager
-    let mut notification_manager = AsyncNotificationManager::new();
+    let notification_manager = AsyncNotificationManager::new();
     
     // Create mock subscriber to capture exports
     let mock_subscriber = Arc::new(MockExportSubscriber::new());

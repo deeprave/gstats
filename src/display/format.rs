@@ -3,6 +3,8 @@
 //! This module provides the foundation for compact output formatting, enabling
 //! concise one-line summaries suitable for CI/CD integration and quick scanning.
 
+#![allow(dead_code)]
+
 /// Output formatting modes
 #[derive(Debug, Clone, PartialEq)]
 pub enum OutputFormat {

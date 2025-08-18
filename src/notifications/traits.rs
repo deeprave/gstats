@@ -37,7 +37,7 @@ where
     fn subscriber_id(&self) -> &str;
     
     /// Get event filter preferences
-    fn event_filter(&self) -> EventFilter<T> {
+    fn event_filter(&self) -> EventFilter {
         EventFilter::AcceptAll
     }
     
@@ -82,30 +82,16 @@ where
 
 /// Event filtering options for subscribers
 #[derive(Debug, Clone)]
-pub enum EventFilter<T> 
-where 
-    T: NotificationEvent
-{
+pub enum EventFilter {
     /// Accept all events
     AcceptAll,
-    
-    /// Accept no events (effectively unsubscribed)
-    AcceptNone,
-    
-    /// Custom filter function
-    Custom(fn(&T) -> bool),
 }
 
-impl<T> EventFilter<T> 
-where 
-    T: NotificationEvent
-{
+impl EventFilter {
     /// Check if an event should be accepted
-    pub fn should_accept(&self, event: &T) -> bool {
+    pub fn should_accept<T>(&self, _event: &T) -> bool {
         match self {
             EventFilter::AcceptAll => true,
-            EventFilter::AcceptNone => false,
-            EventFilter::Custom(filter_fn) => filter_fn(event),
         }
     }
 }
@@ -116,9 +102,6 @@ pub struct RateLimit {
     /// Maximum events per second
     pub max_events_per_second: u32,
     
-    /// Burst allowance (events that can be processed immediately)
-    pub burst_allowance: u32,
-    
     /// Action to take when rate limit is exceeded
     pub overflow_action: OverflowAction,
 }
@@ -127,7 +110,6 @@ impl Default for RateLimit {
     fn default() -> Self {
         Self {
             max_events_per_second: 100,
-            burst_allowance: 10,
             overflow_action: OverflowAction::Drop,
         }
     }
@@ -138,40 +120,8 @@ impl Default for RateLimit {
 pub enum OverflowAction {
     /// Drop the event silently
     Drop,
-    
-    /// Queue the event for later delivery
-    Queue,
-    
-    /// Return an error
-    Error,
 }
 
-/// Subscription preferences for fine-grained control
-#[derive(Debug, Clone)]
-pub struct SubscriptionPreferences {
-    /// Event filter
-    pub filter: String, // JSON or query string for complex filtering
-    
-    /// Rate limiting
-    pub rate_limit: Option<RateLimit>,
-    
-    /// Priority level (higher numbers = higher priority)
-    pub priority: u8,
-    
-    /// Whether to receive events during system shutdown
-    pub receive_during_shutdown: bool,
-}
-
-impl Default for SubscriptionPreferences {
-    fn default() -> Self {
-        Self {
-            filter: "*".to_string(), // Accept all by default
-            rate_limit: Some(RateLimit::default()),
-            priority: 50, // Medium priority
-            receive_during_shutdown: false,
-        }
-    }
-}
 
 /// Statistics about notification delivery
 #[derive(Debug, Clone)]
@@ -182,8 +132,6 @@ pub struct DeliveryStats {
     /// Total events delivered successfully
     pub events_delivered: u64,
     
-    /// Total events dropped due to rate limiting
-    pub events_dropped: u64,
     
     /// Total delivery failures
     pub delivery_failures: u64,
@@ -197,7 +145,6 @@ impl Default for DeliveryStats {
         Self {
             events_published: 0,
             events_delivered: 0,
-            events_dropped: 0,
             delivery_failures: 0,
             avg_delivery_time_us: 0,
         }

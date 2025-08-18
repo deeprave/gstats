@@ -142,8 +142,6 @@ pub struct QueueStatistics {
     /// Total messages processed
     pub total_messages: u64,
     
-    /// Queue creation time
-    pub created_at: Instant,
 }
 
 /// Multi-consumer queue with sequence-based tracking
@@ -257,14 +255,11 @@ impl MultiConsumerQueue {
     
     /// Create a new multi-consumer queue with custom configuration
     pub fn with_config(scan_id: String, config: MultiConsumerConfig) -> Self {
-        let now = Instant::now();
-        
         let stats = QueueStatistics {
             queue_size: 0,
             memory_usage: 0,
             active_consumers: 0,
             total_messages: 0,
-            created_at: now,
         };
         
         let gc_state = GarbageCollectionState {

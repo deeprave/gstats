@@ -98,7 +98,7 @@ async fn test_notification_manager_creation() {
 
 #[tokio::test]
 async fn test_subscriber_registration() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     let subscriber = Arc::new(MockSubscriber::new("test_subscriber"));
     
     // Subscribe
@@ -115,7 +115,7 @@ async fn test_subscriber_registration() {
 
 #[tokio::test]
 async fn test_subscriber_unregistration() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     let subscriber = Arc::new(MockSubscriber::new("test_subscriber"));
     
     // Subscribe and then unsubscribe
@@ -134,7 +134,7 @@ async fn test_subscriber_unregistration() {
 
 #[tokio::test]
 async fn test_event_publishing() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     let subscriber = Arc::new(MockSubscriber::new("test_subscriber"));
     
     manager.subscribe(subscriber.clone()).await.unwrap();
@@ -159,7 +159,7 @@ async fn test_event_publishing() {
 
 #[tokio::test]
 async fn test_targeted_publishing() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     let subscriber1 = Arc::new(MockSubscriber::new("subscriber1"));
     let subscriber2 = Arc::new(MockSubscriber::new("subscriber2"));
     
@@ -180,7 +180,7 @@ async fn test_targeted_publishing() {
 #[tokio::test]
 async fn test_publisher_interface() {
     let manager = AsyncNotificationManager::<ScanEvent>::new();
-    let mut manager_clone = manager.clone();
+    let manager_clone = manager.clone();
     let subscriber = Arc::new(MockSubscriber::new("test_subscriber"));
     
     manager_clone.subscribe(subscriber.clone()).await.unwrap();
@@ -199,7 +199,7 @@ async fn test_publisher_interface() {
 
 #[tokio::test]
 async fn test_delivery_failure_handling() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     let failing_subscriber = Arc::new(MockSubscriber::new_failing("failing_subscriber"));
     let normal_subscriber = Arc::new(MockSubscriber::new("normal_subscriber"));
     
@@ -238,7 +238,7 @@ async fn test_shutdown() {
 
 #[tokio::test]
 async fn test_statistics() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     let subscriber = Arc::new(MockSubscriber::new("test_subscriber"));
     
     manager.subscribe(subscriber.clone()).await.unwrap();
@@ -316,7 +316,7 @@ async fn test_multiple_event_types() {
 
 #[tokio::test]
 async fn test_unsubscription_during_active_publishing() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     
     // Create subscribers
     let subscriber1 = Arc::new(MockSubscriber::new("sub1"));
@@ -365,7 +365,7 @@ async fn test_unsubscription_during_active_publishing() {
 
 #[tokio::test]
 async fn test_subscriber_cleanup_during_shutdown() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     
     // Create multiple subscribers
     let subscribers: Vec<Arc<MockSubscriber>> = (0..5)
@@ -395,7 +395,7 @@ async fn test_subscriber_cleanup_during_shutdown() {
 
 #[tokio::test]
 async fn test_notification_manager_shutdown_with_pending_events() {
-    let mut manager = AsyncNotificationManager::<ScanEvent>::new();
+    let manager = AsyncNotificationManager::<ScanEvent>::new();
     
     // Create a slow subscriber that takes time to process events
     struct SlowSubscriber {

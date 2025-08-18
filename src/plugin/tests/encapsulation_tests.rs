@@ -6,8 +6,7 @@
 //! 3. Plugin registration follows proper encapsulation principles
 
 use std::collections::HashSet;
-use crate::plugin::{Plugin, PluginRegistry, PluginInfo};
-use crate::plugin::traits::{PluginType, PluginFunction};
+use crate::plugin::{Plugin, PluginRegistry};
 
 /// Test that plugin discovery works without hardcoded names
 #[tokio::test]
@@ -157,13 +156,12 @@ async fn test_help_system_encapsulation() {
 #[test]
 fn test_no_hardcoded_builtin_plugin_names() {
     use std::fs;
-    use std::path::Path;
     
     // Known builtin plugin names that should NOT appear in non-discovery code
     let builtin_names = ["debug", "export", "commits", "metrics"];
     
     // Files that are allowed to reference plugin names (discovery and tests)
-    let allowed_files = [
+    let _allowed_files = [
         "src/plugin/builtin/mod.rs",
         "src/plugin/builtin/debug/mod.rs", 
         "src/plugin/builtin/export/mod.rs",

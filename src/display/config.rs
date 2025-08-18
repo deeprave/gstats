@@ -3,6 +3,8 @@
 //! Provides configuration structures and theme system for customising
 //! colour output based on user preferences and terminal capabilities.
 
+#![allow(dead_code)]
+
 use colored::Color;
 use serde::{Deserialize, Serialize};
 

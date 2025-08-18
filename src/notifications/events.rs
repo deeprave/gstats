@@ -218,12 +218,6 @@ impl NotificationEvent for QueueEvent {}
 impl NotificationEvent for PluginEvent {}
 impl NotificationEvent for SystemEvent {}
 
-/// Convenience type aliases for common event combinations
-pub type ScannerEvents = ScanEvent;
-pub type QueueEvents = QueueEvent;
-pub type PluginEvents = PluginEvent;
-pub type SystemEvents = SystemEvent;
-
 /// Combined event type for systems that need to handle multiple event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnifiedEvent {

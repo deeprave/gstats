@@ -42,7 +42,6 @@ pub mod async_engine;
 pub mod async_traits;
 pub mod branch_detection;
 pub mod statistics;
-pub mod publisher;
 
 #[cfg(test)]
 mod tests;
