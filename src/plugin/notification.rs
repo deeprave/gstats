@@ -115,10 +115,6 @@ impl AsyncNotificationManager {
         }
     }
 
-    /// Check if the manager has no subscribers
-    pub fn is_empty(&self) -> bool {
-        self.subscriber_count() == 0
-    }
 
     /// Get list of subscriber names
     pub async fn get_subscribers(&self) -> Vec<String> {

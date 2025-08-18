@@ -761,15 +761,6 @@ impl Publisher<QueueEvent> for MultiConsumerQueue {
         self.notification_manager.publish(event).await
     }
     
-    /// Publish a queue event to a specific subscriber
-    async fn publish_to(&self, event: QueueEvent, subscriber_id: &str) -> crate::notifications::error::NotificationResult<()> {
-        self.notification_manager.publish_to(event, subscriber_id).await
-    }
-    
-    /// Get the publisher identifier
-    fn publisher_id(&self) -> &str {
-        "queue"
-    }
 }
 
 #[cfg(test)]

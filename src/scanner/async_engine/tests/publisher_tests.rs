@@ -58,9 +58,6 @@ async fn test_async_scanner_engine_implements_publisher_trait() {
     
     // This should compile once Publisher trait is implemented
     let _publisher: &dyn Publisher<ScanEvent> = &engine;
-    
-    // Test basic publisher methods exist
-    assert_eq!(engine.publisher_id(), "scanner");
 }
 
 #[tokio::test]
@@ -89,8 +86,6 @@ async fn test_async_scanner_engine_has_notification_manager() {
         plugin_registry,
     ).expect("Failed to create scanner engine");
     // Verify the engine was created successfully with the notification manager
-    // Test that the Publisher trait is working by calling publisher_id()
-    assert_eq!(engine.publisher_id(), "scanner");
 }
 
 #[tokio::test]
@@ -122,18 +117,6 @@ async fn test_scanner_publish_methods_delegate_to_manager() {
     let result = engine.publish(event).await;
     assert!(result.is_ok());
     
-    // Test that publish_to method correctly reports subscriber not found
-    let event = ScanEvent::started("test-scan-002".to_string());
-    let result = engine.publish_to(event, "test-subscriber").await;
-    assert!(result.is_err()); // Should fail because subscriber doesn't exist
-    
-    // Verify the error is SubscriberNotFound
-    match result {
-        Err(crate::notifications::error::NotificationError::SubscriberNotFound(_)) => {
-            // This is the expected error
-        }
-        _ => panic!("Expected SubscriberNotFound error, got: {:?}", result),
-    }
 }
 
 #[tokio::test]

@@ -511,18 +511,6 @@ impl Publisher<PluginEvent> for MetricsPlugin {
         }
     }
     
-    async fn publish_to(&self, event: PluginEvent, subscriber_id: &str) -> crate::notifications::NotificationResult<()> {
-        if let Some(ref manager) = self.notification_manager {
-            manager.publish_to(event, subscriber_id).await
-        } else {
-            log::warn!("No notification manager available for publishing events");
-            Ok(())
-        }
-    }
-    
-    fn publisher_id(&self) -> &str {
-        "metrics"
-    }
 }
 
 /// Data requirements implementation for MetricsPlugin

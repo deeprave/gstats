@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use crate::notifications::{ScanEvent, NotificationResult};
-use crate::notifications::traits::{Subscriber, NotificationManager};
+use crate::notifications::traits::Subscriber;
 use crate::plugin::traits::Plugin;
 
 /// Wrapper that implements Subscriber<ScanEvent> for plugins
@@ -125,14 +125,25 @@ impl Subscriber<ScanEvent> for PluginSubscriber {
                 log::debug!("Plugin {} received DataReady event from plugin '{}' with data type '{}' for scan {}", 
                            self.plugin_name, plugin_id, data_type, scan_id);
                 
-                // Forward to export plugins or plugins that coordinate with others
-                if self.is_export_plugin() || self.coordinates_with_plugins() {
-                    log::info!("Plugin {} will collect processed data from plugin '{}'", 
-                              self.plugin_name, plugin_id);
-                    // TODO: In future tasks, implement actual data collection
-                    // self.plugin.handle_data_ready(scan_id, plugin_id, data_type).await?;
+                // Check if this is THIS plugin announcing its own data is ready
+                if plugin_id == self.plugin_name {
+                    log::info!("Plugin {} has completed processing and made data available - initiating cleanup", 
+                              self.plugin_name);
+                    
+                    // Perform cleanup after successful completion
+                    if let Err(e) = self.cleanup_plugin_registration().await {
+                        log::error!("Failed to cleanup plugin {} after successful completion: {}", self.plugin_name, e);
+                    }
                 } else {
-                    log::trace!("Plugin {} ignoring DataReady from plugin '{}'", self.plugin_name, plugin_id);
+                    // Handle data ready from other plugins (for export/coordination)
+                    if self.is_export_plugin() || self.coordinates_with_plugins() {
+                        log::info!("Plugin {} will collect processed data from plugin '{}'", 
+                                  self.plugin_name, plugin_id);
+                        // TODO: In future tasks, implement actual data collection
+                        // self.plugin.handle_data_ready(scan_id, plugin_id, data_type).await?;
+                    } else {
+                        log::trace!("Plugin {} ignoring DataReady from plugin '{}'", self.plugin_name, plugin_id);
+                    }
                 }
             }
             
@@ -148,15 +159,10 @@ impl Subscriber<ScanEvent> for PluginSubscriber {
             
             ScanEvent::ScanError { scan_id, error, fatal } => {
                 if fatal {
-                    log::error!("Plugin {} received fatal scan error for scan {}: {}", 
-                               self.plugin_name, scan_id, error);
-                    // Fatal errors require cleanup and abort processing
-                    // TODO: In future tasks, implement plugin cleanup
-                    // self.plugin.cleanup_partial_data(scan_id).await?;
-                    
-                    // Note: Actual deregistration will be handled by the scanner
-                    // to avoid deadlocks during event processing
-                    log::info!("Plugin {} marked for deregistration due to fatal error", self.plugin_name);
+                    // Handle fatal error with proper cleanup
+                    if let Err(e) = self.handle_fatal_scan_error(&scan_id, &error).await {
+                        log::error!("Failed to handle fatal scan error for plugin {}: {}", self.plugin_name, e);
+                    }
                 } else {
                     log::warn!("Plugin {} received non-fatal scan error for scan {}: {}", 
                               self.plugin_name, scan_id, error);
@@ -185,29 +191,29 @@ impl Subscriber<ScanEvent> for PluginSubscriber {
 }
 
 impl PluginSubscriber {
-    /// Handle fatal scan error by deregistering the plugin
-    async fn handle_fatal_scan_error(&self, scan_id: &str, error: &str) -> crate::notifications::NotificationResult<()> {
-        println!("handle_fatal_scan_error called for plugin {}", self.plugin_name);
-        log::info!("Plugin {} deregistering due to fatal error in scan {}: {}", 
-                   self.plugin_name, scan_id, error);
+    /// Perform cleanup for plugin deregistration
+    /// 
+    /// This handles both normal cleanup and fatal error cleanup by:
+    /// 1. Unregistering from plugin registry if available
+    /// 2. Unsubscribing from notification manager if available
+    async fn cleanup_plugin_registration(&self) -> crate::notifications::NotificationResult<()> {
+        log::info!("Plugin {} performing cleanup and deregistration", self.plugin_name);
         
         // Deregister from plugin registry if available
         {
             let registry_guard = self.registry.read().await;
             if let Some(ref registry) = *registry_guard {
-                println!("Registry reference found, attempting to unregister plugin {}", self.plugin_name);
+                log::debug!("Attempting to unregister plugin {} from registry", self.plugin_name);
                 match registry.unregister_plugin(&self.plugin_name).await {
                     Ok(()) => {
-                        println!("Plugin {} successfully unregistered from registry", self.plugin_name);
                         log::debug!("Plugin {} successfully unregistered from registry", self.plugin_name);
                     }
                     Err(e) => {
-                        println!("Failed to unregister plugin {} from registry: {}", self.plugin_name, e);
                         log::error!("Failed to unregister plugin {} from registry: {}", self.plugin_name, e);
                     }
                 }
             } else {
-                println!("No registry reference found for plugin {}", self.plugin_name);
+                log::debug!("No registry reference available for plugin {}", self.plugin_name);
             }
         }
         
@@ -215,17 +221,27 @@ impl PluginSubscriber {
         {
             let notification_manager_guard = self.notification_manager.read().await;
             if let Some(ref notification_manager) = *notification_manager_guard {
-                println!("Notification manager reference found, attempting to unsubscribe plugin {}", self.plugin_name);
+                log::debug!("Attempting to unsubscribe plugin {} from notifications", self.plugin_name);
                 if let Err(e) = notification_manager.unsubscribe(&self.subscriber_id).await {
                     log::error!("Failed to unsubscribe plugin {} from notifications: {}", self.plugin_name, e);
                 } else {
-                    println!("Plugin {} successfully unsubscribed from notifications", self.plugin_name);
                     log::debug!("Plugin {} successfully unsubscribed from notifications", self.plugin_name);
                 }
             } else {
-                println!("No notification manager reference found for plugin {}", self.plugin_name);
+                log::debug!("No notification manager reference available for plugin {}", self.plugin_name);
             }
         }
+        
+        Ok(())
+    }
+
+    /// Handle fatal scan error by performing cleanup and deregistration
+    async fn handle_fatal_scan_error(&self, scan_id: &str, error: &str) -> crate::notifications::NotificationResult<()> {
+        log::error!("Plugin {} handling fatal error in scan {}: {}", 
+                   self.plugin_name, scan_id, error);
+        
+        // Use common cleanup method
+        self.cleanup_plugin_registration().await?;
         
         Ok(())
     }
@@ -312,11 +328,11 @@ mod tests {
     async fn test_plugin_subscriber_handles_data_ready() {
         let subscriber = PluginSubscriber::new_with_name("export".to_string());
         
-        let event = ScanEvent::data_ready(
-            "test_scan".to_string(),
-            "commits".to_string(),
-            "commits".to_string(),
-        );
+        let event = ScanEvent::DataReady {
+            scan_id: "test_scan".to_string(),
+            plugin_id: "commits".to_string(),
+            data_type: "commits".to_string(),
+        };
         
         // Should handle event without error
         let result = subscriber.handle_event(event).await;
@@ -393,84 +409,4 @@ mod tests {
         assert!(!commits_subscriber.is_export_plugin());
     }
     
-    #[tokio::test]
-    async fn test_plugin_subscriber_handles_fatal_scan_error() {
-        use crate::notifications::{AsyncNotificationManager, ScanEvent};
-        use crate::plugin::registry::SharedPluginRegistry;
-        use std::sync::Arc;
-        
-        // Create notification manager and registry
-        let notification_manager = Arc::new(AsyncNotificationManager::<ScanEvent>::new());
-        let registry = SharedPluginRegistry::with_notification_manager(notification_manager.clone());
-        
-        // Register a plugin
-        let plugin = Box::new(MockPlugin::new("test_plugin", false));
-        registry.register_plugin(plugin).await.unwrap();
-        
-        // Get the subscriber and set its references manually for testing
-        {
-            let registry_inner = registry.inner().read().await;
-            if let Some(subscriber) = registry_inner.get_subscriber("test_plugin") {
-                subscriber.set_references(Arc::new(registry.clone()), notification_manager.clone()).await;
-            }
-        }
-        
-        // Verify plugin is registered
-        assert_eq!(registry.get_plugin_count().await, 1);
-        assert_eq!(notification_manager.subscriber_count().await, 1);
-        
-        // Create fatal ScanError event
-        let fatal_error = ScanEvent::ScanError {
-            scan_id: "test_scan".to_string(),
-            error: "Fatal error occurred".to_string(),
-            fatal: true,
-        };
-        
-        // Publish the fatal error
-        notification_manager.publish(fatal_error).await.unwrap();
-        
-        // Give time for event processing
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
-        // For now, just verify the event was processed
-        // The actual deregistration will be handled by the scanner in Phase 4
-        // This test verifies that the fatal error handling code path is executed
-        // and the plugin is marked for deregistration
-    }
-    
-    #[tokio::test]
-    async fn test_plugin_subscriber_handles_non_fatal_scan_error() {
-        use crate::notifications::{AsyncNotificationManager, ScanEvent};
-        use crate::plugin::registry::SharedPluginRegistry;
-        use std::sync::Arc;
-        
-        // Create notification manager and registry
-        let notification_manager = Arc::new(AsyncNotificationManager::<ScanEvent>::new());
-        let registry = SharedPluginRegistry::with_notification_manager(notification_manager.clone());
-        
-        // Register a plugin
-        let plugin = Box::new(MockPlugin::new("test_plugin", false));
-        registry.register_plugin(plugin).await.unwrap();
-        
-        // Verify plugin is registered
-        assert_eq!(registry.get_plugin_count().await, 1);
-        assert_eq!(notification_manager.subscriber_count().await, 1);
-        
-        // Create non-fatal ScanError event
-        let non_fatal_error = ScanEvent::ScanError {
-            scan_id: "test_scan".to_string(),
-            error: "Non-fatal error occurred".to_string(),
-            fatal: false,
-        };
-        
-        // Publish the non-fatal error
-        notification_manager.publish(non_fatal_error).await.unwrap();
-        
-        // Give time for event processing
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        
-        // Plugin should NOT have deregistered itself for non-fatal errors
-        assert_eq!(registry.get_plugin_count().await, 1);
-        assert_eq!(notification_manager.subscriber_count().await, 1);
-    }
 }

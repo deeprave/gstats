@@ -17,11 +17,6 @@ where
     /// Publish an event to all subscribers
     async fn publish(&self, event: T) -> NotificationResult<()>;
     
-    /// Publish an event to a specific subscriber
-    async fn publish_to(&self, event: T, subscriber_id: &str) -> NotificationResult<()>;
-    
-    /// Get the publisher identifier
-    fn publisher_id(&self) -> &str;
 }
 
 /// Generic subscriber trait for components that handle events
@@ -67,20 +62,8 @@ where
     /// Publish an event to all subscribers
     async fn publish(&self, event: T) -> NotificationResult<()>;
     
-    /// Publish an event to a specific subscriber
-    async fn publish_to(&self, event: T, subscriber_id: &str) -> NotificationResult<()>;
     
-    /// Get the number of active subscribers
-    async fn subscriber_count(&self) -> usize;
     
-    /// Check if a subscriber exists
-    async fn has_subscriber(&self, subscriber_id: &str) -> bool;
-    
-    /// Shutdown the notification manager
-    async fn shutdown(&mut self) -> NotificationResult<()>;
-    
-    /// Get delivery statistics
-    async fn get_stats(&self) -> DeliveryStats;
 }
 
 /// Event filtering options for subscribers

@@ -307,23 +307,7 @@ impl ScanEvent {
         }
     }
     
-    /// Create a data ready event for export
-    pub fn data_ready(scan_id: String, plugin_id: String, data_type: String) -> Self {
-        Self::DataReady {
-            scan_id,
-            plugin_id,
-            data_type,
-        }
-    }
     
-    /// Create a scan warning event
-    pub fn warning(scan_id: String, warning: String, recoverable: bool) -> Self {
-        Self::ScanWarning {
-            scan_id,
-            warning,
-            recoverable,
-        }
-    }
     
     /// Create a scan error event
     pub fn error(scan_id: String, error: String, fatal: bool) -> Self {
@@ -338,24 +322,3 @@ impl ScanEvent {
 impl QueueEvent {
 }
 
-impl PluginEvent {
-    /// Create a results ready event
-    pub fn results_ready(plugin_id: String, result_type: String, result_count: usize) -> Self {
-        Self::ResultsReady {
-            plugin_id,
-            result_type,
-            result_count,
-            data_size_bytes: None,
-            ready_at: SystemTime::now(),
-        }
-    }
-    
-    /// Create a data ready event for export
-    pub fn data_ready(plugin_id: String, scan_id: String, export: Arc<PluginDataExport>) -> Self {
-        Self::DataReady {
-            plugin_id,
-            scan_id,
-            export,
-        }
-    }
-}

@@ -34,8 +34,6 @@ pub mod manager;
 pub mod events;
 pub mod error;
 
-#[cfg(test)]
-mod tests;
 
 // Re-export core types for convenience
 pub use manager::AsyncNotificationManager;

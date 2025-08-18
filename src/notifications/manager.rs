@@ -65,6 +65,18 @@ where
         }
     }
     
+    /// Unsubscribe a component from receiving events (direct method)
+    pub async fn unsubscribe(&self, subscriber_id: &str) -> NotificationResult<()> {
+        let mut subscribers = self.subscribers.write().await;
+        
+        if subscribers.remove(subscriber_id).is_some() {
+            debug!("Unsubscribed '{}' from notifications", subscriber_id);
+            Ok(())
+        } else {
+            Err(NotificationError::subscriber_not_found(subscriber_id))
+        }
+    }
+    
     
     /// Check if the system is shutting down
     async fn is_shutting_down(&self) -> bool {
@@ -257,59 +269,8 @@ where
         Ok(())
     }
     
-    async fn publish_to(&self, event: T, subscriber_id: &str) -> NotificationResult<()> {
-        if self.is_shutting_down().await {
-            return Err(NotificationError::SystemShutdown);
-        }
-        
-        let mut subscribers = self.subscribers.write().await;
-        let mut global_stats = self.global_stats.write().await;
-        
-        global_stats.events_published += 1;
-        
-        if let Some(subscriber_info) = subscribers.get_mut(subscriber_id) {
-            match Self::deliver_to_subscriber(subscriber_info, &event, self.default_timeout).await {
-                Ok(()) => {
-                    global_stats.events_delivered += 1;
-                    Ok(())
-                }
-                Err(e) => {
-                    global_stats.delivery_failures += 1;
-                    Err(e)
-                }
-            }
-        } else {
-            Err(NotificationError::subscriber_not_found(subscriber_id))
-        }
-    }
     
-    async fn subscriber_count(&self) -> usize {
-        self.subscribers.read().await.len()
-    }
     
-    async fn has_subscriber(&self, subscriber_id: &str) -> bool {
-        self.subscribers.read().await.contains_key(subscriber_id)
-    }
-    
-    async fn shutdown(&mut self) -> NotificationResult<()> {
-        debug!("Shutting down notification manager");
-        
-        // Mark as shutting down
-        *self.shutdown.write().await = true;
-        
-        // Clear all subscribers
-        let mut subscribers = self.subscribers.write().await;
-        let subscriber_count = subscribers.len();
-        subscribers.clear();
-        
-        debug!("Notification manager shutdown complete ({} subscribers removed)", subscriber_count);
-        Ok(())
-    }
-    
-    /// Get delivery statistics
-    async fn get_stats(&self) -> DeliveryStats {
-        self.global_stats.read().await.clone()
-    }
 }
 
 impl<T> Default for AsyncNotificationManager<T> 
