@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Barrier;
+use crate::notifications::manager::AsyncNotificationManager;
 
 struct ConcurrentScanner {
     name: String,
@@ -100,10 +101,12 @@ async fn test_multiple_concurrent_scanners() {
     let repo_path = PathBuf::from(".");
     let producer = Arc::new(CountingProducer::new());
     let producer_ref = Arc::clone(&producer);
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     
     let mut builder = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
-        .message_producer(producer);
+        .message_producer(producer)
+        .notification_manager(notification_manager);
     
     // Add multiple scanners
     builder = builder
@@ -139,6 +142,7 @@ async fn test_multiple_concurrent_scanners() {
 async fn test_task_concurrency_limit() {
     let repo_path = PathBuf::from(".");
     let producer = Arc::new(CountingProducer::new());
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     
     // Create config with limited concurrency
     let mut config = crate::scanner::config::ScannerConfig::default();
@@ -147,7 +151,8 @@ async fn test_task_concurrency_limit() {
     let mut builder = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .config(config)
-        .message_producer(producer);
+        .message_producer(producer)
+        .notification_manager(notification_manager);
     
     // Add 3 scanners that will try to run concurrently
     // Remove barrier to avoid synchronization issues
@@ -216,6 +221,7 @@ async fn test_concurrent_error_handling() {
     let repo_path = PathBuf::from(".");
     let producer = Arc::new(CountingProducer::new());
     let producer_ref = Arc::clone(&producer);
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     
     struct ErrorScanner {
         name: String,
@@ -257,6 +263,7 @@ async fn test_concurrent_error_handling() {
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .add_scanner(Arc::new(ErrorScanner {
             name: "GoodScanner".to_string(),
             error_after: 10, // Won't error within 5 messages

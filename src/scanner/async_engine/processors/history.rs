@@ -156,7 +156,7 @@ impl EventProcessor for HistoryEventProcessor {
                     // Cache commit in shared state if available
                     if let Some(shared_state) = &self.shared_state {
                         if let Err(e) = shared_state.cache_commit(commit.clone()) {
-                            debug!("Failed to cache commit in shared state: {}", e);
+                            debug!("Failed to cache commit in shared state: {e}");
                         }
 
                         // Share commit impact data with other processors
@@ -170,7 +170,7 @@ impl EventProcessor for HistoryEventProcessor {
 
                         let key = format!("commit_impact_{}", commit.hash);
                         if let Err(e) = shared_state.share_processor_data(key, impact_data) {
-                            debug!("Failed to share commit impact data: {}", e);
+                            debug!("Failed to share commit impact data: {e}");
                         }
                     }
 
@@ -182,10 +182,11 @@ impl EventProcessor for HistoryEventProcessor {
                     debug!("Processed commit {} ({})", commit.short_hash, commit.author_name);
                 }
             }
-            RepositoryEvent::RepositoryStarted { total_commits, .. } => {
-                if let Some(total) = total_commits {
-                    info!("Starting history processing for {} commits", total);
-                }
+            RepositoryEvent::RepositoryStarted { total_commits: Some(total), .. } => {
+                info!("Starting history processing for {total} commits");
+            }
+            RepositoryEvent::RepositoryStarted { total_commits: None, .. } => {
+                // No total count available
             }
             RepositoryEvent::RepositoryCompleted { stats } => {
                 info!(

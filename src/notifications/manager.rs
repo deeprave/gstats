@@ -305,6 +305,11 @@ where
         debug!("Notification manager shutdown complete ({} subscribers removed)", subscriber_count);
         Ok(())
     }
+    
+    /// Get delivery statistics
+    async fn get_stats(&self) -> DeliveryStats {
+        self.global_stats.read().await.clone()
+    }
 }
 
 impl<T> Default for AsyncNotificationManager<T> 

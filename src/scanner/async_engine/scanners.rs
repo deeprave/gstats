@@ -45,7 +45,7 @@ use std::time::{UNIX_EPOCH, Duration, SystemTime};
 use async_trait::async_trait;
 
 /// Builder for creating CommitInfo messages (GS-76 Phase 1.2)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommitMessageBuilder {
     hash: Option<String>,
     author: Option<String>,
@@ -114,7 +114,7 @@ impl CommitMessageBuilder {
 }
 
 /// Builder for creating FileChange messages (GS-76 Phase 1.2)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FileChangeMessageBuilder {
     path: Option<String>,
     change_type: Option<ChangeType>,
@@ -287,16 +287,16 @@ fn extract_commit_metadata(commit: &gix::Commit) -> Result<CommitMetadata, ScanE
     let short_hash = hash.chars().take(8).collect();
     
     let commit_message = commit.message()
-        .map_err(|e| ScanError::Repository(format!("Failed to get commit message: {}", e)))?
+        .map_err(|e| ScanError::Repository(format!("Failed to get commit message: {e}")))?
         .title.to_string();
         
     let author_info = commit.author()
-        .map_err(|e| ScanError::Repository(format!("Failed to get commit author: {}", e)))?;
+        .map_err(|e| ScanError::Repository(format!("Failed to get commit author: {e}")))?;
     let author_name = author_info.name.to_string();
     let author_email = author_info.email.to_string();
     
     let timestamp_seconds = commit.time()
-        .map_err(|e| ScanError::Repository(format!("Failed to get commit time: {}", e)))?
+        .map_err(|e| ScanError::Repository(format!("Failed to get commit time: {e}")))?
         .seconds;
     let timestamp = UNIX_EPOCH + Duration::from_secs(timestamp_seconds as u64);
     
@@ -335,10 +335,10 @@ fn get_commit_file_changes(
     if commit.parent_ids().next().is_none() {
         // For initial commits, all files are "Added"
         let tree = commit.tree()
-            .map_err(|e| ScanError::Repository(format!("Failed to get initial commit tree: {}", e)))?;
+            .map_err(|e| ScanError::Repository(format!("Failed to get initial commit tree: {e}")))?;
             
         let files = tree.traverse().breadthfirst.files()
-            .map_err(|e| ScanError::Repository(format!("Failed to traverse initial commit files: {}", e)))?;
+            .map_err(|e| ScanError::Repository(format!("Failed to traverse initial commit files: {e}")))?;
             
         let mut changes = Vec::new();
         for entry in files {
@@ -383,11 +383,11 @@ fn get_commit_file_changes(
         .arg(&parent_id_str)
         .arg(&commit_id)
         .output()
-        .map_err(|e| ScanError::Repository(format!("Failed to run git diff: {}", e)))?;
+        .map_err(|e| ScanError::Repository(format!("Failed to run git diff: {e}")))?;
     
     if !diff_output.status.success() {
         let stderr = String::from_utf8_lossy(&diff_output.stderr);
-        return Err(ScanError::Repository(format!("Git diff failed: {}", stderr)));
+        return Err(ScanError::Repository(format!("Git diff failed: {stderr}")));
     }
     
     let diff_text = String::from_utf8_lossy(&diff_output.stdout);
@@ -481,20 +481,20 @@ fn determine_target_commit<'a>(
     if let Some(ref branch_name) = query_params.branch {
         // Use specific branch
         let commit_id = branch_detection.resolve_branch_ref(repo_path, branch_name)
-            .map_err(|e| ScanError::Repository(format!("Branch '{}' not found: {}", branch_name, e)))?;
+            .map_err(|e| ScanError::Repository(format!("Branch '{branch_name}' not found: {e}")))?;
         
         // Convert string ID to gix commit
         let oid = gix::ObjectId::from_hex(commit_id.as_bytes())
-            .map_err(|e| ScanError::Repository(format!("Invalid commit ID {}: {}", commit_id, e)))?;
+            .map_err(|e| ScanError::Repository(format!("Invalid commit ID {commit_id}: {e}")))?;
         
         repo.find_object(oid)
-            .map_err(|e| ScanError::Repository(format!("Failed to find commit {}: {}", commit_id, e)))?
+            .map_err(|e| ScanError::Repository(format!("Failed to find commit {commit_id}: {e}")))?
             .try_into_commit()
-            .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {}", e)))
+            .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {e}")))
     } else {
         // Use intelligent branch detection
         let branch_result = branch_detection.detect_branch(repo_path, None, None, None)
-            .map_err(|e| ScanError::Repository(format!("Failed to detect branch: {}", e)))?;
+            .map_err(|e| ScanError::Repository(format!("Failed to detect branch: {e}")))?;
         
         debug!("Detected branch: {} ({})", branch_result.branch_name, branch_result.selection_source.debug());
         
@@ -505,7 +505,7 @@ fn determine_target_commit<'a>(
         repo.find_object(oid)
             .map_err(|e| ScanError::Repository(format!("Failed to find commit {}: {}", branch_result.commit_id, e)))?
             .try_into_commit()
-            .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {}", e)))
+            .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {e}")))
     }
 }
 
@@ -732,17 +732,17 @@ impl AsyncScanner for EventDrivenScanner {
             // GS-75: Single-phase traversal - process commits with their files together
             let walk = repo.rev_walk([head_id]);
             let commits = walk.all()
-                .map_err(|e| ScanError::Repository(format!("Commit walk error: {}", e)))?;
+                .map_err(|e| ScanError::Repository(format!("Commit walk error: {e}")))?;
             
             for commit_info in commits { // Process all commits using helper function (GS-76 Phase 2.1)
                 let commit_info = commit_info
-                    .map_err(|e| ScanError::Repository(format!("Failed to get commit info: {}", e)))?;
+                    .map_err(|e| ScanError::Repository(format!("Failed to get commit info: {e}")))?;
                 
                 let commit_id = commit_info.id;
                 let commit = repo.find_object(commit_id)
-                    .map_err(|e| ScanError::Repository(format!("Failed to find commit: {}", e)))?
+                    .map_err(|e| ScanError::Repository(format!("Failed to find commit: {e}")))?
                     .try_into_commit()
-                    .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {}", e)))?;
+                    .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {e}")))?;
                 
                 // Use helper function to process the entire commit - reduces complexity
                 let commit_messages = process_single_commit(&repo, &commit, &event_filter)?;
@@ -753,7 +753,7 @@ impl AsyncScanner for EventDrivenScanner {
             
             Ok(messages)
         }).await
-        .map_err(|e| ScanError::Repository(format!("Spawn blocking failed: {}", e)))??;
+        .map_err(|e| ScanError::Repository(format!("Spawn blocking failed: {e}")))??;
         
         debug!("EventDrivenScanner: Extracted {} messages", scan_data.len());
         

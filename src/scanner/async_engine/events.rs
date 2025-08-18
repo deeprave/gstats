@@ -213,7 +213,7 @@ impl EventFilter {
             let path_match = self.query_params.file_paths.include.iter().any(|pattern| {
                 let pattern_str = pattern.to_string_lossy();
                 change.new_path.contains(pattern_str.as_ref()) || 
-                change.old_path.as_ref().map_or(false, |old| old.contains(pattern_str.as_ref()))
+                change.old_path.as_ref().is_some_and(|old| old.contains(pattern_str.as_ref()))
             });
             if !path_match {
                 return false;
@@ -225,7 +225,7 @@ impl EventFilter {
             let path_excluded = self.query_params.file_paths.exclude.iter().any(|pattern| {
                 let pattern_str = pattern.to_string_lossy();
                 change.new_path.contains(pattern_str.as_ref()) || 
-                change.old_path.as_ref().map_or(false, |old| old.contains(pattern_str.as_ref()))
+                change.old_path.as_ref().is_some_and(|old| old.contains(pattern_str.as_ref()))
             });
             if path_excluded {
                 return false;

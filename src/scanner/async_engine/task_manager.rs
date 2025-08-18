@@ -120,7 +120,7 @@ impl TaskId {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        Self(format!("{}-{}", prefix, id))
+        Self(format!("{prefix}-{id}"))
     }
     
     /// Get the string representation
@@ -170,15 +170,16 @@ pub struct TaskManager {
     
     
     /// Task scheduler handle
-    #[allow(dead_code)]
-    scheduler_handle: Option<JoinHandle<()>>,
+    _scheduler_handle: Option<JoinHandle<()>>,
 }
 
 impl TaskManager {
     /// Create a new task manager with specified concurrency limit
     pub fn new(max_concurrent_tasks: usize) -> Self {
-        let mut constraints = ResourceConstraints::default();
-        constraints.max_total_tasks = max_concurrent_tasks;
+        let constraints = ResourceConstraints { 
+            max_total_tasks: max_concurrent_tasks, 
+            ..Default::default() 
+        };
         
         Self {
             active_tasks: Arc::new(DashMap::new()),
@@ -188,7 +189,7 @@ impl TaskManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
-            scheduler_handle: None,
+            _scheduler_handle: None,
         }
     }
     
@@ -202,7 +203,7 @@ impl TaskManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             pending_tasks: Arc::new(Mutex::new(BinaryHeap::new())),
             constraints,
-            scheduler_handle: None,
+            _scheduler_handle: None,
         }
     }
     
@@ -324,7 +325,7 @@ impl TaskManager {
                     semaphore_clone,
                     constraints,
                 ).await {
-                    log::debug!("Failed to process pending tasks after completion: {}", e);
+                    log::debug!("Failed to process pending tasks after completion: {e}");
                 }
             });
             
@@ -422,7 +423,7 @@ impl TaskManager {
                 match result {
                     Ok(_) => processed += 1,
                     Err(e) => {
-                        log::error!("Failed to execute pending task: {}", e);
+                        log::error!("Failed to execute pending task: {e}");
                         // Continue processing other tasks
                     }
                 }
@@ -720,7 +721,7 @@ impl TaskManager {
             }
         }
         
-        log::info!("Cancelled {} low-priority tasks due to resource pressure", cancelled);
+        log::info!("Cancelled {cancelled} low-priority tasks due to resource pressure");
         Ok(())
     }
 }

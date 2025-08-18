@@ -34,13 +34,13 @@ pub fn get_api_version() -> i64 {
 /// # Returns
 /// * `String` - Date in YYYY-MM-DD format
 pub fn days_to_date_string(version: i64) -> String {
-    if version >= 10000000 && version <= 99999999 {
+    if (10000000..=99999999).contains(&version) {
         // Extract YYYY, MM, DD from YYYYMMDD format
         let year = version / 10000;
         let month = (version % 10000) / 100;
         let day = version % 100;
         
-        format!("{:04}-{:02}-{:02}", year, month, day)
+        format!("{year:04}-{month:02}-{day:02}")
     } else {
         // Fallback for legacy days-since-epoch format
         let epoch_year = 1970;

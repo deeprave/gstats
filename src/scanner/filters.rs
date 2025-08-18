@@ -2,8 +2,6 @@
 //! 
 //! Hybrid filtering system with built-in filters and functional callbacks using zero-cost abstractions.
 
-#![allow(dead_code)]
-
 use std::ops::ControlFlow;
 use std::time::SystemTime;
 use std::path::Path;
@@ -69,6 +67,7 @@ pub struct CommitData {
 }
 
 /// Filter executor for applying filters with early termination
+#[derive(Default)]
 pub struct FilterExecutor {
     limit: Option<usize>,
 }

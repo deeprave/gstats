@@ -14,20 +14,21 @@ use crate::scanner::statistics::RepositoryStatistics;
 use super::task_manager::TaskManager;
 use super::error::{ScanError, ScanResult};
 use crate::plugin::SharedPluginRegistry;
+use crate::notifications::traits::{Publisher, NotificationManager};
+use crate::notifications::events::ScanEvent;
+use crate::notifications::manager::AsyncNotificationManager;
 
 /// Core async scanner engine
 pub struct AsyncScannerEngine {
     /// Tokio runtime for async operations
     #[cfg(not(test))]
-    #[allow(dead_code)]
-    runtime: Arc<Runtime>,
+    _runtime: Arc<Runtime>,
     
     /// Repository path
     repository_path: PathBuf,
     
     /// Scanner configuration
-    #[allow(dead_code)]
-    config: ScannerConfig,
+    _config: ScannerConfig,
     
     /// Task coordination manager
     task_manager: TaskManager,
@@ -40,6 +41,9 @@ pub struct AsyncScannerEngine {
     
     /// Optional plugin registry for coordination during shutdown
     plugin_registry: Option<SharedPluginRegistry>,
+    
+    /// Notification manager for publishing scanner lifecycle events
+    notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
 }
 
 impl AsyncScannerEngine {
@@ -48,6 +52,7 @@ impl AsyncScannerEngine {
         repository_path: P,
         config: ScannerConfig,
         message_producer: Arc<dyn MessageProducer + Send + Sync>,
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
     ) -> ScanResult<Self> {
         // Validate repository path
         let repo_path = repository_path.as_ref();
@@ -58,9 +63,9 @@ impl AsyncScannerEngine {
             .worker_threads(config.max_threads.unwrap_or_else(num_cpus::get))
             .enable_all()
             .build()
-            .map_err(|e| ScanError::configuration(format!("Failed to create runtime: {}", e)))?;
+            .map_err(|e| ScanError::configuration(format!("Failed to create runtime: {e}")))?;
         
-        Self::with_runtime(repository_path, config, message_producer, Arc::new(runtime))
+        Self::with_runtime(repository_path, config, message_producer, notification_manager, Arc::new(runtime))
     }
     
     /// Create a new async scanner engine with existing runtime (for tests)
@@ -68,6 +73,7 @@ impl AsyncScannerEngine {
         repository_path: P,
         config: ScannerConfig,
         message_producer: Arc<dyn MessageProducer + Send + Sync>,
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
         _runtime: Arc<tokio::runtime::Runtime>,
     ) -> ScanResult<Self> {
         // Validate and canonicalize repository path
@@ -83,13 +89,14 @@ impl AsyncScannerEngine {
         
         Ok(Self {
             #[cfg(not(test))]
-            runtime: _runtime,
+            _runtime,
             repository_path: canonical_path,
-            config,
+            _config: config,
             task_manager,
             message_producer,
             scanners: Vec::new(),
             plugin_registry: None,
+            notification_manager,
         })
     }
     
@@ -124,6 +131,7 @@ impl AsyncScannerEngine {
         repository_path: P,
         config: ScannerConfig,
         message_producer: Arc<dyn MessageProducer + Send + Sync>,
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
     ) -> ScanResult<Self> {
         // Validate and canonicalize repository path
         let repo_path = repository_path.as_ref();
@@ -138,11 +146,12 @@ impl AsyncScannerEngine {
         
         Ok(Self {
             repository_path: canonical_path,
-            config,
+            _config: config,
             task_manager,
             message_producer,
             scanners: Vec::new(),
             plugin_registry: None,
+            notification_manager,
         })
     }
     
@@ -156,11 +165,75 @@ impl AsyncScannerEngine {
         self.plugin_registry = Some(registry);
     }
     
+    
     /// Execute scan with specified modes
     pub async fn scan(&self) -> ScanResult<()> {
+        // Generate unique scan ID
+        let scan_id = format!("scan-{}", uuid::Uuid::new_v4());
+        let scan_start_time = std::time::Instant::now();
+        
+        // Publish ScanStarted event
+        let started_event = ScanEvent::started(scan_id.clone());
+        if let Err(e) = self.notification_manager.publish(started_event).await {
+            log::warn!("Failed to publish ScanStarted event: {e}");
+        }
+        
         if self.scanners.is_empty() {
             return Err(ScanError::no_scanners_registered());
         }
+        
+        // Start periodic event timer (250ms)
+        let (timer_tx, mut timer_rx) = tokio::sync::mpsc::unbounded_channel();
+        let timer_scan_id = scan_id.clone();
+        let timer_manager = self.notification_manager.clone();
+        let _timer_message_producer = Arc::clone(&self.message_producer); // Reserved for future queue metrics integration
+        
+        // Spawn periodic event task
+        let periodic_task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+            let mut tick_count = 0u64;
+            let mut last_data_notification = 0u64;
+            
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        tick_count += 1;
+                        
+                        // Publish ScanProgress event every tick
+                        // Progress is estimated based on elapsed time for now
+                        // Future enhancement: integrate with actual message queue metrics
+                        let estimated_progress = (tick_count * 250) as f64 / 1000.0; // Progress in seconds
+                        let progress_event = ScanEvent::progress(
+                            timer_scan_id.clone(),
+                            estimated_progress,
+                            "processing".to_string(),
+                        );
+                        if let Err(e) = timer_manager.publish(progress_event).await {
+                            log::warn!("Failed to publish ScanProgress event: {e}");
+                        }
+                        
+                        // Publish ScanDataReady event periodically to notify waiting plugins
+                        // This signals that the queue may have new data available
+                        // Future enhancement: only publish when actual queue changes occur
+                        if tick_count > last_data_notification {
+                            let data_ready_event = ScanEvent::scan_data_ready(
+                                timer_scan_id.clone(),
+                                "queue_data".to_string(),
+                                1, // Placeholder message count
+                            );
+                            if let Err(e) = timer_manager.publish(data_ready_event).await {
+                                log::warn!("Failed to publish ScanDataReady event: {e}");
+                            }
+                            last_data_notification = tick_count;
+                        }
+                    }
+                    _ = timer_rx.recv() => {
+                        // Stop signal received
+                        break;
+                    }
+                }
+            }
+        });
         
         // Run all scanners - no mode filtering
         let mut tasks = Vec::new();
@@ -173,7 +246,7 @@ impl AsyncScannerEngine {
             
             let task_id = self.task_manager.spawn_task(scanner_name.clone(), move |cancel| {
                 async move {
-                    log::debug!("Starting scan with scanner: {}", scanner_name);
+                    log::debug!("Starting scan with scanner: {scanner_name}");
                     
                     // Get message stream from scanner with repository path
                     let stream = scanner_clone.scan_async(&repository_path).await?;
@@ -181,7 +254,7 @@ impl AsyncScannerEngine {
                     // Process messages from stream
                     AsyncScannerEngine::process_stream(stream, producer, cancel).await?;
                     
-                    log::debug!("Completed scan with scanner: {}", scanner_name);
+                    log::debug!("Completed scan with scanner: {scanner_name}");
                     Ok(())
                 }
             }).await?;
@@ -194,13 +267,33 @@ impl AsyncScannerEngine {
             self.task_manager.wait_for_task(&task_id, None).await?;
         }
         
+        // Stop periodic event timer
+        let _ = timer_tx.send(());
+        let _ = periodic_task.await;
+        
         // Check for any errors
         let errors = self.task_manager.get_errors().await;
         if !errors.is_empty() {
             let error_msgs: Vec<String> = errors.iter()
                 .map(|e| format!("{}: {}", e.task_id, e.error))
                 .collect();
+            
+            // Publish ScanError event for fatal error
+            let error_event = ScanEvent::error(scan_id.clone(), error_msgs.join(", "), true); // fatal = true
+            if let Err(e) = self.notification_manager.publish(error_event).await {
+                log::warn!("Failed to publish ScanError event: {e}");
+            }
+            
             return Err(ScanError::task(error_msgs.join(", ")));
+        }
+        
+        // Publish ScanCompleted event
+        let scan_duration = scan_start_time.elapsed();
+        let warnings = Vec::new(); // TODO: collect actual warnings from task manager
+        
+        let completed_event = ScanEvent::completed(scan_id, scan_duration, warnings);
+        if let Err(e) = self.notification_manager.publish(completed_event).await {
+            log::warn!("Failed to publish ScanCompleted event: {e}");
         }
         
         Ok(())
@@ -218,7 +311,7 @@ impl AsyncScannerEngine {
             tokio::select! {
                 // Check for cancellation
                 _ = cancel.cancelled() => {
-                    log::info!("Stream processing cancelled after {} messages", count);
+                    log::info!("Stream processing cancelled after {count} messages");
                     return Err(ScanError::Cancelled);
                 }
                 
@@ -228,18 +321,18 @@ impl AsyncScannerEngine {
                         Some(Ok(msg)) => {
                             // Now async!
                             if let Err(e) = producer.produce_message(msg).await {
-                                log::error!("Failed to produce message: {}", e);
-                                return Err(ScanError::processing(format!("Message production failed: {}", e)));
+                                log::error!("Failed to produce message: {e}");
+                                return Err(ScanError::processing(format!("Message production failed: {e}")));
                             }
                             count += 1;
                         }
                         Some(Err(e)) => {
-                            log::error!("Stream error: {}", e);
+                            log::error!("Stream error: {e}");
                             return Err(e);
                         }
                         None => {
                             // Stream completed
-                            log::debug!("Stream completed with {} messages", count);
+                            log::debug!("Stream completed with {count} messages");
                             break;
                         }
                     }
@@ -289,7 +382,7 @@ impl AsyncScannerEngine {
     /// ```
     pub async fn graceful_shutdown(&self, timeout: std::time::Duration) -> ScanResult<()> {
         
-        log::info!("Starting graceful shutdown with timeout: {:?}", timeout);
+        log::info!("Starting graceful shutdown with timeout: {timeout:?}");
         
         // Cancel all active scans first
         self.cancel().await;
@@ -321,10 +414,9 @@ impl AsyncScannerEngine {
                     };
                     
                     let error_msg = format!(
-                        "Plugin coordination failed during shutdown: Timed out waiting for plugins to become idle. Still processing: {:?}",
-                        processing_plugins
+                        "Plugin coordination failed during shutdown: Timed out waiting for plugins to become idle. Still processing: {processing_plugins:?}"
                     );
-                    log::warn!("{}", error_msg);
+                    log::warn!("{error_msg}");
                     return Err(ScanError::task(error_msg));
                 }
                 
@@ -404,6 +496,7 @@ pub struct AsyncScannerEngineBuilder {
     repository_path: Option<PathBuf>,
     config: Option<ScannerConfig>,
     message_producer: Option<Arc<dyn MessageProducer + Send + Sync>>,
+    notification_manager: Option<Arc<AsyncNotificationManager<ScanEvent>>>,
     scanners: Vec<Arc<dyn AsyncScanner>>,
     runtime: Option<Arc<tokio::runtime::Runtime>>,
     plugin_registry: Option<SharedPluginRegistry>,
@@ -416,6 +509,7 @@ impl AsyncScannerEngineBuilder {
             repository_path: None,
             config: None,
             message_producer: None,
+            notification_manager: None,
             scanners: Vec::new(),
             runtime: None,
             plugin_registry: None,
@@ -443,6 +537,12 @@ impl AsyncScannerEngineBuilder {
     /// Set the message producer
     pub fn message_producer(mut self, producer: Arc<dyn MessageProducer + Send + Sync>) -> Self {
         self.message_producer = Some(producer);
+        self
+    }
+    
+    /// Set the notification manager
+    pub fn notification_manager(mut self, manager: Arc<AsyncNotificationManager<ScanEvent>>) -> Self {
+        self.notification_manager = Some(manager);
         self
     }
     
@@ -496,15 +596,18 @@ impl AsyncScannerEngineBuilder {
         let message_producer = self.message_producer
             .ok_or_else(|| ScanError::configuration("Message producer not set"))?;
         
+        let notification_manager = self.notification_manager
+            .ok_or_else(|| ScanError::configuration("Notification manager not set"))?;
+        
         let mut engine = if let Some(runtime) = self.runtime {
             // Use provided runtime
-            AsyncScannerEngine::with_runtime(repository_path, config, message_producer, runtime)?
+            AsyncScannerEngine::with_runtime(repository_path, config, message_producer, notification_manager, runtime)?
         } else {
             // Create new runtime
             #[cfg(test)]
-            let engine = AsyncScannerEngine::new_for_test(repository_path, config, message_producer)?;
+            let engine = AsyncScannerEngine::new_for_test(repository_path, config, message_producer, notification_manager)?;
             #[cfg(not(test))]
-            let engine = AsyncScannerEngine::new(repository_path, config, message_producer)?;
+            let engine = AsyncScannerEngine::new(repository_path, config, message_producer, notification_manager)?;
             engine
         };
         
@@ -524,6 +627,25 @@ impl AsyncScannerEngineBuilder {
 impl Default for AsyncScannerEngineBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Publisher trait implementation for AsyncScannerEngine
+#[async_trait::async_trait]
+impl Publisher<ScanEvent> for AsyncScannerEngine {
+    /// Publish an event to all subscribers
+    async fn publish(&self, event: ScanEvent) -> crate::notifications::error::NotificationResult<()> {
+        self.notification_manager.publish(event).await
+    }
+    
+    /// Publish an event to a specific subscriber
+    async fn publish_to(&self, event: ScanEvent, subscriber_id: &str) -> crate::notifications::error::NotificationResult<()> {
+        self.notification_manager.publish_to(event, subscriber_id).await
+    }
+    
+    /// Get the publisher identifier
+    fn publisher_id(&self) -> &str {
+        "scanner"
     }
 }
 

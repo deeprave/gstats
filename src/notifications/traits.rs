@@ -78,6 +78,9 @@ where
     
     /// Shutdown the notification manager
     async fn shutdown(&mut self) -> NotificationResult<()>;
+    
+    /// Get delivery statistics
+    async fn get_stats(&self) -> DeliveryStats;
 }
 
 /// Event filtering options for subscribers

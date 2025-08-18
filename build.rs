@@ -32,10 +32,20 @@ fn main() {
         api_version, api_version
     );
     
-    fs::write(&version_api_path, version_content)
-        .expect("Failed to write version_api.rs");
+    // Only write if content has changed or file doesn't exist
+    let should_write = if version_api_path.exists() {
+        let existing_content = fs::read_to_string(&version_api_path)
+            .unwrap_or_default();
+        existing_content != version_content
+    } else {
+        true
+    };
     
-    println!("cargo:warning=Generated API version {} from Cargo.toml", api_version);
+    if should_write {
+        fs::write(&version_api_path, version_content)
+            .expect("Failed to write version_api.rs");
+        eprintln!("Generated API version {} from Cargo.toml", api_version);
+    }
     
     // Tell cargo to rerun if Cargo.toml changes
     println!("cargo:rerun-if-changed=Cargo.toml");

@@ -56,7 +56,7 @@ impl DiffLineAnalyzer {
         let reader = BufReader::new(Cursor::new(diff_output));
         
         for line_result in reader.lines() {
-            let line = line_result.map_err(|e| ScanError::Repository(format!("Failed to read diff line: {}", e)))?;
+            let line = line_result.map_err(|e| ScanError::Repository(format!("Failed to read diff line: {e}")))?;
             
             // Detect binary files
             if line.contains("Binary files") || line.contains("GIT binary patch") {
@@ -127,7 +127,7 @@ impl DiffLineAnalyzer {
         let reader = BufReader::new(Cursor::new(commit_diff_output));
         
         for line_result in reader.lines() {
-            let line = line_result.map_err(|e| ScanError::Repository(format!("Failed to read commit diff line: {}", e)))?;
+            let line = line_result.map_err(|e| ScanError::Repository(format!("Failed to read commit diff line: {e}")))?;
             
             // Detect start of new file diff
             if line.starts_with("diff --git") {

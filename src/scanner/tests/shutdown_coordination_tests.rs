@@ -9,6 +9,7 @@ use crate::scanner::config::ScannerConfig;
 use crate::scanner::traits::QueueMessageProducer;
 use crate::plugin::{SharedPluginRegistry, traits::PluginState};
 use crate::plugin::tests::mock_plugins::MockPlugin;
+use crate::notifications::manager::AsyncNotificationManager;
 
 /// Test basic coordination functionality
 #[tokio::test]
@@ -68,9 +69,10 @@ async fn test_scanner_shutdown_no_plugins() {
     // Create a queue and producer for test
     let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
     let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let repo_path = std::env::current_dir().unwrap();
     
-    let engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
+    let engine = AsyncScannerEngine::new_for_test(repo_path, config, producer, notification_manager).unwrap();
     // No plugin registry set
     
     // Should complete immediately
@@ -93,9 +95,10 @@ async fn test_scanner_shutdown_idle_plugins() {
     // Create a queue and producer for test
     let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
     let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let repo_path = std::env::current_dir().unwrap();
     
-    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
+    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer, notification_manager).unwrap();
     engine.set_plugin_registry(registry.clone());
     
     // Should complete immediately since plugin is already idle
@@ -118,9 +121,10 @@ async fn test_scanner_waits_for_plugin_coordination() {
     // Create a queue and producer for test
     let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
     let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let repo_path = std::env::current_dir().unwrap();
     
-    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
+    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer, notification_manager).unwrap();
     engine.set_plugin_registry(registry.clone());
     
     // Test: Start with plugin in idle state, then transition to processing, then back to idle
@@ -181,9 +185,10 @@ async fn test_scanner_shutdown_timeout() {
     // Create a queue and producer for test
     let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
     let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let repo_path = std::env::current_dir().unwrap();
     
-    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
+    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer, notification_manager).unwrap();
     engine.set_plugin_registry(registry.clone());
     
     // Put plugin into processing state and leave it there
@@ -214,9 +219,10 @@ async fn test_scanner_shutdown_multiple_plugins() {
     // Create a queue and producer for test
     let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
     let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let repo_path = std::env::current_dir().unwrap();
     
-    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
+    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer, notification_manager).unwrap();
     engine.set_plugin_registry(registry.clone());
     
     // Put one plugin into processing state
@@ -268,9 +274,10 @@ async fn test_scanner_shutdown_with_plugin_errors() {
     // Create a queue and producer for test
     let queue = crate::queue::SharedMessageQueue::new("test-scan".to_string());
     let producer = Arc::new(QueueMessageProducer::new(queue, "test".to_string()));
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let repo_path = std::env::current_dir().unwrap();
     
-    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer).unwrap();
+    let mut engine = AsyncScannerEngine::new_for_test(repo_path, config, producer, notification_manager).unwrap();
     engine.set_plugin_registry(registry.clone());
     
     // Put one plugin into error state

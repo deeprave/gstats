@@ -24,12 +24,12 @@ pub struct ProcessorFactory;
 impl ProcessorFactory {
     /// Create all available processors without mode filtering
     pub fn create_processors() -> Vec<Box<dyn EventProcessor>> {
-        let mut processors: Vec<Box<dyn EventProcessor>> = Vec::new();
-
         // Include all processors - scanner now processes all data types
-        processors.push(Box::new(statistics::StatisticsProcessor::new()));
-        processors.push(Box::new(history::HistoryEventProcessor::new()));
-        processors.push(Box::new(files::FileEventProcessor::new()));
+        let processors: Vec<Box<dyn EventProcessor>> = vec![
+            Box::new(statistics::StatisticsProcessor::new()),
+            Box::new(history::HistoryEventProcessor::new()),
+            Box::new(files::FileEventProcessor::new()),
+        ];
 
         debug!("Created {} processors", processors.len());
         processors
@@ -47,10 +47,7 @@ impl ProcessorFactory {
 
     /// Check if a processor is available
     pub fn is_available(processor_name: &str) -> bool {
-        match processor_name {
-            "statistics" | "history" | "files" => true,
-            _ => false,
-        }
+        matches!(processor_name, "statistics" | "history" | "files")
     }
 }
 
@@ -75,7 +72,7 @@ impl ProcessorRegistry {
     /// Register a processor
     pub fn register(&mut self, processor: Box<dyn EventProcessor>) {
         let name = processor.name().to_string();
-        debug!("Registering processor: {}", name);
+        debug!("Registering processor: {name}");
         self.processors.insert(name, processor);
     }
 
@@ -90,7 +87,7 @@ impl ProcessorRegistry {
     /// Initialize all processors
     pub async fn initialize_all(&mut self) -> PluginResult<()> {
         for (name, processor) in &mut self.processors {
-            debug!("Initializing processor: {}", name);
+            debug!("Initializing processor: {name}");
             processor.initialize().await?;
         }
         Ok(())
@@ -108,7 +105,7 @@ impl ProcessorRegistry {
                         all_messages.append(&mut messages);
                     }
                     Err(e) => {
-                        warn!("Processor {} failed to process event: {}", name, e);
+                        warn!("Processor {name} failed to process event: {e}");
                         // Continue processing with other processors
                     }
                 }
@@ -123,14 +120,14 @@ impl ProcessorRegistry {
         let mut all_messages = Vec::new();
 
         for (name, processor) in &mut self.processors {
-            debug!("Finalizing processor: {}", name);
+            debug!("Finalizing processor: {name}");
             match processor.finalize().await {
                 Ok(mut messages) => {
                     debug!("Processor {} generated {} final messages", name, messages.len());
                     all_messages.append(&mut messages);
                 }
                 Err(e) => {
-                    warn!("Processor {} failed to finalize: {}", name, e);
+                    warn!("Processor {name} failed to finalize: {e}");
                     // Continue finalizing other processors
                 }
             }

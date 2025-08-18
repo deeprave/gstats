@@ -97,7 +97,7 @@ impl FileEventProcessor {
         if !self.excluded_patterns.is_empty() {
             for pattern in &self.excluded_patterns {
                 if file_path.contains(pattern) {
-                    debug!("File '{}' excluded by pattern '{}'", file_path, pattern);
+                    debug!("File '{file_path}' excluded by pattern '{pattern}'");
                     return false;
                 }
             }
@@ -109,14 +109,14 @@ impl FileEventProcessor {
                 file_path.contains(pattern)
             });
             if !included {
-                debug!("File '{}' not included by any pattern", file_path);
+                debug!("File '{file_path}' not included by any pattern");
                 return false;
             }
         }
 
         // Additional filtering based on file properties
         if file_info.is_binary && self.should_exclude_binary_files() {
-            debug!("Binary file '{}' excluded", file_path);
+            debug!("Binary file '{file_path}' excluded");
             return false;
         }
 
@@ -203,7 +203,7 @@ impl EventProcessor for FileEventProcessor {
                     // Cache file in shared state if available
                     if let Some(shared_state) = &self.shared_state {
                         if let Err(e) = shared_state.cache_file(file_info.clone()) {
-                            debug!("Failed to cache file in shared state: {}", e);
+                            debug!("Failed to cache file in shared state: {e}");
                         }
 
                         // Share file complexity data with other processors if it's a source code file
@@ -217,7 +217,7 @@ impl EventProcessor for FileEventProcessor {
 
                             let key = format!("file_complexity_{}", file_info.relative_path);
                             if let Err(e) = shared_state.share_processor_data(key, complexity_data) {
-                                debug!("Failed to share file complexity data: {}", e);
+                                debug!("Failed to share file complexity data: {e}");
                             }
                         }
                     }
@@ -231,10 +231,11 @@ impl EventProcessor for FileEventProcessor {
                            file_info.relative_path, file_info.size);
                 }
             }
-            RepositoryEvent::RepositoryStarted { total_files, .. } => {
-                if let Some(total) = total_files {
-                    info!("Starting file processing for {} files", total);
-                }
+            RepositoryEvent::RepositoryStarted { total_files: Some(total), .. } => {
+                info!("Starting file processing for {total} files");
+            }
+            RepositoryEvent::RepositoryStarted { total_files: None, .. } => {
+                // No total count available
             }
             RepositoryEvent::RepositoryCompleted { stats } => {
                 info!(

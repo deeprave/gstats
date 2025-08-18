@@ -63,6 +63,9 @@ pub struct QueueConsumer {
     
     /// Processing statistics
     stats: Arc<RwLock<ConsumerStats>>,
+    
+    /// Consumer priority
+    priority: Arc<RwLock<i32>>,
 }
 
 /// Consumer-specific statistics
@@ -114,7 +117,7 @@ impl QueueConsumer {
         consumer_id: String,
         plugin_name: String,
         queue: Arc<MultiConsumerQueue>,
-        _priority: i32,
+        priority: i32,
     ) -> Self {
         Self {
             consumer_id,
@@ -124,6 +127,7 @@ impl QueueConsumer {
             last_acknowledged: Arc::new(RwLock::new(0)),
             active: Arc::new(RwLock::new(true)),
             stats: Arc::new(RwLock::new(ConsumerStats::default())),
+            priority: Arc::new(RwLock::new(priority)),
         }
     }
     
@@ -138,8 +142,16 @@ impl QueueConsumer {
     }
     
     
+    /// Get consumer priority
+    pub async fn priority(&self) -> i32 {
+        *self.priority.read().await
+    }
+    
     /// Set consumer priority
     pub async fn set_priority(&self, priority: i32) -> QueueResult<()> {
+        // Update local priority
+        *self.priority.write().await = priority;
+        
         // Update priority in queue registry
         let mut registry = self.queue.consumer_registry.write().await;
         if let Some(progress) = registry.consumers.get_mut(&self.consumer_id) {
@@ -501,7 +513,7 @@ mod tests {
         
         assert_eq!(consumer.plugin_name(), "test-plugin");
         assert!(consumer.consumer_id().contains("test-plugin"));
-        assert_eq!(consumer.priority(), 0);
+        assert_eq!(consumer.priority().await, 0);
         assert!(consumer.is_active().await);
         assert_eq!(consumer.current_sequence().await, 0);
     }

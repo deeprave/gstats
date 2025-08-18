@@ -30,23 +30,12 @@ struct SharedStateInner {
 }
 
 /// Repository-level metadata shared across processors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RepositoryMetadata {
     pub total_commits: Option<usize>,
     pub total_files: Option<usize>,
     pub scan_start_time: Option<SystemTime>,
     pub repository_path: Option<String>,
-}
-
-impl Default for RepositoryMetadata {
-    fn default() -> Self {
-        Self {
-            total_commits: None,
-            total_files: None,
-            scan_start_time: None,
-            repository_path: None,
-        }
-    }
 }
 
 /// Data that processors can share with each other
@@ -109,8 +98,8 @@ impl SharedProcessorState {
                 Ok(())
             }
             Err(e) => {
-                warn!("Failed to initialize shared state: {}", e);
-                Err(format!("Failed to acquire write lock: {}", e))
+                warn!("Failed to initialize shared state: {e}");
+                Err(format!("Failed to acquire write lock: {e}"))
             }
         }
     }
@@ -119,7 +108,7 @@ impl SharedProcessorState {
     pub fn get_repository_metadata(&self) -> Result<RepositoryMetadata, String> {
         match self.inner.read() {
             Ok(state) => Ok(state.repository_metadata.clone()),
-            Err(e) => Err(format!("Failed to acquire read lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire read lock: {e}")),
         }
     }
 
@@ -131,10 +120,10 @@ impl SharedProcessorState {
                 let commit_arc = Arc::new(commit);
                 state.commit_cache.insert(commit_hash.clone(), commit_arc.clone());
                 state.cache_stats.total_cache_size += 1;
-                debug!("Cached commit: {}", commit_hash);
+                debug!("Cached commit: {commit_hash}");
                 Ok(commit_arc)
             }
-            Err(e) => Err(format!("Failed to acquire write lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire write lock: {e}")),
         }
     }
 
@@ -144,15 +133,15 @@ impl SharedProcessorState {
             Ok(mut state) => {
                 if let Some(commit) = state.commit_cache.get(commit_hash).cloned() {
                     state.cache_stats.commit_cache_hits += 1;
-                    debug!("Cache hit for commit: {}", commit_hash);
+                    debug!("Cache hit for commit: {commit_hash}");
                     Ok(Some(commit))
                 } else {
                     state.cache_stats.commit_cache_misses += 1;
-                    debug!("Cache miss for commit: {}", commit_hash);
+                    debug!("Cache miss for commit: {commit_hash}");
                     Ok(None)
                 }
             }
-            Err(e) => Err(format!("Failed to acquire write lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire write lock: {e}")),
         }
     }
 
@@ -164,10 +153,10 @@ impl SharedProcessorState {
                 let file_arc = Arc::new(file);
                 state.file_cache.insert(file_path.clone(), file_arc.clone());
                 state.cache_stats.total_cache_size += 1;
-                debug!("Cached file: {}", file_path);
+                debug!("Cached file: {file_path}");
                 Ok(file_arc)
             }
-            Err(e) => Err(format!("Failed to acquire write lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire write lock: {e}")),
         }
     }
 
@@ -177,15 +166,15 @@ impl SharedProcessorState {
             Ok(mut state) => {
                 if let Some(file) = state.file_cache.get(file_path).cloned() {
                     state.cache_stats.file_cache_hits += 1;
-                    debug!("Cache hit for file: {}", file_path);
+                    debug!("Cache hit for file: {file_path}");
                     Ok(Some(file))
                 } else {
                     state.cache_stats.file_cache_misses += 1;
-                    debug!("Cache miss for file: {}", file_path);
+                    debug!("Cache miss for file: {file_path}");
                     Ok(None)
                 }
             }
-            Err(e) => Err(format!("Failed to acquire write lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire write lock: {e}")),
         }
     }
 
@@ -194,10 +183,10 @@ impl SharedProcessorState {
         match self.inner.write() {
             Ok(mut state) => {
                 state.processor_data.insert(key.clone(), data);
-                debug!("Shared processor data with key: {}", key);
+                debug!("Shared processor data with key: {key}");
                 Ok(())
             }
-            Err(e) => Err(format!("Failed to acquire write lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire write lock: {e}")),
         }
     }
 
@@ -207,13 +196,13 @@ impl SharedProcessorState {
             Ok(state) => {
                 let data = state.processor_data.get(key).cloned();
                 if data.is_some() {
-                    debug!("Retrieved shared processor data for key: {}", key);
+                    debug!("Retrieved shared processor data for key: {key}");
                 } else {
-                    debug!("No shared processor data found for key: {}", key);
+                    debug!("No shared processor data found for key: {key}");
                 }
                 Ok(data)
             }
-            Err(e) => Err(format!("Failed to acquire read lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire read lock: {e}")),
         }
     }
 
@@ -221,7 +210,7 @@ impl SharedProcessorState {
     pub fn get_processor_data_keys(&self) -> Result<Vec<String>, String> {
         match self.inner.read() {
             Ok(state) => Ok(state.processor_data.keys().cloned().collect()),
-            Err(e) => Err(format!("Failed to acquire read lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire read lock: {e}")),
         }
     }
 
@@ -229,7 +218,7 @@ impl SharedProcessorState {
     pub fn get_cache_stats(&self) -> Result<CacheStats, String> {
         match self.inner.read() {
             Ok(state) => Ok(state.cache_stats.clone()),
-            Err(e) => Err(format!("Failed to acquire read lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire read lock: {e}")),
         }
     }
 
@@ -246,13 +235,10 @@ impl SharedProcessorState {
                 state.processor_data.clear();
                 state.cache_stats = CacheStats::default();
                 
-                info!(
-                    "Cleared shared state cache: {} commits, {} files, {} processor data entries",
-                    commit_count, file_count, data_count
-                );
+                info!("Cleared shared state cache: {commit_count} commits, {file_count} files, {data_count} processor data entries");
                 Ok(())
             }
-            Err(e) => Err(format!("Failed to acquire write lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire write lock: {e}")),
         }
     }
 
@@ -271,10 +257,10 @@ impl SharedProcessorState {
                 // Estimate processor data size (rough approximation)
                 total_size += state.processor_data.len() * 1024; // Assume 1KB per entry
                 
-                debug!("Estimated shared state memory usage: {} bytes", total_size);
+                debug!("Estimated shared state memory usage: {total_size} bytes");
                 Ok(total_size)
             }
-            Err(e) => Err(format!("Failed to acquire read lock: {}", e)),
+            Err(e) => Err(format!("Failed to acquire read lock: {e}")),
         }
     }
 
@@ -284,10 +270,7 @@ impl SharedProcessorState {
         let concerning = usage > threshold_bytes;
         
         if concerning {
-            warn!(
-                "Shared state memory usage ({} bytes) exceeds threshold ({} bytes)",
-                usage, threshold_bytes
-            );
+            warn!("Shared state memory usage ({usage} bytes) exceeds threshold ({threshold_bytes} bytes)");
         }
         
         Ok(concerning)

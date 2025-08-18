@@ -133,7 +133,7 @@ impl CheckoutManager {
         }
         
         let commit_short = if commit_hash.len() >= 8 { &commit_hash[..8] } else { commit_hash };
-        let commit_dir = self.base_checkout_dir.join(format!("commit_{}", commit_short));
+        let commit_dir = self.base_checkout_dir.join(format!("commit_{commit_short}"));
         
         // Create the directory structure
         fs::create_dir_all(&commit_dir)
@@ -160,7 +160,7 @@ impl CheckoutManager {
         }
         
         let commit_dir = self.checkout_dirs.get(commit_hash)
-            .ok_or_else(|| ScanError::Repository(format!("No checkout directory prepared for commit {}", commit_hash)))?;
+            .ok_or_else(|| ScanError::Repository(format!("No checkout directory prepared for commit {commit_hash}")))?;
         
         let file_checkout_path = commit_dir.join(file_path);
         
@@ -270,7 +270,7 @@ impl Drop for CheckoutManager {
     /// Automatically clean up on drop to prevent leaving temporary files
     fn drop(&mut self) {
         if let Err(e) = self.cleanup_all() {
-            eprintln!("Warning: Failed to cleanup CheckoutManager: {}", e);
+            eprintln!("Warning: Failed to cleanup CheckoutManager: {e}");
         }
     }
 }

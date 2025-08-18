@@ -37,9 +37,5 @@ pub fn is_async_available() -> bool {
 
 /// Get async engine information
 pub fn get_engine_info() -> String {
-    format!(
-        "{} v{} - Async scanning with streaming support",
-        MODULE_NAME,
-        MODULE_VERSION
-    )
+    format!("{MODULE_NAME} v{MODULE_VERSION} - Async scanning with streaming support")
 }

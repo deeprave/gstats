@@ -131,7 +131,7 @@ impl std::error::Error for ConfigError {}
 
 impl ScannerConfig {
     /// Create a new configuration builder
-    pub fn new() -> ScannerConfigBuilder {
+    pub fn builder() -> ScannerConfigBuilder {
         ScannerConfigBuilder::new()
     }
     
@@ -194,7 +194,7 @@ impl ScannerConfig {
 }
 
 /// Builder for ScannerConfig
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ScannerConfigBuilder {
     config: ScannerConfig,
 }
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
-        let config = ScannerConfig::new()
+        let config = ScannerConfig::builder()
             .with_max_memory(128 * 1024 * 1024)
             .with_queue_size(2000)
             .build()
@@ -392,13 +392,13 @@ mod tests {
 
     #[test]
     fn test_memory_display() {
-        let config = ScannerConfig::new()
+        let config = ScannerConfig::builder()
             .with_max_memory(64 * 1024 * 1024)
             .build()
             .expect("Failed to build config");
         assert_eq!(config.memory_display(), "64 MB");
 
-        let config = ScannerConfig::new()
+        let config = ScannerConfig::builder()
             .with_max_memory(2 * 1024 * 1024 * 1024) // 2GB
             .build()
             .expect("Failed to build config");
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_branch_configuration_builder() {
-        let config = ScannerConfig::new()
+        let config = ScannerConfig::builder()
             .with_default_branch("develop".to_string())
             .with_branch_fallbacks(vec!["develop".to_string(), "main".to_string()])
             .with_default_remote("upstream".to_string())

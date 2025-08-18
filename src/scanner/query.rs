@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Query parameters for repository scanning
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct QueryParams {
     /// Date range for filtering
     pub date_range: Option<DateRange>,
@@ -63,14 +63,14 @@ impl DateRange {
     
     /// Check if a given time falls within this date range
     pub fn contains(&self, time: SystemTime) -> bool {
-        let after_start = self.start.map_or(true, |start| time >= start);
-        let before_end = self.end.map_or(true, |end| time <= end);
+        let after_start = self.start.is_none_or(|start| time >= start);
+        let before_end = self.end.is_none_or(|end| time <= end);
         after_start && before_end
     }
 }
 
 /// File path filtering configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FilePathFilter {
     /// Paths to include (empty means include all)
     pub include: Vec<PathBuf>,
@@ -79,7 +79,7 @@ pub struct FilePathFilter {
 }
 
 /// Author filtering configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AuthorFilter {
     /// Authors to include (empty means include all)
     pub include: Vec<String>,
@@ -102,35 +102,8 @@ pub enum QueryValidationError {
     EmptyBranch,
 }
 
-impl Default for QueryParams {
-    fn default() -> Self {
-        Self {
-            date_range: None,
-            file_paths: FilePathFilter::default(),
-            limit: None,
-            authors: AuthorFilter::default(),
-            branch: None,
-        }
-    }
-}
 
-impl Default for FilePathFilter {
-    fn default() -> Self {
-        Self {
-            include: Vec::new(),
-            exclude: Vec::new(),
-        }
-    }
-}
 
-impl Default for AuthorFilter {
-    fn default() -> Self {
-        Self {
-            include: Vec::new(),
-            exclude: Vec::new(),
-        }
-    }
-}
 
 impl QueryParams {
     /// Create a new empty query parameters instance

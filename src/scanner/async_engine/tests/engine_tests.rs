@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::path::PathBuf;
+use crate::notifications::manager::AsyncNotificationManager;
 
 struct TestMessageProducer {
     messages: Arc<tokio::sync::Mutex<Vec<ScanMessage>>>,
@@ -91,9 +92,11 @@ async fn test_engine_builder() {
     let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
     
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .build();
     
     assert!(engine.is_ok());
@@ -103,10 +106,12 @@ async fn test_engine_builder() {
 async fn test_engine_without_scanners() {
     let repo_path = PathBuf::from(".");
     let producer = Arc::new(TestMessageProducer::new());
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .build()
         .unwrap();
     
@@ -125,9 +130,11 @@ async fn test_single_scanner_operation() {
         message_count: 5,
     });
     
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .add_scanner(scanner)
         .build()
         .unwrap();
@@ -155,9 +162,11 @@ async fn test_scanner_operation() {
         message_count: 5,
     });
     
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .add_scanner(scanner)
         .build()
         .unwrap();
@@ -177,9 +186,11 @@ async fn test_cancellation() {
         message_count: 10,
     });
     
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let engine = Arc::new(AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .add_scanner(scanner)
         .build()
         .unwrap());
@@ -212,9 +223,11 @@ async fn test_engine_stats() {
         message_count: 3,
     });
     
+    let notification_manager = Arc::new(AsyncNotificationManager::new());
     let engine = AsyncScannerEngineBuilder::new()
         .repository_path(repo_path)
         .message_producer(producer)
+        .notification_manager(notification_manager)
         .add_scanner(scanner)
         .build()
         .unwrap();

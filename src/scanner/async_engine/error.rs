@@ -50,11 +50,11 @@ impl ScanError {
     pub fn repository(msg: impl Into<String>) -> Self {
         let msg = msg.into();
         let enhanced_msg = if msg.contains("not a git repository") {
-            format!("{}\n\nMake sure you're running this command from within a git repository, or specify a repository path with the --repository option.", msg)
+            format!("{msg}\n\nMake sure you're running this command from within a git repository, or specify a repository path with the --repository option.")
         } else if msg.contains("Permission denied") {
-            format!("{}\n\nCheck that you have read access to the repository directory and files.", msg)
+            format!("{msg}\n\nCheck that you have read access to the repository directory and files.")
         } else {
-            format!("{}\n\nVerify the repository path exists and is accessible.", msg)
+            format!("{msg}\n\nVerify the repository path exists and is accessible.")
         };
         Self::Repository(enhanced_msg)
     }
@@ -63,7 +63,7 @@ impl ScanError {
     pub fn repository_with_path(msg: impl Into<String>, path: impl AsRef<std::path::Path>) -> Self {
         let path_display = path.as_ref().display();
         let msg = msg.into();
-        let enhanced_msg = format!("{}\n\nRepository path: {}\n\nSuggestions:\n  • Check that the path exists and is accessible\n  • Ensure it's a valid git repository\n  • Verify you have proper permissions", msg, path_display);
+        let enhanced_msg = format!("{msg}\n\nRepository path: {path_display}\n\nSuggestions:\n  • Check that the path exists and is accessible\n  • Ensure it's a valid git repository\n  • Verify you have proper permissions");
         Self::Repository(enhanced_msg)
     }
     
@@ -115,19 +115,19 @@ impl From<std::io::Error> for ScanError {
     fn from(error: std::io::Error) -> Self {
         let user_msg = match error.kind() {
             std::io::ErrorKind::NotFound => {
-                format!("File or directory not found: {}\n\nCheck that the path exists and is spelled correctly.", error)
+                format!("File or directory not found: {error}\n\nCheck that the path exists and is spelled correctly.")
             },
             std::io::ErrorKind::PermissionDenied => {
-                format!("Permission denied: {}\n\nYou don't have the necessary permissions to access this file or directory.\nTry:\n  • Running with appropriate permissions\n  • Checking file/directory ownership\n  • Ensuring the path is readable", error)
+                format!("Permission denied: {error}\n\nYou don't have the necessary permissions to access this file or directory.\nTry:\n  • Running with appropriate permissions\n  • Checking file/directory ownership\n  • Ensuring the path is readable")
             },
             std::io::ErrorKind::ConnectionRefused => {
-                format!("Connection refused: {}\n\nThis usually indicates a network or service issue.", error)
+                format!("Connection refused: {error}\n\nThis usually indicates a network or service issue.")
             },
             std::io::ErrorKind::TimedOut => {
-                format!("Operation timed out: {}\n\nThe operation took too long to complete. Try again or check your network connection.", error)
+                format!("Operation timed out: {error}\n\nThe operation took too long to complete. Try again or check your network connection.")
             },
             _ => {
-                format!("File system error: {}\n\nCheck the file path and your system permissions.", error)
+                format!("File system error: {error}\n\nCheck the file path and your system permissions.")
             }
         };
         Self::Other(anyhow::anyhow!(user_msg))

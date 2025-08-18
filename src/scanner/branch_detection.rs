@@ -121,7 +121,7 @@ impl BranchDetection {
     ) -> Result<BranchDetectionResult, BranchDetectionError> {
         let repo = gix::discover(repository_path)
             .map_err(|e| BranchDetectionError::RepositoryError {
-                message: format!("Failed to open repository: {}", e),
+                message: format!("Failed to open repository: {e}"),
             })?;
 
         // Priority 1: CLI branch parameter
@@ -183,7 +183,7 @@ impl BranchDetection {
     ) -> Result<String, BranchDetectionError> {
         let repo = gix::discover(repository_path)
             .map_err(|e| BranchDetectionError::RepositoryError {
-                message: format!("Failed to open repository: {}", e),
+                message: format!("Failed to open repository: {e}"),
             })?;
 
         self.resolve_branch_ref_internal(&repo, branch_name)
@@ -196,7 +196,7 @@ impl BranchDetection {
         branch_name: &str,
     ) -> Result<String, BranchDetectionError> {
         // Try to resolve local branch
-        let local_ref = format!("refs/heads/{}", branch_name);
+        let local_ref = format!("refs/heads/{branch_name}");
         if let Ok(reference) = repo.find_reference(&local_ref) {
             if let Some(id) = reference.try_id() {
                 return Ok(id.to_string());
@@ -205,7 +205,7 @@ impl BranchDetection {
 
         // Try remote branches
         for remote in repo.remote_names() {
-            let remote_ref = format!("refs/remotes/{}/{}", remote, branch_name);
+            let remote_ref = format!("refs/remotes/{remote}/{branch_name}");
             if let Ok(reference) = repo.find_reference(&remote_ref) {
                 if let Some(id) = reference.try_id() {
                     return Ok(id.to_string());
@@ -254,13 +254,13 @@ impl BranchDetection {
         };
 
         // Try to find remote HEAD reference
-        let remote_head_ref = format!("refs/remotes/{}/HEAD", target_remote);
+        let remote_head_ref = format!("refs/remotes/{target_remote}/HEAD");
         if let Ok(reference) = repo.find_reference(&remote_head_ref) {
             // Try to get the target reference name for symbolic references
             match reference.target() {
                 gix::refs::TargetRef::Symbolic(target) => {
                     if let Some(branch_name) = target.as_bstr().to_str().ok()
-                        .and_then(|s| s.strip_prefix(&format!("refs/remotes/{}/", target_remote))) {
+                        .and_then(|s| s.strip_prefix(&format!("refs/remotes/{target_remote}/"))) {
                         // Get the commit ID for this branch
                         if let Ok(commit_id) = self.resolve_branch_ref_internal(repo, branch_name) {
                             return Ok(BranchDetectionResult {
@@ -293,7 +293,7 @@ impl BranchDetection {
 
         // Fallback: try common default branches on the remote
         for default_name in &["main", "master"] {
-            let remote_ref = format!("refs/remotes/{}/{}", target_remote, default_name);
+            let remote_ref = format!("refs/remotes/{target_remote}/{default_name}");
             if let Ok(reference) = repo.find_reference(&remote_ref) {
                 if let Some(commit_id) = reference.try_id() {
                     return Ok(BranchDetectionResult {
@@ -346,7 +346,7 @@ impl BranchDetection {
                         // If no common branch matches, use the first local branch that matches
                         for remote in repo.remote_names() {
                             for branch_name in &["main", "master"] {
-                                let remote_ref = format!("refs/remotes/{}/{}", remote, branch_name);
+                                let remote_ref = format!("refs/remotes/{remote}/{branch_name}");
                                 if let Ok(reference) = repo.find_reference(&remote_ref) {
                                     if let Some(branch_commit_id) = reference.try_id() {
                                         if branch_commit_id.to_string() == commit_id.to_string() {

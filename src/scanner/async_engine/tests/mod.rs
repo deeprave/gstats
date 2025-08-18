@@ -4,3 +4,4 @@
 mod engine_tests;
 mod concurrency_tests;
 mod integration_tests;
+mod publisher_tests;

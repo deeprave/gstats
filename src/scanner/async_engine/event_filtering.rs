@@ -111,12 +111,10 @@ impl AdvancedEventFilter {
         self.stats.total_events_processed += 1;
 
         // Check memory pressure - only performance-related filtering allowed
-        if self.memory_monitor.enable_monitoring && self.is_under_memory_pressure() {
-            if self.should_skip_under_pressure(event) {
-                self.stats.events_filtered_out += 1;
-                self.stats.memory_pressure_events += 1;
-                return FilterDecision::SkipDueToMemoryPressure;
-            }
+        if self.memory_monitor.enable_monitoring && self.is_under_memory_pressure() && self.should_skip_under_pressure(event) {
+            self.stats.events_filtered_out += 1;
+            self.stats.memory_pressure_events += 1;
+            return FilterDecision::SkipDueToMemoryPressure;
         }
 
         // All events should be processed (no content-based filtering after event creation)

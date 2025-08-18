@@ -80,13 +80,11 @@ where
         let mut this = self.project();
         
         // Check if we should emit current buffer due to backpressure
-        if this.buffer.len() >= this.config.batch_size || *this.backpressure_active {
-            if !this.buffer.is_empty() {
-                let batch = std::mem::take(this.buffer);
-                *this.current_memory = 0;
-                *this.backpressure_active = false;
-                return Poll::Ready(Some(Ok(batch)));
-            }
+        if (this.buffer.len() >= this.config.batch_size || *this.backpressure_active) && !this.buffer.is_empty() {
+            let batch = std::mem::take(this.buffer);
+            *this.current_memory = 0;
+            *this.backpressure_active = false;
+            return Poll::Ready(Some(Ok(batch)));
         }
         
         // Try to fill buffer
@@ -138,10 +136,8 @@ where
 
 /// Stream combinator for merging multiple scan streams
 pub struct MergedScanStream {
-    #[allow(dead_code)]
-    streams: Vec<ScanMessageStream>,
-    #[allow(dead_code)]
-    active_streams: usize,
+    _streams: Vec<ScanMessageStream>,
+    _active_streams: usize,
 }
 
 impl MergedScanStream {
@@ -149,8 +145,8 @@ impl MergedScanStream {
     pub fn new(streams: Vec<ScanMessageStream>) -> Self {
         let active_streams = streams.len();
         Self {
-            streams,
-            active_streams,
+            _streams: streams,
+            _active_streams: active_streams,
         }
     }
     
