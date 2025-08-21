@@ -13,6 +13,7 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 use crate::plugin::traits::{
@@ -41,6 +42,12 @@ pub use config::DebugConfig;
 
 /// Debug plugin for message stream inspection
 pub struct DebugPlugin {
+    /// Command name for clap integration
+    command_name: String,
+    
+    /// Plugin settings (color preferences, etc.)
+    settings: crate::plugin::PluginSettings,
+    
     /// Plugin information
     info: PluginInfo,
     
@@ -50,8 +57,8 @@ pub struct DebugPlugin {
     /// Message formatter for display
     formatter: MessageFormatter,
     
-    /// Statistics tracking
-    stats: Arc<RwLock<DebugStats>>,
+    /// Per-scan statistics and state
+    scan_data: Arc<RwLock<HashMap<String, DebugScanData>>>,
     
     /// Whether the plugin is currently consuming
     consuming: Arc<RwLock<bool>>,
@@ -59,9 +66,8 @@ pub struct DebugPlugin {
     /// Queue consumer handle
     consumer: Arc<RwLock<Option<QueueConsumer>>>,
     
-    /// Notification publishing (optional - only enabled with --export flag)
-    notification_manager: Option<AsyncNotificationManager<PluginEvent>>,
-    current_scan_id: Arc<RwLock<Option<String>>>,
+    /// Notification publishing - REQUIRED for all plugins
+    notification_manager: Arc<AsyncNotificationManager<PluginEvent>>,
     
     /// Whether export functionality is enabled via CLI flag
     export_enabled: Arc<RwLock<bool>>,
@@ -89,6 +95,24 @@ struct DebugStats {
     queue_events: u64,
 }
 
+/// Per-scan data for debug plugin
+#[derive(Debug)]
+struct DebugScanData {
+    /// Statistics for this scan
+    stats: DebugStats,
+    /// Scan start time for performance tracking
+    started_at: std::time::Instant,
+}
+
+impl DebugScanData {
+    fn new() -> Self {
+        Self {
+            stats: DebugStats::default(),
+            started_at: std::time::Instant::now(),
+        }
+    }
+}
+
 impl DebugPlugin {
     /// Create a new debug plugin instance
     pub fn new() -> Self {
@@ -106,7 +130,7 @@ impl DebugPlugin {
             PluginType::Processing,
         )
         .with_priority(0) // Normal priority
-        .with_load_by_default(false); // Manual activation
+        .with_active_by_default(false); // Manual activation
         
         let config = if compact_mode {
             Arc::new(RwLock::new(DebugConfig::compact()))
@@ -116,48 +140,75 @@ impl DebugPlugin {
         let formatter = MessageFormatter::new(config.clone());
         
         Self {
+            command_name: "debug".to_string(),
+            settings: crate::plugin::PluginSettings::default(),
             info,
             config,
             formatter,
-            stats: Arc::new(RwLock::new(DebugStats::default())),
+            scan_data: Arc::new(RwLock::new(HashMap::new())),
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
-            notification_manager: None,
-            current_scan_id: Arc::new(RwLock::new(None)),
+            notification_manager: Arc::new(AsyncNotificationManager::new()), // Temporary for deprecated constructor
             export_enabled: Arc::new(RwLock::new(false)),
             colour_manager: Arc::new(RwLock::new(None)),
         }
     }
     
+    // with_settings() method removed - use with_dependencies() instead
+    
+    /// Create a new debug plugin with all required dependencies (REQUIRED)
+    /// This is the correct way to instantiate DebugPlugin - it MUST have notification manager
+    pub fn with_dependencies(
+        settings: crate::plugin::PluginSettings,
+        notification_manager: std::sync::Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::PluginEvent>>
+    ) -> Self {
+        let mut plugin = Self::new();
+        plugin.settings = settings;
+        plugin.notification_manager = notification_manager;
+        plugin
+    }
+    
     /// Update statistics for a processed message
-    async fn update_stats(&self, message: &ScanMessage) {
-        let mut stats = self.stats.write().await;
-        stats.messages_processed += 1;
-        
-        match message.data() {
-            MessageData::CommitInfo { .. } => stats.commit_messages += 1,
-            MessageData::FileChange { .. } => stats.file_changes += 1,
-            MessageData::FileInfo { .. } => stats.file_info += 1,
-            _ => stats.other_messages += 1,
+    async fn update_stats(&self, scan_id: &str, message: &ScanMessage) {
+        let mut scan_data = self.scan_data.write().await;
+        if let Some(data) = scan_data.get_mut(scan_id) {
+            data.stats.messages_processed += 1;
+            
+            match message.data() {
+                MessageData::CommitInfo { .. } => data.stats.commit_messages += 1,
+                MessageData::FileChange { .. } => data.stats.file_changes += 1,
+                MessageData::FileInfo { .. } => data.stats.file_info += 1,
+                _ => data.stats.other_messages += 1,
+            }
         }
     }
     
-    /// Display current statistics
+    /// Display current statistics for all active scans
     async fn display_stats(&self) {
-        let stats = self.stats.read().await;
+        let scan_data = self.scan_data.read().await;
         let config = self.config.read().await;
         let export_enabled = *self.export_enabled.read().await;
         
         // Only display stats if verbose and export is not enabled
         if config.verbose && !export_enabled {
             println!("\n=== Debug Plugin Statistics ===");
-            println!("Total messages processed: {}", stats.messages_processed);
-            println!("  Commit messages: {}", stats.commit_messages);
-            println!("  File changes: {}", stats.file_changes);
-            println!("  File info: {}", stats.file_info);
-            println!("  Other: {}", stats.other_messages);
-            println!("Display errors: {}", stats.display_errors);
-            println!("Queue events: {}", stats.queue_events);
+            
+            if scan_data.is_empty() {
+                println!("No active scans");
+            } else {
+                for (scan_id, data) in scan_data.iter() {
+                    println!("Scan {}: ({} messages in {:.2}s)", 
+                        scan_id, 
+                        data.stats.messages_processed,
+                        data.started_at.elapsed().as_secs_f64());
+                    println!("  Commit messages: {}", data.stats.commit_messages);
+                    println!("  File changes: {}", data.stats.file_changes);
+                    println!("  File info: {}", data.stats.file_info);
+                    println!("  Other: {}", data.stats.other_messages);
+                    println!("  Display errors: {}", data.stats.display_errors);
+                    println!("  Queue events: {}", data.stats.queue_events);
+                }
+            }
             println!("==============================\n");
         }
     }
@@ -165,8 +216,10 @@ impl DebugPlugin {
     /// Create PluginDataExport from debug statistics (only when export is enabled)
     async fn create_data_export(&self, scan_id: &str) -> PluginResult<PluginDataExport> {
         let stats = {
-            let stats_guard = self.stats.read().await;
-            stats_guard.clone()
+            let scan_data_guard = self.scan_data.read().await;
+            scan_data_guard.get(scan_id)
+                .map(|data| data.stats.clone())
+                .unwrap_or_default()
         };
         
         // Create schema for debug statistics table
@@ -278,13 +331,8 @@ impl Plugin for DebugPlugin {
         // Initialize plugin with context if needed
         log::info!("Debug plugin initialized");
         
-        // Initialize notification manager from context if available
-        if let Some(ref manager) = context.notification_manager {
-            self.notification_manager = Some(manager.as_ref().clone());
-            log::debug!("DebugPlugin: Notification manager initialized from context");
-        } else {
-            log::debug!("DebugPlugin: No notification manager available in context");
-        }
+        // Notification manager is already initialized as required field
+        log::debug!("DebugPlugin: Notification manager already available as required field");
         
         // Store colour manager if available and update formatter
         if let Some(ref colour_manager) = context.colour_manager {
@@ -308,16 +356,30 @@ impl Plugin for DebugPlugin {
     async fn execute(&self, request: PluginRequest) -> PluginResult<PluginResponse> {
         match request {
             PluginRequest::GetStatistics => {
-                // Return current statistics as a response
-                let stats = self.stats.read().await;
+                // Return aggregated statistics across all scans
+                let scan_data = self.scan_data.read().await;
+                
+                // Aggregate stats from all active scans
+                let mut total_stats = DebugStats::default();
+                for data in scan_data.values() {
+                    total_stats.messages_processed += data.stats.messages_processed;
+                    total_stats.commit_messages += data.stats.commit_messages;
+                    total_stats.file_changes += data.stats.file_changes;
+                    total_stats.file_info += data.stats.file_info;
+                    total_stats.other_messages += data.stats.other_messages;
+                    total_stats.display_errors += data.stats.display_errors;
+                    total_stats.queue_events += data.stats.queue_events;
+                }
+                
                 let stats_json = serde_json::json!({
-                    "messages_processed": stats.messages_processed,
-                    "commit_messages": stats.commit_messages,
-                    "file_changes": stats.file_changes,
-                    "file_info": stats.file_info,
-                    "other_messages": stats.other_messages,
-                    "display_errors": stats.display_errors,
-                    "queue_events": stats.queue_events,
+                    "messages_processed": total_stats.messages_processed,
+                    "commit_messages": total_stats.commit_messages,
+                    "file_changes": total_stats.file_changes,
+                    "file_info": total_stats.file_info,
+                    "other_messages": total_stats.other_messages,
+                    "display_errors": total_stats.display_errors,
+                    "queue_events": total_stats.queue_events,
+                    "active_scans": scan_data.len(),
                 });
                 
                 use crate::plugin::context::ExecutionMetadata;
@@ -326,7 +388,7 @@ impl Plugin for DebugPlugin {
                 let metadata = ExecutionMetadata {
                     duration_us: 100,
                     memory_used: 0,
-                    entries_processed: stats.messages_processed,
+                    entries_processed: total_stats.messages_processed,
                     plugin_version: self.info.version.clone(),
                     extra: HashMap::new(),
                 };
@@ -372,6 +434,7 @@ impl Plugin for DebugPlugin {
         vec![]
     }
     
+    
     fn get_plugin_help(&self) -> Option<String> {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::generate_help(self))
@@ -380,6 +443,11 @@ impl Plugin for DebugPlugin {
     fn get_plugin_help_with_colors(&self, no_color: bool, color: bool) -> Option<String> {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::generate_help_with_colors(self, no_color, color))
+    }
+    
+    fn get_plugin_help_with_settings(&self, settings: &crate::plugin::PluginSettings) -> Option<String> {
+        use crate::plugin::traits::PluginClapParser;
+        Some(PluginClapParser::generate_help_with_settings(self, settings))
     }
     
     fn build_clap_command(&self) -> Option<clap::Command> {
@@ -397,17 +465,17 @@ impl Plugin for DebugPlugin {
             }
         ]
     }
+    
+    async fn parse_plugin_arguments(&mut self, args: &[String]) -> PluginResult<()> {
+        use crate::plugin::traits::PluginClapParserExt;
+        self.parse_plugin_args_default(args).await
+    }
 }
 
 #[async_trait]
 impl Publisher<PluginEvent> for DebugPlugin {
     async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
-        if let Some(ref manager) = self.notification_manager {
-            manager.publish(event).await
-        } else {
-            log::warn!("No notification manager available for publishing events");
-            Ok(())
-        }
+        self.notification_manager.publish(event).await
     }
     
 }
@@ -432,7 +500,7 @@ impl ConsumerPlugin for DebugPlugin {
         log::info!("Debug plugin started consuming messages");
         
         // Start the message processing loop in a background task
-        let stats = Arc::clone(&self.stats);
+        let scan_data = Arc::clone(&self.scan_data);
         let colour_manager_option = {
             let guard = self.colour_manager.read().await;
             guard.clone()
@@ -442,15 +510,9 @@ impl ConsumerPlugin for DebugPlugin {
             colour_manager_option
         );
         let consuming_flag = Arc::clone(&self.consuming);
-        let consumer_store = Arc::clone(&self.consumer);
         let export_enabled_flag = Arc::clone(&self.export_enabled);
         
-        // Store the consumer in the field for later cleanup
-        {
-            let _consumer_guard = consumer_store.write().await;
-            // We can't clone QueueConsumer, so we'll manage it differently
-            // For now, just mark that we have a consumer
-        }
+        // Note: Consumer cleanup handled by consuming loop termination
         
         tokio::spawn(async move {
             while *consuming_flag.read().await {
@@ -460,29 +522,39 @@ impl ConsumerPlugin for DebugPlugin {
                         let export_enabled = *export_enabled_flag.read().await;
                         if !export_enabled {
                             if let Err(e) = formatter.format_message(&message).await {
-                                let mut stats_guard = stats.write().await;
-                                stats_guard.display_errors += 1;
+                                // Update display errors in scan data for this scan
+                                // TODO: Get actual scan_id from message context
+                                let scan_id = "unknown";
+                                let mut scan_data_guard = scan_data.write().await;
+                                if let Some(data) = scan_data_guard.get_mut(scan_id) {
+                                    data.stats.display_errors += 1;
+                                }
                                 log::error!("Failed to display message: {}", e);
                             }
                         }
                         
                         // Always update statistics
+                        // TODO: Get actual scan_id from message context
+                        let scan_id = "unknown";
                         {
-                            let mut stats_guard = stats.write().await;
-                            stats_guard.messages_processed += 1;
+                            let mut scan_data_guard = scan_data.write().await;
+                            let data = scan_data_guard.entry(scan_id.to_string())
+                                .or_insert_with(DebugScanData::new);
+                                
+                            data.stats.messages_processed += 1;
                             
                             match message.data() {
                                 crate::scanner::messages::MessageData::CommitInfo { .. } => {
-                                    stats_guard.commit_messages += 1;
+                                    data.stats.commit_messages += 1;
                                 }
                                 crate::scanner::messages::MessageData::FileChange { .. } => {
-                                    stats_guard.file_changes += 1;
+                                    data.stats.file_changes += 1;
                                 }
                                 crate::scanner::messages::MessageData::FileInfo { .. } => {
-                                    stats_guard.file_info += 1;
+                                    data.stats.file_info += 1;
                                 }
                                 _ => {
-                                    stats_guard.other_messages += 1;
+                                    data.stats.other_messages += 1;
                                 }
                             }
                         }
@@ -513,15 +585,21 @@ impl ConsumerPlugin for DebugPlugin {
         let export_enabled = *self.export_enabled.read().await;
         if !export_enabled {
             if let Err(e) = self.formatter.format_message(&message).await {
-                let mut stats = self.stats.write().await;
-                stats.display_errors += 1;
+                // Update display errors in scan data
+                let scan_id = "unknown"; // TODO: Get actual scan_id from message or context
+                let mut scan_data = self.scan_data.write().await;
+                let data = scan_data.entry(scan_id.to_string())
+                    .or_insert_with(DebugScanData::new);
+                data.stats.display_errors += 1;
                 log::error!("Failed to display message: {}", e);
                 return Err(PluginError::execution_failed(format!("Display error: {}", e)));
             }
         }
         
-        // Update statistics
-        self.update_stats(&message).await;
+        // Update statistics (need scan_id from current context)
+        // For now, use a default scan_id until we can get it from the message or context
+        let scan_id = "unknown"; // TODO: Get actual scan_id from message or queue context
+        self.update_stats(scan_id, &message).await;
         
         // Acknowledge the message
         consumer.acknowledge(message.header().sequence()).await.map_err(|e| {
@@ -532,19 +610,17 @@ impl ConsumerPlugin for DebugPlugin {
     }
     
     async fn handle_queue_event(&self, event: &QueueEvent) -> PluginResult<()> {
-        let mut stats = self.stats.write().await;
-        stats.queue_events += 1;
-        drop(stats); // Release the lock early
-        
         let config = self.config.read().await;
         let export_enabled = *self.export_enabled.read().await;
         
         match event {
             QueueEvent::ScanStarted { scan_id, .. } => {
-                // Store the current scan ID
+                // Initialize scan data for this scan
                 {
-                    let mut current_scan = self.current_scan_id.write().await;
-                    *current_scan = Some(scan_id.clone());
+                    let mut scan_data = self.scan_data.write().await;
+                    let data = scan_data.entry(scan_id.clone())
+                        .or_insert_with(DebugScanData::new);
+                    data.stats.queue_events += 1;
                 }
                 
                 if config.verbose && !export_enabled {
@@ -552,6 +628,14 @@ impl ConsumerPlugin for DebugPlugin {
                 }
             }
             QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
+                // Update scan data for queue event tracking
+                {
+                    let mut scan_data = self.scan_data.write().await;
+                    if let Some(data) = scan_data.get_mut(scan_id) {
+                        data.stats.queue_events += 1;
+                    }
+                }
+                
                 if config.verbose && !export_enabled {
                     println!("\n>>> SCAN COMPLETE: {} (Total: {} messages) <<<\n", 
                             scan_id, total_messages);
@@ -560,7 +644,7 @@ impl ConsumerPlugin for DebugPlugin {
                 // Create and publish data export if export is enabled and we have a notification manager
                 let export_enabled = *self.export_enabled.read().await;
                 if export_enabled {
-                    if self.notification_manager.is_some() {
+                    {
                         if let Ok(export_data) = self.create_data_export(scan_id).await {
                             let event = PluginEvent::DataReady {
                                 plugin_id: "debug".to_string(),
@@ -574,17 +658,24 @@ impl ConsumerPlugin for DebugPlugin {
                                 log::debug!("Published DataReady event for debug plugin");
                             }
                         }
-                    } else {
-                        log::debug!("Export enabled but no notification manager available");
                     }
                 }
             }
             QueueEvent::QueueDrained { scan_id, .. } => {
+                // Update scan data for queue event tracking
+                {
+                    let mut scan_data = self.scan_data.write().await;
+                    if let Some(data) = scan_data.get_mut(scan_id) {
+                        data.stats.queue_events += 1;
+                    }
+                }
+                
                 if config.verbose && !export_enabled {
                     println!("\n>>> QUEUE DRAINED: {} <<<\n", scan_id);
                 }
             }
             QueueEvent::MemoryWarning { current_size, threshold, .. } => {
+                // Memory warnings are global, not per-scan, so just display
                 if config.verbose && !export_enabled {
                     println!("\n!!! MEMORY WARNING: {} / {} bytes !!!\n", 
                             current_size, threshold);
@@ -657,25 +748,23 @@ impl PluginDataRequirements for DebugPlugin {
 /// Modern clap-based argument parsing implementation
 #[async_trait]
 impl PluginClapParser for DebugPlugin {
-    fn build_clap_command(&self) -> clap::Command {
-        use clap::{Arg, ArgAction, Command, ColorChoice};
-        
-        let mut command = Command::new("debug");
-        
-        // Configure colors based on environment variables
-        // Using Auto lets clap properly detect terminal capabilities
-        // Only disable colors when NO_COLOR is explicitly set
-        let color_choice = if std::env::var("NO_COLOR").is_ok() {
-            ColorChoice::Never
-        } else {
-            ColorChoice::Auto
-        };
-        
-        command = command.color(color_choice);
+    fn get_command_name(&self) -> impl Into<String> {
+        &self.command_name
+    }
+    
+    fn get_command_description(&self) -> &str {
+        "Inspects git scan message streams"
+    }
+    
+    fn get_plugin_settings(&self) -> &crate::plugin::PluginSettings {
+        &self.settings
+    }
+    
+    fn add_plugin_args(&self, command: clap::Command) -> clap::Command {
+        use clap::{Arg, ArgAction};
         
         command
             .override_usage("debug [OPTIONS]")
-            .about("Inspects git scan message streams")
             .after_help("Use --export to send results to the export plugin for formatted output.")
             .arg(Arg::new("verbose")
                 .short('v')
@@ -808,10 +897,10 @@ mod tests {
         
         assert_eq!(plugin.info.name, "debug");
         assert_eq!(plugin.info.plugin_type, PluginType::Processing);
-        assert!(!plugin.info.load_by_default);
+        assert!(!plugin.info.active_by_default);
         
-        let stats = plugin.stats.read().await;
-        assert_eq!(stats.messages_processed, 0);
+        let scan_data = plugin.scan_data.read().await;
+        assert!(scan_data.is_empty()); // No scans should be active initially
     }
     
     #[tokio::test]
@@ -839,7 +928,7 @@ mod tests {
         let formatter = MessageFormatter::new(config);
         
         // Create test message
-        let header = MessageHeader::new(1);
+        let header = MessageHeader::new(1, "test-scan".to_string());
         let data = MessageData::CommitInfo {
             hash: "abc123".to_string(),
             author: "Test Author".to_string(),
@@ -861,9 +950,10 @@ mod tests {
         let event = QueueEvent::scan_started("test-scan".to_string());
         plugin.handle_queue_event(&event).await.unwrap();
         
-        // Check statistics
-        let stats = plugin.stats.read().await;
-        assert_eq!(stats.queue_events, 1);
+        // Check that scan data was created
+        let scan_data = plugin.scan_data.read().await;
+        assert!(scan_data.contains_key("test-scan"));
+        assert_eq!(scan_data.get("test-scan").unwrap().stats.queue_events, 1);
     }
     
     #[tokio::test]
@@ -1006,13 +1096,22 @@ mod tests {
         plugin.initialize(&context).await.unwrap();
         *plugin.export_enabled.write().await = true;
         
-        // Add some test statistics
+        // Add some test statistics via scan data
         {
-            let mut stats = plugin.stats.write().await;
-            stats.messages_processed = 100;
-            stats.commit_messages = 50;
-            stats.file_changes = 40;
-            stats.file_info = 10;
+            let mut scan_data = plugin.scan_data.write().await;
+            let test_data = DebugScanData {
+                stats: DebugStats {
+                    messages_processed: 100,
+                    commit_messages: 50,
+                    file_changes: 40,
+                    file_info: 10,
+                    other_messages: 0,
+                    display_errors: 0,
+                    queue_events: 1,
+                },
+                started_at: std::time::Instant::now(),
+            };
+            scan_data.insert("test-scan".to_string(), test_data);
         }
         
         // Test that create_data_export works

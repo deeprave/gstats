@@ -8,13 +8,60 @@ use crate::scanner::async_engine::events::{RepositoryEvent, CommitInfo, FileInfo
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData};
-use crate::scanner::statistics::RepositoryStatistics;
+use serde::{Deserialize, Serialize};
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::SystemTime;
 use log::debug;
+
+/// Repository statistics collected from scanner events
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RepositoryStatistics {
+    /// Total number of commits in repository
+    pub total_commits: u64,
+    
+    /// Total number of tracked files
+    pub total_files: u64,
+    
+    /// Total size of tracked files in bytes
+    pub total_file_size: u64,
+    
+    /// Repository size in bytes (for compatibility)
+    pub repository_size: u64,
+    
+    /// Number of unique contributors
+    pub total_authors: u64,
+    
+    /// Repository age in days (from first to last commit)
+    pub age_days: u64,
+    
+    /// Average commits per day
+    pub avg_commits_per_day: f64,
+    
+    /// Date of first commit (Unix timestamp)
+    pub first_commit_date: Option<i64>,
+    
+    /// Date of last commit (Unix timestamp)
+    pub last_commit_date: Option<i64>,
+}
+
+impl Default for RepositoryStatistics {
+    fn default() -> Self {
+        Self {
+            total_commits: 0,
+            total_files: 0,
+            total_file_size: 0,
+            repository_size: 0,
+            total_authors: 0,
+            age_days: 0,
+            avg_commits_per_day: 0.0,
+            first_commit_date: None,
+            last_commit_date: None,
+        }
+    }
+}
 
 /// Statistics processor that collects repository statistics from events
 /// This processor is always active and collects data for all scan modes
@@ -165,7 +212,7 @@ impl EventProcessor for StatisticsProcessor {
         
         // Generate a final statistics message
         let message = ScanMessage::new(
-            MessageHeader::new(0),
+            MessageHeader::new(0, "statistics-processor".to_string()),
             MessageData::RepositoryStatistics {
                 total_commits: self.stats.total_commits,
                 total_files: self.stats.total_files,

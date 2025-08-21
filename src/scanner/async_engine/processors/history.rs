@@ -51,6 +51,7 @@ impl HistoryEventProcessor {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            "history-processor".to_string(),
         );
 
         let commit_data = MessageData::CommitInfo {

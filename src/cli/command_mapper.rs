@@ -12,13 +12,11 @@ use super::help_formatter::HelpFormatter;
 
 /// Resolution result for a command
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum CommandResolution {
     /// Function found in single plugin
     Function {
         plugin_name: String,
         function_name: String,
-        is_default: bool,
     },
     /// Direct plugin invocation
     DirectPlugin {
@@ -199,11 +197,10 @@ impl CommandMapper {
             debug!("Function '{}' found in {} plugin(s)", canonical_name, providers.len());
             
             if providers.len() == 1 {
-                let (plugin_name, is_default) = &providers[0];
+                let (plugin_name, _is_default) = &providers[0];
                 return Ok(CommandResolution::Function {
                     plugin_name: plugin_name.clone(),
                     function_name: canonical_name.to_string(),
-                    is_default: *is_default,
                 });
             } else {
                 // Multiple providers - ambiguous

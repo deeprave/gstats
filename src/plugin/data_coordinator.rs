@@ -43,15 +43,6 @@ impl DataCoordinator {
         }
     }
     
-    /// Set the current scan ID
-    pub fn set_scan_id(&mut self, scan_id: String) {
-        self.scan_id = Some(scan_id);
-    }
-    
-    /// Set expected plugins
-    pub fn set_expected_plugins(&mut self, plugins: Vec<String>) {
-        self.expected_plugins = plugins.into_iter().collect();
-    }
     
     /// Add data from a plugin
     pub fn add_data(&mut self, plugin_id: String, data: Arc<PluginDataExport>) {
@@ -73,6 +64,11 @@ impl DataCoordinator {
         }
     }
     
+    /// Check if a specific plugin has provided data
+    pub fn has_data_from(&self, plugin_id: &str) -> bool {
+        self.received_plugins.contains(plugin_id)
+    }
+    
     /// Get the number of plugins that have provided data
     pub fn received_count(&self) -> usize {
         self.received_plugins.len()
@@ -83,10 +79,6 @@ impl DataCoordinator {
         self.expected_plugins.len()
     }
     
-    /// Check if a specific plugin has provided data
-    pub fn has_data_from(&self, plugin_id: &str) -> bool {
-        self.received_plugins.contains(plugin_id)
-    }
     
     /// Get all collected data
     pub fn get_all_data(&self) -> Vec<Arc<PluginDataExport>> {
@@ -96,10 +88,6 @@ impl DataCoordinator {
             .collect()
     }
     
-    /// Get data from a specific plugin
-    pub fn get_plugin_data(&self, plugin_id: &str) -> Option<&Vec<Arc<PluginDataExport>>> {
-        self.pending_data.get(plugin_id)
-    }
     
     /// Clear all data for a new scan
     pub fn clear(&mut self) {
@@ -108,10 +96,6 @@ impl DataCoordinator {
         self.scan_id = None;
     }
     
-    /// Get the current scan ID
-    pub fn scan_id(&self) -> Option<&String> {
-        self.scan_id.as_ref()
-    }
     
     /// Get a list of plugins that haven't reported yet
     pub fn get_pending_plugins(&self) -> Vec<String> {

@@ -293,7 +293,7 @@ impl HelpFormatter {
             ("--exclude-file <PATTERN>", "Skip files matching these patterns"),
             ("--author <AUTHOR>", "Filter commits by author name or email"),
             ("--exclude-author <AUTHOR>", "Exclude commits by author name or email"),
-            ("--scan-limit <N>", "Maximum number of commits to scan from repository"),
+            ("--limit <N>", "Maximum number of commits to scan from repository"),
         ];
         
         for (option, desc) in options {

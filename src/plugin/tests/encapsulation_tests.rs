@@ -63,7 +63,7 @@ async fn test_dynamic_plugin_activation() {
     
     for plugin_name in plugin_names {
         if let Some(plugin) = registry.get_plugin(&plugin_name) {
-            if plugin.plugin_info().load_by_default {
+            if plugin.plugin_info().active_by_default {
                 registry.activate_plugin(&plugin_name).await
                     .expect(&format!("Failed to activate plugin: {}", plugin_name));
                 activated_count += 1;
@@ -95,7 +95,7 @@ async fn test_command_mapping_encapsulation() {
     let plugin_names = registry.list_plugins();
     for plugin_name in plugin_names {
         if let Some(plugin) = registry.get_plugin(&plugin_name) {
-            if plugin.plugin_info().load_by_default {
+            if plugin.plugin_info().active_by_default {
                 registry.activate_plugin(&plugin_name).await.unwrap();
             }
         }

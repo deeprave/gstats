@@ -41,7 +41,7 @@ impl PluginHandler {
                 )))?;
         }
         
-        let discovery = Box::new(UnifiedPluginDiscovery::new(Some(plugin_path), Vec::new())?);
+        let discovery = Box::new(UnifiedPluginDiscovery::new(Some(plugin_path), Vec::new(), crate::plugin::PluginSettings::default())?);
         let registry = SharedPluginRegistry::new();
         let command_mapper = CommandMapper::new();
         
@@ -54,6 +54,11 @@ impl PluginHandler {
     
     /// Create a new plugin handler with enhanced configuration
     pub fn with_plugin_config(config: PluginConfig) -> PluginResult<Self> {
+        Self::with_plugin_config_and_settings(config, crate::plugin::PluginSettings::default())
+    }
+    
+    /// Create a new plugin handler with enhanced configuration and custom settings
+    pub fn with_plugin_config_and_settings(config: PluginConfig, plugin_settings: crate::plugin::PluginSettings) -> PluginResult<Self> {
         // Use the first directory, log about others being ignored (simplified approach)
         let plugin_directory = if config.directories.is_empty() {
             None
@@ -92,6 +97,7 @@ impl PluginHandler {
         let discovery = Box::new(UnifiedPluginDiscovery::new(
             plugin_directory,
             config.plugin_exclude.clone(),
+            plugin_settings,
         )?);
         
         let registry = SharedPluginRegistry::new();
@@ -107,9 +113,8 @@ impl PluginHandler {
     /// Create a new plugin handler with an existing registry
     /// This allows the handler to use plugins from a pre-populated registry
     /// instead of creating duplicate instances
-    #[allow(dead_code)]
     pub fn with_registry(registry: SharedPluginRegistry) -> PluginResult<Self> {
-        let discovery = Box::new(UnifiedPluginDiscovery::new(Some("plugins".into()), Vec::new())?);
+        let discovery = Box::new(UnifiedPluginDiscovery::new(Some("plugins".into()), Vec::new(), crate::plugin::PluginSettings::default())?);
         let command_mapper = CommandMapper::new();
         
         Ok(Self {
@@ -123,7 +128,7 @@ impl PluginHandler {
     pub async fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
         debug!("Discovering plugins in directory: {}", self.discovery.plugin_directory().display());
         
-        let descriptors = self.discovery.discover_plugins().await?;
+        let descriptors = self.discovery.discover_plugins()?;
         debug!("Discovered {} plugins", descriptors.len());
         
         for descriptor in &descriptors {
@@ -163,7 +168,6 @@ impl PluginHandler {
     
     
     /// Get plugin information by name
-    #[allow(dead_code)]
     pub async fn get_plugin_info(&self, plugin_name: &str) -> PluginResult<Option<PluginInfo>> {
         let descriptors = self.discover_plugins().await?;
         
@@ -187,9 +191,8 @@ impl PluginHandler {
     }
     
     /// Filter plugins by type
-    #[allow(dead_code)]
     pub async fn get_plugins_by_type(&self, plugin_type: PluginType) -> PluginResult<Vec<PluginInfo>> {
-        let descriptors = self.discovery.discover_plugins_by_type(plugin_type).await?;
+        let descriptors = self.discovery.discover_plugins_by_type(plugin_type)?;
         
         let plugins = descriptors.into_iter()
             .map(|desc| PluginInfo {
@@ -217,18 +220,11 @@ impl PluginHandler {
         // UnifiedPluginDiscovery handles both builtin and external plugins
         let descriptors = self.discover_plugins().await?;
         for descriptor in descriptors {
-            // For builtin plugins, we need to instantiate them to get their advertised functions
-            // For external plugins, we extract functions from the descriptor
-            let functions = if crate::plugin::builtin::get_builtin_plugins().contains(&descriptor.info.name.as_str()) {
-                // This is a builtin plugin - instantiate it to get advertised functions
-                if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin(&descriptor.info.name).await {
-                    plugin.advertised_functions()
-                } else {
-                    // Fallback to descriptor-based functions
-                    self.extract_functions_from_descriptor(&descriptor)
-                }
+            // Use functions from descriptor - discovery system provides them
+            let functions = if !descriptor.functions.is_empty() {
+                descriptor.functions.clone()
             } else {
-                // External plugin - use descriptor-based functions
+                // Fallback for external plugins without functions defined
                 self.extract_functions_from_descriptor(&descriptor)
             };
             
@@ -256,7 +252,6 @@ impl PluginHandler {
     }
     
     /// Resolve a command to a plugin and function
-    #[allow(dead_code)]
     pub async fn resolve_command(&self, command: &str) -> Result<CommandResolution, String> {
         self.command_mapper.resolve_command(command)
             .await
@@ -302,7 +297,6 @@ impl PluginHandler {
 
 /// Plugin information for CLI display
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PluginInfo {
     pub name: String,
     pub version: String,
@@ -316,7 +310,6 @@ pub struct PluginInfo {
 
 /// Function mapping information for plugin-help display
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct FunctionMapping {
     pub function_name: String,
     pub aliases: Vec<String>,

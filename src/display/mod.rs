@@ -8,8 +8,10 @@ pub mod config;
 pub mod themes;
 pub mod progress;
 pub mod format;
+pub mod table;
 
 pub use colours::*;
 pub use config::*;
 pub use progress::*;
 pub use format::*;
+pub use table::*;

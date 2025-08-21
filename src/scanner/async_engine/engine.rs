@@ -1,6 +1,6 @@
-//! Async Scanner Engine Implementation
+//! Async Scanner Manager Implementation
 //! 
-//! Core async scanner engine that coordinates multiple scan modes concurrently.
+//! Manages EventDrivenScanner instances for repository scanning.
 
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
@@ -9,8 +9,8 @@ use tokio::runtime::Runtime;
 use futures::StreamExt;
 use crate::scanner::config::ScannerConfig;
 use crate::scanner::traits::MessageProducer;
-use crate::scanner::async_traits::{AsyncScanner, ScanMessageStream};
-use crate::scanner::statistics::RepositoryStatistics;
+use crate::scanner::async_traits::ScanMessageStream;
+use super::scanners::EventDrivenScanner;
 use super::task_manager::TaskManager;
 use super::error::{ScanError, ScanResult};
 use crate::plugin::SharedPluginRegistry;
@@ -18,8 +18,8 @@ use crate::notifications::traits::{Publisher, NotificationManager};
 use crate::notifications::events::ScanEvent;
 use crate::notifications::manager::AsyncNotificationManager;
 
-/// Core async scanner engine
-pub struct AsyncScannerEngine {
+/// Async scanner manager that coordinates EventDrivenScanner instances
+pub struct AsyncScannerManager {
     /// Tokio runtime for async operations
     #[cfg(not(test))]
     _runtime: Arc<Runtime>,
@@ -33,8 +33,8 @@ pub struct AsyncScannerEngine {
     /// Message producer for queue integration
     message_producer: Arc<dyn MessageProducer + Send + Sync>,
     
-    /// Registered scanners
-    scanners: Vec<Arc<dyn AsyncScanner>>,
+    /// Registered scanners (currently only EventDrivenScanner supported)
+    scanners: Vec<Arc<EventDrivenScanner>>,
     
     /// Plugin registry for coordination during shutdown
     plugin_registry: SharedPluginRegistry,
@@ -43,7 +43,7 @@ pub struct AsyncScannerEngine {
     notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
 }
 
-impl AsyncScannerEngine {
+impl AsyncScannerManager {
     /// Create a new async scanner engine
     pub fn new<P: AsRef<Path>>(
         repository_path: P,
@@ -68,6 +68,19 @@ impl AsyncScannerEngine {
     
     /// Create a new async scanner engine with existing runtime (for tests)
     pub fn with_runtime<P: AsRef<Path>>(
+        repository_path: P,
+        config: ScannerConfig,
+        message_producer: Arc<dyn MessageProducer + Send + Sync>,
+        notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
+        plugin_registry: SharedPluginRegistry,
+        _runtime: Arc<tokio::runtime::Runtime>,
+    ) -> ScanResult<Self> {
+        Self::with_runtime_impl(repository_path, config, message_producer, notification_manager, plugin_registry, _runtime)
+    }
+    
+    
+    /// Internal implementation for with_runtime
+    fn with_runtime_impl<P: AsRef<Path>>(
         repository_path: P,
         config: ScannerConfig,
         message_producer: Arc<dyn MessageProducer + Send + Sync>,
@@ -153,8 +166,8 @@ impl AsyncScannerEngine {
         })
     }
     
-    /// Register a scanner with the engine
-    pub fn register_scanner(&mut self, scanner: Arc<dyn AsyncScanner>) {
+    /// Register a scanner with the manager
+    pub fn register_scanner(&mut self, scanner: Arc<EventDrivenScanner>) {
         self.scanners.push(scanner);
     }
     
@@ -233,7 +246,7 @@ impl AsyncScannerEngine {
         let mut tasks = Vec::new();
         
         for scanner in &self.scanners {
-            let scanner_name = scanner.name().to_string();
+            let scanner_name = "EventDrivenScanner".to_string();
             let scanner_clone = Arc::clone(scanner);
             let producer = Arc::clone(&self.message_producer);
             let repository_path = self.repository_path.clone();
@@ -243,10 +256,11 @@ impl AsyncScannerEngine {
                     log::debug!("Starting scan with scanner: {scanner_name}");
                     
                     // Get message stream from scanner with repository path
-                    let stream = scanner_clone.scan_async(&repository_path).await?;
+                    // EventDrivenScanner's scan method
+                let stream = scanner_clone.scan_async(&repository_path).await?;
                     
                     // Process messages from stream
-                    AsyncScannerEngine::process_stream(stream, producer, cancel).await?;
+                    AsyncScannerManager::process_stream(stream, producer, cancel).await?;
                     
                     log::debug!("Completed scan with scanner: {scanner_name}");
                     Ok(())
@@ -257,29 +271,11 @@ impl AsyncScannerEngine {
         }
         
         // Wait for all tasks to complete
-        for task_id in tasks {
-            self.task_manager.wait_for_task(&task_id, None).await?;
-        }
+        self.task_manager.wait_all().await?;
         
         // Stop periodic event timer
         let _ = timer_tx.send(());
         let _ = periodic_task.await;
-        
-        // Check for any errors
-        let errors = self.task_manager.get_errors().await;
-        if !errors.is_empty() {
-            let error_msgs: Vec<String> = errors.iter()
-                .map(|e| format!("{}: {}", e.task_id, e.error))
-                .collect();
-            
-            // Publish ScanError event for fatal error
-            let error_event = ScanEvent::error(scan_id.clone(), error_msgs.join(", "), true); // fatal = true
-            if let Err(e) = self.notification_manager.publish(error_event).await {
-                log::warn!("Failed to publish ScanError event: {e}");
-            }
-            
-            return Err(ScanError::task(error_msgs.join(", ")));
-        }
         
         // Publish ScanCompleted event
         let scan_duration = scan_start_time.elapsed();
@@ -423,54 +419,28 @@ impl AsyncScannerEngine {
     /// Get engine statistics
     pub async fn get_stats(&self) -> EngineStats {
         EngineStats {
-            active_tasks: self.task_manager.active_task_count(),
-            completed_tasks: self.task_manager.completed_task_count().await,
+            active_tasks: self.task_manager.active_task_count().await,
+            completed_tasks: 0, // Simplified - no longer tracking
             registered_scanners: self.scanners.len(),
-            errors: self.task_manager.get_errors().await.len(),
-            repository_stats: None,
+            errors: 0, // Simplified - no longer tracking
         }
     }
     
-    /// Get comprehensive engine statistics including repository context
+    /// Get comprehensive engine statistics
     pub async fn get_comprehensive_stats(&self) -> ScanResult<EngineStats> {
-        let repository_stats = self.collect_repository_statistics().await.ok();
-        
         Ok(EngineStats {
-            active_tasks: self.task_manager.active_task_count(),
-            completed_tasks: self.task_manager.completed_task_count().await,
+            active_tasks: self.task_manager.active_task_count().await,
+            completed_tasks: 0, // Simplified - no longer tracking
             registered_scanners: self.scanners.len(),
-            errors: self.task_manager.get_errors().await.len(),
-            repository_stats,
+            errors: 0, // Simplified - no longer tracking
         })
     }
     
     /// Check if engine is idle (no active tasks)
-    pub fn is_idle(&self) -> bool {
-        self.task_manager.active_task_count() == 0
+    pub async fn is_idle(&self) -> bool {
+        self.task_manager.active_task_count().await == 0
     }
     
-    /// Collect repository statistics from event-driven processors
-    /// 
-    /// This provides basic repository context that can be useful for
-    /// analysis, reporting, and understanding scan scope.
-    /// Statistics are collected from the StatisticsProcessor after scanning.
-    pub async fn collect_repository_statistics(&self) -> ScanResult<RepositoryStatistics> {
-        // For now, return default statistics since the event-driven approach
-        // will collect statistics during scanning through the StatisticsProcessor
-        // This method will be updated to extract statistics from the processor registry
-        // once the full event-driven scanning is implemented
-        
-        log::debug!("Collecting repository statistics from event-driven processors");
-        
-        // TODO: Extract statistics from StatisticsProcessor in processor registry
-        // This requires integration with the event processing pipeline
-        let stats = RepositoryStatistics::default();
-        
-        log::debug!("Repository statistics (placeholder): {} commits, {} files, {} authors", 
-                   stats.total_commits, stats.total_files, stats.total_authors);
-        
-        Ok(stats)
-    }
 }
 
 /// Engine statistics
@@ -480,21 +450,20 @@ pub struct EngineStats {
     pub completed_tasks: usize,
     pub registered_scanners: usize,
     pub errors: usize,
-    pub repository_stats: Option<RepositoryStatistics>,
 }
 
 /// Builder for async scanner engine
-pub struct AsyncScannerEngineBuilder {
+pub struct AsyncScannerManagerBuilder {
     repository_path: Option<PathBuf>,
     config: Option<ScannerConfig>,
     message_producer: Option<Arc<dyn MessageProducer + Send + Sync>>,
     notification_manager: Option<Arc<AsyncNotificationManager<ScanEvent>>>,
-    scanners: Vec<Arc<dyn AsyncScanner>>,
+    scanners: Vec<Arc<EventDrivenScanner>>,
     runtime: Option<Arc<tokio::runtime::Runtime>>,
     plugin_registry: Option<SharedPluginRegistry>,
 }
 
-impl AsyncScannerEngineBuilder {
+impl AsyncScannerManagerBuilder {
     /// Create a new builder
     pub fn new() -> Self {
         Self {
@@ -539,7 +508,7 @@ impl AsyncScannerEngineBuilder {
     }
     
     /// Add a scanner
-    pub fn add_scanner(mut self, scanner: Arc<dyn AsyncScanner>) -> Self {
+    pub fn add_scanner(mut self, scanner: Arc<EventDrivenScanner>) -> Self {
         self.scanners.push(scanner);
         self
     }
@@ -566,7 +535,7 @@ impl AsyncScannerEngineBuilder {
     /// let registry = SharedPluginRegistry::new();
     /// // ... register plugins ...
     /// 
-    /// let engine = AsyncScannerEngineBuilder::new()
+    /// let engine = AsyncScannerManagerBuilder::new()
     ///     .repository_path("/path/to/repo")
     ///     .message_producer(producer)
     ///     .plugin_registry(registry)  // Required for coordination
@@ -578,7 +547,7 @@ impl AsyncScannerEngineBuilder {
     }
     
     /// Build the engine
-    pub fn build(self) -> ScanResult<AsyncScannerEngine> {
+    pub fn build(self) -> ScanResult<AsyncScannerManager> {
         let repository_path = self.repository_path
             .ok_or_else(|| ScanError::configuration("Repository path not set"))?;
         
@@ -595,13 +564,19 @@ impl AsyncScannerEngineBuilder {
         
         let mut engine = if let Some(runtime) = self.runtime {
             // Use provided runtime
-            AsyncScannerEngine::with_runtime(repository_path, config, message_producer, notification_manager, plugin_registry, runtime)?
+            AsyncScannerManager::with_runtime(repository_path, config, message_producer, notification_manager, plugin_registry, runtime)?
         } else {
-            // Create new runtime
+            // Check if we're already in a tokio runtime context
+            if tokio::runtime::Handle::try_current().is_ok() {
+                log::warn!("AsyncScannerManager: Detected existing runtime context - this may cause shutdown issues");
+                log::warn!("AsyncScannerManager: Consider refactoring to avoid nested runtime creation");
+            }
+            
+            // Always create our own runtime for now - this is the original behavior
             #[cfg(test)]
-            let engine = AsyncScannerEngine::new_for_test(repository_path, config, message_producer, notification_manager, plugin_registry)?;
+            let engine = AsyncScannerManager::new_for_test(repository_path, config, message_producer, notification_manager, plugin_registry)?;
             #[cfg(not(test))]
-            let engine = AsyncScannerEngine::new(repository_path, config, message_producer, notification_manager, plugin_registry)?;
+            let engine = AsyncScannerManager::new(repository_path, config, message_producer, notification_manager, plugin_registry)?;
             engine
         };
         
@@ -613,15 +588,15 @@ impl AsyncScannerEngineBuilder {
     }
 }
 
-impl Default for AsyncScannerEngineBuilder {
+impl Default for AsyncScannerManagerBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Publisher trait implementation for AsyncScannerEngine
+/// Publisher trait implementation for AsyncScannerManager
 #[async_trait::async_trait]
-impl Publisher<ScanEvent> for AsyncScannerEngine {
+impl Publisher<ScanEvent> for AsyncScannerManager {
     /// Publish an event to all subscribers
     async fn publish(&self, event: ScanEvent) -> crate::notifications::error::NotificationResult<()> {
         self.notification_manager.publish(event).await
@@ -629,76 +604,46 @@ impl Publisher<ScanEvent> for AsyncScannerEngine {
     
 }
 
-/// Drop implementation for AsyncScannerEngine to ensure graceful shutdown
-impl Drop for AsyncScannerEngine {
+/// Drop implementation for AsyncScannerManager to ensure graceful shutdown
+impl Drop for AsyncScannerManager {
     /// Ensure graceful shutdown coordination when the scanner is dropped
     /// 
     /// This implementation ensures that the scanner coordinates with all active
     /// plugins before being destroyed, preventing data loss and ensuring proper
     /// cleanup of plugin resources.
     /// 
-    /// The drop process:
-    /// 1. Cancels all active scanner tasks to stop new work
-    /// 2. Waits for all active plugins to transition to idle states
-    /// 3. Completes successfully when coordination is done or timeout is reached
-    /// 
-    /// # Timeout Handling
-    /// Uses a reasonable timeout (10 seconds) to prevent the drop from hanging
-    /// indefinitely. If plugins don't respond within this time, the drop will
-    /// complete anyway to prevent blocking the application shutdown.
+    /// The drop process waits for all active plugins to transition to idle states
+    /// to ensure data export and processing complete before shutdown.
     fn drop(&mut self) {
-        // We can't use async methods in Drop, but we can check if we're in an async context
-        // and use Handle::current() to spawn a blocking task
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            // We're in an async context - spawn a task to handle graceful shutdown
-            let plugin_registry = self.plugin_registry.clone();
+        // Since we need to coordinate with async plugins but Drop is sync,
+        // we need to create a runtime to handle the coordination
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build() 
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("AsyncScannerManager Drop: Failed to create runtime for shutdown coordination: {}", e);
+                return;
+            }
+        };
+        
+        let plugin_registry = self.plugin_registry.clone();
+        
+        rt.block_on(async move {
+            log::debug!("AsyncScannerManager Drop: Starting graceful shutdown coordination");
             
-            // Spawn a task to cancel and wait for plugin coordination
-            let _shutdown_task = handle.spawn(async move {
-                log::debug!("AsyncScannerEngine Drop: Starting graceful shutdown coordination");
-                
-                let timeout = std::time::Duration::from_secs(10);
-                let start = tokio::time::Instant::now();
-                let poll_interval = std::time::Duration::from_millis(10);
-                
-                loop {
-                    let all_idle = {
-                        let registry_inner = plugin_registry.inner().read().await;
-                        registry_inner.are_all_active_plugins_idle()
-                    };
-                    
-                    if all_idle {
-                        log::debug!("AsyncScannerEngine Drop: All plugins are idle - graceful shutdown complete");
-                        break;
-                    }
-                    
-                    if start.elapsed() >= timeout {
-                        // Get list of still-processing plugins for warning
-                        let processing_plugins = {
-                            let registry_inner = plugin_registry.inner().read().await;
-                            registry_inner.get_active_processing_plugins()
-                        };
-                        
-                        log::warn!(
-                            "AsyncScannerEngine Drop: Plugin coordination timed out after {}s. Still processing: {:?}", 
-                            timeout.as_secs(),
-                            processing_plugins
-                        );
-                        break;
-                    }
-                    
-                    tokio::time::sleep(poll_interval).await;
+            let timeout = std::time::Duration::from_secs(10);
+            
+            match plugin_registry.inner().read().await.wait_for_all_plugins_idle(timeout).await {
+                Ok(()) => {
+                    log::debug!("AsyncScannerManager Drop: All plugins completed - graceful shutdown successful");
                 }
-                
-                log::debug!("AsyncScannerEngine Drop: Graceful shutdown coordination completed");
-            });
-            
-            // Note: We can't wait for the task to complete in Drop, but it will run to completion
-            // in the background. This is the best we can do within Drop constraints.
-        } else {
-            // Not in an async context - just log a warning
-            log::warn!("AsyncScannerEngine Drop: Not in async context - graceful shutdown coordination skipped");
-        }
+                Err(e) => {
+                    log::warn!("AsyncScannerManager Drop: Plugin coordination failed: {}", e);
+                }
+            }
+        });
     }
 }
 

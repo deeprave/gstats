@@ -2,7 +2,8 @@
 
 use crate::cli::plugin_handler::PluginHandler;
 use crate::plugin::SharedPluginRegistry;
-use crate::app::initialization::initialize_builtin_plugins;
+use crate::app::initialization::initialize_plugins_via_discovery;
+use crate::display::ColourManager;
 
 #[tokio::test]
 async fn test_plugin_handler_uses_registry_not_new_instances() {
@@ -11,7 +12,8 @@ async fn test_plugin_handler_uses_registry_not_new_instances() {
     
     // Initialize builtin plugins in a registry
     let registry = SharedPluginRegistry::new();
-    initialize_builtin_plugins(&registry).await.unwrap();
+    let colour_manager = ColourManager::from_color_args(false, false, None);
+    initialize_plugins_via_discovery(&registry, &colour_manager, Vec::new()).await.unwrap();
     
     // Create PluginHandler with the same registry
     let mut handler = PluginHandler::with_registry(registry.clone()).unwrap();
@@ -44,7 +46,8 @@ async fn test_command_resolution_without_plugin_duplication() {
     // This test expects command resolution to work without creating duplicate plugins
     
     let registry = SharedPluginRegistry::new();
-    initialize_builtin_plugins(&registry).await.unwrap();
+    let colour_manager = ColourManager::from_color_args(false, false, None);
+    initialize_plugins_via_discovery(&registry, &colour_manager, Vec::new()).await.unwrap();
     
     // Manually activate commits plugin for this test
     {
@@ -85,7 +88,8 @@ async fn test_inactive_plugins_not_in_command_mappings() {
     // This test expects that only ACTIVE plugins appear in command mappings
     
     let registry = SharedPluginRegistry::new();
-    initialize_builtin_plugins(&registry).await.unwrap();
+    let colour_manager = ColourManager::from_color_args(false, false, None);
+    initialize_plugins_via_discovery(&registry, &colour_manager, Vec::new()).await.unwrap();
     
     let mut handler = PluginHandler::with_registry(registry.clone()).unwrap();
     handler.build_command_mappings().await.unwrap();

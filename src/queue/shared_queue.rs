@@ -20,10 +20,13 @@ pub struct SharedMessageQueue {
 }
 
 impl SharedMessageQueue {
-    /// Create a new shared message queue for the given scan session
-    pub fn new(scan_id: String, notification_manager: Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::QueueEvent>>) -> Self {
+    /// Create a new shared message queue (supports multiple scan sessions)
+    pub fn new(
+        queue_publisher: Arc<crate::notifications::typed_publishers::QueueEventPublisher>,
+        scan_publisher: Arc<crate::notifications::typed_publishers::ScanEventPublisher>
+    ) -> Self {
         Self {
-            queue: Arc::new(MultiConsumerQueue::new(scan_id, notification_manager)),
+            queue: Arc::new(MultiConsumerQueue::new_with_publishers(queue_publisher, scan_publisher)),
         }
     }
 
@@ -55,6 +58,11 @@ impl SharedMessageQueue {
     pub async fn get_statistics(&self) -> crate::queue::QueueStatistics {
         self.queue.get_statistics().await
     }
+    
+    /// Subscribe to ScanEvents for statistical tracking
+    pub async fn subscribe_to_scan_events(&self) -> crate::queue::QueueResult<()> {
+        self.queue.subscribe_to_scan_events().await
+    }
 
 }
 
@@ -66,7 +74,7 @@ mod tests {
     use crate::scanner::messages::{MessageHeader, MessageData};
 
     fn create_test_message() -> ScanMessage {
-        let header = MessageHeader::new(0);
+        let header = MessageHeader::new(0, "test-scan".to_string());
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1000,
@@ -77,8 +85,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_creation() {
-        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
-        let queue = SharedMessageQueue::new("test-scan".to_string(), notification_manager);
+        let unified_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue_publisher = Arc::new(crate::notifications::typed_publishers::QueueEventPublisher::new(unified_manager.clone()));
+        let scan_publisher = Arc::new(crate::notifications::typed_publishers::ScanEventPublisher::new(unified_manager));
+        let queue = SharedMessageQueue::new(queue_publisher, scan_publisher);
         
         let stats = queue.get_statistics().await;
         assert_eq!(stats.queue_size, 0);
@@ -87,8 +97,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_lifecycle() {
-        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
-        let queue = SharedMessageQueue::new("test-scan".to_string(), notification_manager);
+        let unified_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue_publisher = Arc::new(crate::notifications::typed_publishers::QueueEventPublisher::new(unified_manager.clone()));
+        let scan_publisher = Arc::new(crate::notifications::typed_publishers::ScanEventPublisher::new(unified_manager));
+        let queue = SharedMessageQueue::new(queue_publisher, scan_publisher);
         
         // Start queue
         queue.start().await.unwrap();
@@ -96,8 +108,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_enqueue_and_consume() {
-        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
-        let queue = SharedMessageQueue::new("test-scan".to_string(), notification_manager);
+        let unified_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue_publisher = Arc::new(crate::notifications::typed_publishers::QueueEventPublisher::new(unified_manager.clone()));
+        let scan_publisher = Arc::new(crate::notifications::typed_publishers::ScanEventPublisher::new(unified_manager));
+        let queue = SharedMessageQueue::new(queue_publisher, scan_publisher);
         queue.start().await.unwrap();
 
         let message = create_test_message();
@@ -121,13 +135,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_consumers() {
-        let notification_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
-        let queue = SharedMessageQueue::new("test-scan".to_string(), notification_manager);
+        let unified_manager = Arc::new(crate::notifications::AsyncNotificationManager::new());
+        let queue_publisher = Arc::new(crate::notifications::typed_publishers::QueueEventPublisher::new(unified_manager.clone()));
+        let scan_publisher = Arc::new(crate::notifications::typed_publishers::ScanEventPublisher::new(unified_manager));
+        let queue = SharedMessageQueue::new(queue_publisher, scan_publisher);
         queue.start().await.unwrap();
 
         // Add messages
         for i in 0..5 {
-            let header = MessageHeader::new(0);
+            let header = MessageHeader::new(0, "test-scan".to_string());
             let data = MessageData::FileInfo {
                 path: format!("test{}.rs", i),
                 size: 1000,

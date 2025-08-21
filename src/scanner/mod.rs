@@ -41,7 +41,6 @@ pub mod query;
 pub mod async_engine;
 pub mod async_traits;
 pub mod branch_detection;
-pub mod statistics;
 
 #[cfg(test)]
 mod tests;
@@ -51,7 +50,7 @@ pub use config::ScannerConfig;
 pub use traits::MessageProducer;
 pub use version::{get_api_version, is_api_compatible};
 pub use query::QueryParams;
-pub use async_engine::AsyncScannerEngineBuilder;
+pub use async_engine::{AsyncScannerManager, AsyncScannerManagerBuilder};
 
 use anyhow::Result;
 

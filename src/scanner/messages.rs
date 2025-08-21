@@ -30,6 +30,8 @@ pub struct MessageHeader {
     pub sequence: u64,
     /// Timestamp when message was created
     pub timestamp: u64,
+    /// Scan identifier this message belongs to
+    pub scan_id: String,
 }
 
 /// Variable data types for different scanning modes
@@ -113,9 +115,10 @@ pub enum MessageData {
 
 impl MessageHeader {
     /// Create a new message header
-    pub fn new(sequence: u64) -> Self {
+    pub fn new(sequence: u64, scan_id: String) -> Self {
         Self {
             sequence,
+            scan_id,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -206,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_message_creation() {
-        let header = MessageHeader::new(12345);
+        let header = MessageHeader::new(12345, "test-scan".to_string());
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1024,
@@ -220,7 +223,7 @@ mod tests {
     #[test]
     fn test_message_serialization() {
         let message = ScanMessage::new(
-            MessageHeader::new(67890),
+            MessageHeader::new(67890, "test-scan".to_string()),
             MessageData::CommitInfo {
                 hash: "abc123".to_string(),
                 author: "developer".to_string(),
@@ -299,7 +302,7 @@ mod tests {
         };
 
         let message = ScanMessage::new(
-            MessageHeader::new(42),
+            MessageHeader::new(42, "test-scan".to_string()),
             file_change_data,
         );
 

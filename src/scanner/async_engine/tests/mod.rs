@@ -1,7 +1,3 @@
-//! Async Engine Test Module
+//! Scanner Engine Tests Module
 
-// Core production tests
-mod engine_tests;
-mod concurrency_tests;
-mod integration_tests;
-mod publisher_tests;
+mod manager_tests;

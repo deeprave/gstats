@@ -287,7 +287,7 @@ impl ContextualHelp {
                 },
                 HelpExample {
                     description: "Complex filtering".to_string(),
-                    command: "gstats commits --include-path src/ --exclude-author \"bot@\" --scan-limit 50".to_string(),
+                    command: "gstats --limit 50 commits --include-path src/ --exclude-author \"bot@\"".to_string(),
                     use_case: "Detailed analysis excluding automated commits".to_string(),
                     level: HelpLevel::Advanced,
                 },

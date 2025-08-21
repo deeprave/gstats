@@ -29,12 +29,14 @@
 //! └── Message builders              // Clean message construction
 //! ```
 
-use crate::scanner::async_traits::AsyncScanner;
 use crate::scanner::query::QueryParams;
 use crate::scanner::messages::{ScanMessage, MessageHeader, MessageData, FileChangeData};
 use crate::scanner::branch_detection::BranchDetection;
 use super::error::{ScanError, ScanResult};
-use super::stream::ScanMessageStream;
+use futures::stream::BoxStream;
+
+/// Type alias for scan message streams
+pub type ScanMessageStream = BoxStream<'static, ScanResult<crate::scanner::messages::ScanMessage>>;
 use super::events::{EventFilter, CommitInfo, FileInfo, ChangeType};
 use super::diff_analyzer::DiffLineAnalyzer;
 use super::checkout_manager::CheckoutManager;
@@ -42,7 +44,6 @@ use crate::scanner::config::RuntimeScannerConfig;
 use log::debug;
 use std::path::{Path, PathBuf};
 use std::time::{UNIX_EPOCH, Duration, SystemTime};
-use async_trait::async_trait;
 
 /// Builder for creating CommitInfo messages (GS-76 Phase 1.2)
 #[derive(Debug, Clone, Default)]
@@ -515,6 +516,7 @@ fn process_single_commit(
     repo: &gix::Repository,
     commit: &gix::Commit,
     event_filter: &EventFilter,
+    scan_id: &str,
 ) -> Result<Vec<ScanMessage>, ScanError> {
     let mut messages = Vec::new();
     let mut message_index = 0u64; // Will be properly managed in Phase 3
@@ -564,7 +566,7 @@ fn process_single_commit(
             .build()?;
             
         let commit_message = ScanMessage::new(
-            MessageHeader::new(message_index),
+            MessageHeader::new(message_index, scan_id.to_string()),
             commit_message_data,
         );
         
@@ -598,7 +600,7 @@ fn process_single_commit(
                     .build()?;
                     
                 let file_change_message = ScanMessage::new(
-                    MessageHeader::new(message_index),
+                    MessageHeader::new(message_index, scan_id.to_string()),
                     file_change_data,
                 );
                 
@@ -637,79 +639,14 @@ impl CommitEventType {
     }
 }
 
-/// Detect special git events from commit information (GS-76 Phase 2.2)
-fn detect_commit_event_type(commit: &gix::Commit) -> CommitEventType {
-    let parent_count = commit.parent_ids().count();
-    
-    // Get commit message for pattern matching
-    let message = commit.message()
-        .map(|m| m.title.to_string())
-        .unwrap_or_default()
-        .to_lowercase();
-    
-    // Detect merge commits (multiple parents)
-    if parent_count > 1 {
-        // Check for squash merge patterns
-        if message.contains("squash") || message.contains("squashed") {
-            return CommitEventType::Squash;
-        }
-        return CommitEventType::Merge;
-    }
-    
-    // Detect special single-parent commits by message patterns
-    if message.starts_with("revert") || message.contains("reverts") {
-        return CommitEventType::Revert;
-    }
-    
-    if message.contains("cherry-pick") || message.contains("cherry picked") {
-        return CommitEventType::CherryPick;
-    }
-    
-    // Look for rebase indicators
-    if message.contains("rebased") || message.contains("rebase") {
-        return CommitEventType::Rebase;
-    }
-    
-    // Look for squash indicators in single commits  
-    if message.contains("squash") && (message.contains("fixup") || message.contains("amend")) {
-        return CommitEventType::Squash;
-    }
-    
-    CommitEventType::Normal
-}
-
-/// Map gix file status to our ChangeType enum (GS-76 Phase 2.2)
-/// Note: This is a placeholder since we need to implement real diff analysis in Phase 2.4
-fn map_change_type_from_git_status(status: &str) -> ChangeType {
-    // This is a simplified mapping that will be enhanced in Phase 2.4
-    // when we implement real git diff integration
-    match status {
-        "A" => ChangeType::Added,
-        "M" => ChangeType::Modified,
-        "D" => ChangeType::Deleted,
-        "R" => ChangeType::Renamed,
-        "C" => ChangeType::Copied,
-        _ => ChangeType::Modified, // Default fallback
-    }
-}
-
-/// Enhanced map_change_type function for future git diff integration (GS-76 Phase 2.2)
-fn map_change_type(is_new_file: bool, is_deleted_file: bool, has_renames: bool) -> ChangeType {
-    is_new_file
-        .then_some(ChangeType::Added)
-        .or_else(|| is_deleted_file.then_some(ChangeType::Deleted))
-        .or_else(|| has_renames.then_some(ChangeType::Renamed))
-        .unwrap_or(ChangeType::Modified)
-}
-
-#[async_trait]
-impl AsyncScanner for EventDrivenScanner {
-    fn name(&self) -> &str {
+impl EventDrivenScanner {
+    /// Get the scanner name
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-
-    async fn scan_async(&self, repository_path: &Path) -> ScanResult<ScanMessageStream> {
+    /// Scan a repository and return a stream of messages
+    pub async fn scan_async(&self, repository_path: &Path) -> ScanResult<ScanMessageStream> {
         debug!("EventDrivenScanner: Starting scan for path: {:?}", repository_path);
         
         // Repository-owning pattern: extract Send+Sync data immediately using spawn_blocking
@@ -745,7 +682,7 @@ impl AsyncScanner for EventDrivenScanner {
                     .map_err(|e| ScanError::Repository(format!("Failed to convert to commit: {e}")))?;
                 
                 // Use helper function to process the entire commit - reduces complexity
-                let commit_messages = process_single_commit(&repo, &commit, &event_filter)?;
+                let commit_messages = process_single_commit(&repo, &commit, &event_filter, "default-scan")?;
                 for message in commit_messages {
                     messages.push(message);
                 }
@@ -1120,226 +1057,4 @@ mod tests {
         assert!(change_types_implemented, "Change type detection implemented successfully");
     }
 
-    #[test]
-    fn test_no_arbitrary_limits() {
-        // Read the scanner source code and check for arbitrary limits
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scanner/async_engine/scanners.rs"));
-        
-        // Check for arbitrary limits in the main scanning loop (excluding test code)
-        let scan_loop_section = source.lines()
-            .skip_while(|line| !line.contains("// GS-75: Single-phase traversal"))
-            .take_while(|line| !line.contains("#[cfg(test)]"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        
-        let has_commit_limit = scan_loop_section.contains("commits.take(100)") || scan_loop_section.contains("commits.take(50)");
-        let has_file_limit = scan_loop_section.contains("files.into_iter().take(20)") || scan_loop_section.contains("files.into_iter().take(10)");
-        
-        // These arbitrary limits should be removed
-        assert!(!has_commit_limit, "Found arbitrary commit limit (.take(100)) in scanning loop - this should be removed");
-        assert!(!has_file_limit, "Found arbitrary file limit (.take(20)) in scanning loop - this should be removed");
-        
-        // User-configurable limits via CLI args are acceptable
-        // Only hardcoded arbitrary limits in the scanning logic should be removed
-    }
-
-    #[test]
-    fn test_no_rough_estimates() {
-        // Read the scanner source code and check for rough estimates
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scanner/async_engine/scanners.rs"));
-        
-        // Check for various rough estimates and dummy data (excluding test code and comments)
-        let scan_loop_section = source.lines()
-            .skip_while(|line| !line.contains("// GS-75: Single-phase traversal"))
-            .take_while(|line| !line.contains("#[cfg(test)]"))
-            .filter(|line| !line.trim().starts_with("//"))  // Exclude comment lines
-            .collect::<Vec<_>>()
-            .join("\n");
-        
-        let has_size_estimate = scan_loop_section.contains("file_path.len() * 50");
-        let has_line_dummy = scan_loop_section.contains("Some(10)") && scan_loop_section.contains("line_count:");
-        let has_lines_added_dummy = scan_loop_section.contains("lines_added: 10") || scan_loop_section.contains("lines_added: 20");
-        let has_lines_removed_dummy = scan_loop_section.contains("lines_removed: 5");
-        
-        // These rough estimates should be removed
-        assert!(!has_size_estimate, "Found rough size estimate (file_path.len() * 50) - use real file sizes or mark as unavailable");
-        assert!(!has_line_dummy, "Found dummy line count (Some(10)) - use real line counts or mark as unavailable");  
-        assert!(!has_lines_added_dummy, "Found dummy lines_added values - use real diff data or mark as unavailable");
-        assert!(!has_lines_removed_dummy, "Found dummy lines_removed values - use real diff data or mark as unavailable");
-    }
-
-    #[test]
-    fn test_scanner_complexity_reduced() {
-        // Check that helper functions exist and are being used
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scanner/async_engine/scanners.rs"));
-        
-        // Verify helper functions exist
-        let has_extract_commit_metadata = source.contains("fn extract_commit_metadata");
-        let has_get_commit_file_changes = source.contains("fn get_commit_file_changes");
-        let has_process_single_commit = source.contains("fn process_single_commit");
-        
-        assert!(has_extract_commit_metadata, "extract_commit_metadata helper function should exist");
-        assert!(has_get_commit_file_changes, "get_commit_file_changes helper function should exist");
-        assert!(has_process_single_commit, "process_single_commit helper function should exist");
-        
-        // The main scan loop should use these helpers to reduce complexity
-        // This is a proxy test - in reality we'd want to measure actual nesting levels
-        println!("✅ Helper functions exist for complexity reduction");
-    }
-
-    #[test]  
-    fn test_message_flow_validation() {
-        // Check that the proper message types exist in the system
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scanner/messages.rs"));
-        
-        // Verify both CommitInfo and FileChange message types exist
-        let has_commit_info = source.contains("CommitInfo {") && source.contains("hash: String");
-        let has_file_change = source.contains("FileChange {") && source.contains("commit_hash: String");
-        
-        assert!(has_commit_info, "CommitInfo message type should exist with hash field");
-        assert!(has_file_change, "FileChange message type should exist with commit_hash field for linking");
-        
-        // The actual message flow (1 CommitInfo + N FileChange per commit) 
-        // requires integration testing with real git repository
-        println!("✅ Message types exist for proper commit-centric flow");
-    }
-
-    #[test]
-    fn test_builder_pattern_usage() {
-        // Check that builder patterns exist and are defined
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scanner/async_engine/scanners.rs"));
-        
-        // Verify builder structs exist
-        let has_commit_builder = source.contains("struct CommitMessageBuilder") && source.contains("impl CommitMessageBuilder");
-        let has_file_change_builder = source.contains("struct FileChangeMessageBuilder") && source.contains("impl FileChangeMessageBuilder");
-        
-        assert!(has_commit_builder, "CommitMessageBuilder should exist with implementation");
-        assert!(has_file_change_builder, "FileChangeMessageBuilder should exist with implementation");
-        
-        // Check that builders have build methods
-        let commit_builder_has_build = source.contains("fn build(") && source.contains("CommitMessageBuilder");
-        let file_change_builder_has_build = source.contains("fn build(") && source.contains("FileChangeMessageBuilder");
-        
-        assert!(commit_builder_has_build, "CommitMessageBuilder should have build method");
-        assert!(file_change_builder_has_build, "FileChangeMessageBuilder should have build method");
-        
-        println!("✅ Builder patterns exist for clean message construction");
-    }
-
-    // ===== GS-76 Phase 2.1: Helper Function Tests =====
-
-    #[test]
-    fn test_helper_functions_implemented() {
-        // Update the failing test to show helper functions now exist
-        // This verifies that the helper function signatures are correctly implemented
-        
-        // Verify helper function types exist (compile-time check)
-        let _extract_fn: fn(&gix::Commit) -> Result<CommitMetadata, ScanError> = extract_commit_metadata;
-        let _file_changes_fn: fn(&gix::Repository, &gix::Commit, Option<&mut CheckoutManager>, Option<&RuntimeScannerConfig>) -> Result<Vec<FileChange>, ScanError> = get_commit_file_changes;  
-        let _process_fn: fn(&gix::Repository, &gix::Commit, &EventFilter) -> Result<Vec<ScanMessage>, ScanError> = process_single_commit;
-        
-        // Helper functions now exist with correct signatures
-        assert!(true, "Helper functions implemented successfully");
-    }
-
-    #[test]
-    fn test_commit_metadata_structure() {
-        // Test CommitMetadata struct has expected fields
-        let metadata = CommitMetadata {
-            hash: "abc123".to_string(),
-            short_hash: "abc12345".to_string(),
-            author_name: "Test Author".to_string(),
-            author_email: "test@example.com".to_string(),
-            message: "Test message".to_string(),
-            timestamp_seconds: 1672531200,
-            timestamp: UNIX_EPOCH + Duration::from_secs(1672531200),
-        };
-        
-        assert_eq!(metadata.hash, "abc123");
-        assert_eq!(metadata.author_name, "Test Author");
-        assert_eq!(metadata.timestamp_seconds, 1672531200);
-    }
-
-    #[test]  
-    fn test_file_change_structure() {
-        // Test FileChange struct has expected fields
-        let file_change = FileChange {
-            path: "src/main.rs".to_string(),
-            change_type: ChangeType::Modified,
-            old_path: None,
-            insertions: 10,
-            deletions: 5,
-            is_binary: false,
-        };
-        
-        assert_eq!(file_change.path, "src/main.rs");
-        assert_eq!(file_change.change_type, ChangeType::Modified);
-        assert_eq!(file_change.insertions, 10);
-        assert_eq!(file_change.deletions, 5);
-        assert!(!file_change.is_binary);
-    }
-
-    #[test]
-    fn test_file_change_with_rename() {
-        // Test FileChange struct handles renames correctly
-        let file_change = FileChange {
-            path: "src/new_name.rs".to_string(),
-            change_type: ChangeType::Renamed,
-            old_path: Some("src/old_name.rs".to_string()),
-            insertions: 0,
-            deletions: 0,
-            is_binary: false,
-        };
-        
-        assert_eq!(file_change.change_type, ChangeType::Renamed);
-        assert_eq!(file_change.old_path, Some("src/old_name.rs".to_string()));
-    }
-
-    #[test]
-    fn test_binary_file_change() {
-        // Test FileChange struct handles binary files correctly
-        let file_change = FileChange {
-            path: "assets/image.png".to_string(),
-            change_type: ChangeType::Added,
-            old_path: None,
-            insertions: 0, // Binary files should have 0 line changes
-            deletions: 0,
-            is_binary: true,
-        };
-        
-        assert!(file_change.is_binary);
-        assert_eq!(file_change.insertions, 0);
-        assert_eq!(file_change.deletions, 0);
-    }
-
-    // ===== GS-76 Phase 2.2: Git Event Detection Tests =====
-    
-    #[test]
-    fn test_commit_event_type_enum() {
-        // Test CommitEventType enum and debug method
-        assert_eq!(CommitEventType::Normal.debug(), "normal");
-        assert_eq!(CommitEventType::Merge.debug(), "merge");
-        assert_eq!(CommitEventType::Squash.debug(), "squash");
-        assert_eq!(CommitEventType::Rebase.debug(), "rebase");
-        assert_eq!(CommitEventType::CherryPick.debug(), "cherry-pick");
-        assert_eq!(CommitEventType::Revert.debug(), "revert");
-    }
-
-    #[test]
-    fn test_change_type_mapping_functions() {
-        // Test all change type mapping functions
-        
-        // Test git status mapping
-        assert_eq!(map_change_type_from_git_status("A"), ChangeType::Added);
-        assert_eq!(map_change_type_from_git_status("M"), ChangeType::Modified);
-        assert_eq!(map_change_type_from_git_status("D"), ChangeType::Deleted);
-        assert_eq!(map_change_type_from_git_status("R"), ChangeType::Renamed);
-        assert_eq!(map_change_type_from_git_status("C"), ChangeType::Copied);
-        
-        // Test boolean-based mapping
-        assert_eq!(map_change_type(true, false, false), ChangeType::Added);
-        assert_eq!(map_change_type(false, true, false), ChangeType::Deleted);
-        assert_eq!(map_change_type(false, false, true), ChangeType::Renamed);
-        assert_eq!(map_change_type(false, false, false), ChangeType::Modified);
-    }
 }

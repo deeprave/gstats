@@ -193,7 +193,7 @@ mod tests {
     use crate::scanner::messages::{MessageHeader, MessageData};
 
     fn create_test_message(size_hint: usize) -> ScanMessage {
-        let header = MessageHeader::new(0);
+        let header = MessageHeader::new(0, "test-scan".to_string());
         let data = MessageData::FileInfo {
             path: "x".repeat(size_hint), // Approximate size control
             size: 1000,

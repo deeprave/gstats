@@ -1,18 +1,21 @@
 //! Tests for builtin plugin initialization with activation control
 
 // Note: PluginRegistry import removed - not used in this test
-use crate::app::initialization::initialize_builtin_plugins;
 use crate::plugin::SharedPluginRegistry;
 
 #[tokio::test]
 async fn test_builtin_plugins_loaded_as_inactive() {
     // This test expects builtin plugins to be loaded as inactive by default
-    // (except for those with load_by_default = true)
+    // (except for those with active_by_default = true)
     
     let shared_registry = SharedPluginRegistry::new();
     
     // Initialize builtin plugins
-    initialize_builtin_plugins(&shared_registry).await.unwrap();
+    use crate::app::initialization::initialize_plugins_via_discovery;
+    use crate::display::ColourManager;
+    
+    let colour_manager = ColourManager::from_color_args(false, false, None);
+    initialize_plugins_via_discovery(&shared_registry, &colour_manager, Vec::new()).await.unwrap();
     
     // Access the inner registry to check plugin states
     let registry = shared_registry.inner().read().await;
@@ -22,11 +25,11 @@ async fn test_builtin_plugins_loaded_as_inactive() {
     assert!(registry.has_plugin("metrics"));
     assert!(registry.has_plugin("export"));
     
-    // Expected behavior: Only export plugin should be active (load_by_default = true)
+    // Expected behavior: Only export plugin should be active (active_by_default = true)
     // Other plugins should be inactive by default
     assert!(!registry.is_plugin_active("commits"), "Commits plugin should be inactive by default");
     assert!(!registry.is_plugin_active("metrics"), "Metrics plugin should be inactive by default");
-    assert!(registry.is_plugin_active("export"), "Export plugin should be active by default (load_by_default = true)");
+    assert!(registry.is_plugin_active("export"), "Export plugin should be active by default (active_by_default = true)");
     
     // Verify active plugins list contains only export
     let active_plugins = registry.get_active_plugins();
@@ -36,12 +39,16 @@ async fn test_builtin_plugins_loaded_as_inactive() {
 
 #[tokio::test]
 async fn test_auto_activation_of_load_by_default_plugins() {
-    // This test verifies that plugins with load_by_default = true are auto-activated
+    // This test verifies that plugins with active_by_default = true are auto-activated
     
     let shared_registry = SharedPluginRegistry::new();
     
     // Initialize builtin plugins
-    initialize_builtin_plugins(&shared_registry).await.unwrap();
+    use crate::app::initialization::initialize_plugins_via_discovery;
+    use crate::display::ColourManager;
+    
+    let colour_manager = ColourManager::from_color_args(false, false, None);
+    initialize_plugins_via_discovery(&shared_registry, &colour_manager, Vec::new()).await.unwrap();
     
     // Access the inner registry
     let registry = shared_registry.inner().read().await;
@@ -52,9 +59,9 @@ async fn test_auto_activation_of_load_by_default_plugins() {
     let metrics_plugin = registry.get_plugin("metrics").unwrap();
     
     // Expected load_by_default settings:
-    assert!(export_plugin.plugin_info().load_by_default, "Export plugin should have load_by_default = true");
-    assert!(!commits_plugin.plugin_info().load_by_default, "Commits plugin should have load_by_default = false");
-    assert!(!metrics_plugin.plugin_info().load_by_default, "Metrics plugin should have load_by_default = false");
+    assert!(export_plugin.plugin_info().active_by_default, "Export plugin should have active_by_default = true");
+    assert!(!commits_plugin.plugin_info().active_by_default, "Commits plugin should have active_by_default = false");
+    assert!(!metrics_plugin.plugin_info().active_by_default, "Metrics plugin should have active_by_default = false");
     
     // Verify activation matches load_by_default settings
     assert!(registry.is_plugin_active("export"), "Export plugin should be auto-activated");
@@ -69,7 +76,11 @@ async fn test_manual_plugin_activation_after_initialization() {
     let shared_registry = SharedPluginRegistry::new();
     
     // Initialize builtin plugins
-    initialize_builtin_plugins(&shared_registry).await.unwrap();
+    use crate::app::initialization::initialize_plugins_via_discovery;
+    use crate::display::ColourManager;
+    
+    let colour_manager = ColourManager::from_color_args(false, false, None);
+    initialize_plugins_via_discovery(&shared_registry, &colour_manager, Vec::new()).await.unwrap();
     
     // Access the inner registry for activation
     {

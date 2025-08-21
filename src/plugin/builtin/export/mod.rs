@@ -2,9 +2,9 @@
 //! 
 //! Built-in plugin for exporting scan results to various formats.
 
-pub mod formats;
 pub mod template_engine;
 pub mod config;
+pub mod formats;
 
 use crate::plugin::{
     Plugin, PluginInfo, PluginContext, PluginRequest, PluginResponse,
@@ -14,12 +14,11 @@ use crate::plugin::data_export::{PluginDataExport, DataPayload, ColumnType};
 use crate::plugin::data_coordinator::DataCoordinator;
 use crate::plugin::builtin::utils::format_detection::{FormatDetector, FormatDetectionResult};
 use crate::notifications::events::PluginEvent;
-use crate::notifications::traits::{Subscriber, NotificationManager};
-use crate::notifications::{NotificationResult};
+use crate::notifications::traits::{Subscriber, NotificationManager, Publisher};
+use crate::notifications::{NotificationResult, AsyncNotificationManager};
 use crate::notifications::error::NotificationError;
 use crate::display::ColourManager;
 use async_trait::async_trait;
-use prettytable::{Table, Row, Cell};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -31,17 +30,28 @@ pub use template_engine::TemplateEngine;
 /// Data export plugin for various output formats
 #[derive(Clone)]
 pub struct ExportPlugin {
+    /// Command name for clap integration
+    command_name: String,
+    
+    /// Plugin settings (color preferences, etc.)
+    settings: crate::plugin::PluginSettings,
+    
     info: PluginInfo,
     initialized: bool,
     export_config: Arc<RwLock<ExportConfig>>,
     template_engine: Arc<RwLock<TemplateEngine>>,
     format_detector: FormatDetector,
-    // Data coordination
+    
+    /// Data coordination
     data_coordinator: Arc<RwLock<DataCoordinator>>,
-    // Scan tracking
-    current_scan_id: Arc<RwLock<Option<String>>>,
+    
+    /// Scan tracking and export state
     export_triggered: Arc<RwLock<bool>>,
-    // Color management
+    
+    /// Notification manager for publishing events - REQUIRED for all plugins
+    notification_manager: Arc<AsyncNotificationManager<PluginEvent>>,
+    
+    /// Color management
     colour_manager: Arc<RwLock<Option<Arc<ColourManager>>>>,
 }
 
@@ -76,260 +86,226 @@ impl ExportPlugin {
             "Custom output formatting using Tera templates (Jinja2-compatible)".to_string(),
             "1.0.0".to_string(),
         )
-        .with_load_by_default(true);
+        .with_active_by_default(true);
 
         Self {
+            command_name: "export".to_string(),
+            settings: crate::plugin::PluginSettings::default(),
             info,
             initialized: false,
             export_config: Arc::new(RwLock::new(ExportConfig::default())),
             template_engine: Arc::new(RwLock::new(TemplateEngine::new())),
             format_detector: FormatDetector::new(),
-            // Initialize data coordination
             data_coordinator: Arc::new(RwLock::new(
                 DataCoordinator::with_expected_plugins(vec![
                     "commits".to_string(),
                     "metrics".to_string(),
                 ])
             )),
-            current_scan_id: Arc::new(RwLock::new(None)),
             export_triggered: Arc::new(RwLock::new(false)),
+            notification_manager: Arc::new(AsyncNotificationManager::new()), // Temporary for deprecated constructor
             colour_manager: Arc::new(RwLock::new(None)),
         }
     }
     
-    /// Perform export with collected data
-    async fn perform_export(&self, data: Vec<Arc<PluginDataExport>>) -> PluginResult<()> {
-        if data.is_empty() {
-            log::warn!("No data to export");
-            return Ok(());
-        }
+    
+    /// Create a new export plugin with all required dependencies (REQUIRED)
+    /// This is the correct way to instantiate ExportPlugin - it MUST have notification manager
+    pub fn with_dependencies(
+        settings: crate::plugin::PluginSettings,
+        notification_manager: Arc<AsyncNotificationManager<PluginEvent>>
+    ) -> Self {
+        let mut plugin = Self::new();
+        plugin.settings = settings;
+        plugin.notification_manager = notification_manager;
+        plugin
+    }
+    
+    
+    /// Handle PluginEvent::DataReady - core export functionality
+    async fn handle_data_ready_event(&self, 
+        plugin_id: String, 
+        scan_id: String, 
+        export_data: Arc<PluginDataExport>
+    ) -> PluginResult<()> {
+        log::info!("ExportPlugin: Received DataReady from plugin '{}' for scan '{}'", plugin_id, scan_id);
         
-        let config = self.export_config.read().await;
-        
-        // Format the data
-        let formatted = self.format_data(&data, &config).await?;
-        
-        // Check if we should output to file or console
-        if let Some(ref output_path) = config.output_file {
-            // File output
-            std::fs::write(output_path, &formatted)
-                .map_err(|e| PluginError::io_error(format!("Failed to write output file: {}", e)))?;
-            log::info!("Exported data to {}", output_path.display());
-        } else {
-            // Console output
-            println!("{}", formatted);
-        }
-        
-        // Mark export as triggered
+        // Add the data to our coordinator
         {
-            let mut triggered = self.export_triggered.write().await;
-            *triggered = true;
+            let mut coordinator = self.data_coordinator.write().await;
+            coordinator.add_data(plugin_id.clone(), export_data.clone());
+            
+            // Check if we have all expected data
+            if coordinator.is_complete() {
+                log::info!("ExportPlugin: All expected data collected for scan '{}', triggering export", scan_id);
+                
+                // Collect all data
+                let collected_data = coordinator.get_all_data();
+                
+                // Perform the export using the configured format
+                let config = self.export_config.read().await;
+                let formatted = self.format_data(&collected_data, &config).await?;
+                
+                // Output the formatted data
+                if let Some(ref output_path) = config.output_file {
+                    std::fs::write(output_path, &formatted)
+                        .map_err(|e| PluginError::io_error(format!("Failed to write output file: {}", e)))?;
+                    log::info!("Exported data to {}", output_path.display());
+                } else {
+                    println!("{}", formatted);
+                }
+                
+                // Publish completion event using Publisher trait
+                self.publish_export_completion_event(&scan_id, &plugin_id).await?;
+                
+                // Clear coordinator for next round
+                coordinator.clear();
+            } else {
+                let pending = coordinator.get_pending_plugins();
+                log::debug!("ExportPlugin: Still waiting for data from plugins: {:?}", pending);
+            }
         }
         
         Ok(())
     }
     
+    /// Handle other PluginEvent types
+    async fn handle_other_plugin_event(&self, event: &PluginEvent) -> PluginResult<()> {
+        match event {
+            PluginEvent::PluginStarted { plugin_id, .. } => {
+                log::debug!("ExportPlugin: Plugin '{}' started", plugin_id);
+            }
+            PluginEvent::PluginCompleted { plugin_id, .. } => {
+                log::debug!("ExportPlugin: Plugin '{}' completed", plugin_id);
+            }
+            PluginEvent::ResultsReady { plugin_id, .. } => {
+                log::debug!("ExportPlugin: Results ready from plugin '{}'", plugin_id);
+            }
+            PluginEvent::PluginError { plugin_id, error_message, .. } => {
+                log::warn!("ExportPlugin: Plugin '{}' encountered error: {}", plugin_id, error_message);
+            }
+            PluginEvent::PluginStateChanged { plugin_id, old_state, new_state, .. } => {
+                log::debug!("ExportPlugin: Plugin '{}' state changed from '{}' to '{}'", plugin_id, old_state, new_state);
+            }
+            PluginEvent::DataReady { .. } => {
+                // This should be handled by handle_data_ready_event
+                log::warn!("ExportPlugin: DataReady event received in wrong handler");
+            }
+        }
+        Ok(())
+    }
+    
+    /// Publish export completion event
+    async fn publish_export_completion_event(&self, scan_id: &str, source_plugin_id: &str) -> PluginResult<()> {
+        {
+            let manager = &self.notification_manager;
+            let event = PluginEvent::PluginCompleted {
+                plugin_id: "export".to_string(),
+                processing_time: std::time::Duration::from_secs(0), // TODO: Track actual processing time
+                items_processed: 1, // Export processed one scan worth of data
+                results_generated: 1, // Generated one export output
+                completed_at: std::time::SystemTime::now(),
+            };
+            
+            manager.publish(event).await.map_err(|e| {
+                PluginError::execution_failed(format!("Failed to publish export completion event: {}", e))
+            })?;
+            
+            log::info!("ExportPlugin: Published completion event for scan '{}' (triggered by '{}')", scan_id, source_plugin_id);
+        }
+        
+        Ok(())
+    }
+    
+    /// Publish shutdown event to coordinate clean shutdown
+    async fn publish_shutdown_event(&self) -> PluginResult<()> {
+        {
+            let event = PluginEvent::PluginCompleted {
+                plugin_id: "export".to_string(),
+                processing_time: std::time::Duration::from_secs(0),
+                items_processed: 0,
+                results_generated: 0,
+                completed_at: std::time::SystemTime::now(),
+            };
+            
+            self.notification_manager.publish(event).await.map_err(|e| {
+                PluginError::execution_failed(format!("Failed to publish shutdown event: {}", e))
+            })?;
+            
+            log::info!("ExportPlugin: Published shutdown coordination events");
+        }
+        
+        Ok(())
+    }
+    
+    /// Stop the notification listener
+    async fn stop_notification_listener(&self) -> PluginResult<()> {
+        log::info!("ExportPlugin: Stopping notification listener");
+        
+        // Signal the listener to stop
+        {
+            let mut triggered = self.export_triggered.write().await;
+            *triggered = true;
+        }
+        
+        // TODO: Wait for listener task to complete if needed
+        // For now, cleanup is handled through Subscriber trait unsubscription
+        
+        Ok(())
+    }
+    
+    /// Perform export with collected data
+    
     /// Format data according to the configured format
     async fn format_data(&self, data: &[Arc<PluginDataExport>], config: &ExportConfig) -> PluginResult<String> {
         match config.output_format {
+            ExportFormat::Console => {
+                // Use the ConsoleFormatter for console output with color support
+                use self::formats::console::ConsoleFormatter;
+                use self::formats::FormatExporter;
+                
+                // Check if we have a color manager available
+                if let Some(colour_manager) = self.colour_manager.read().await.as_ref() {
+                    let formatter = ConsoleFormatter::with_colors(Arc::clone(colour_manager));
+                    formatter.format_with_colors(data)
+                } else {
+                    let formatter = ConsoleFormatter::new();
+                    formatter.format_data(data)
+                }
+            },
             ExportFormat::Json => self.format_json(data).await,
             ExportFormat::Csv => self.format_csv(data).await,
             ExportFormat::Xml => self.format_xml(data).await,
             ExportFormat::Yaml => self.format_yaml(data).await,
             ExportFormat::Html => self.format_html(data).await,
             ExportFormat::Markdown => self.format_markdown(data).await,
+            ExportFormat::Template => {
+                // Use the template formatter from formats module
+                use self::formats::template::TemplateExporter;
+                use self::formats::FormatExporter;
+                let template_file = config.template_file.as_ref()
+                    .ok_or_else(|| PluginError::configuration_error("Template format selected but no template file configured".to_string()))?;
+                let formatter = TemplateExporter::new(template_file);
+                formatter.format_data(data)
+            },
         }
     }
     
-    /// Format as console table (default)
-    pub async fn format_console(&self, data: &[Arc<PluginDataExport>]) -> PluginResult<String> {
-        let mut output = String::new();
-        
-        for export in data {
-            // Add section header
-            output.push_str(&format!("\n{}\n", "=".repeat(export.title.len() + 4)));
-            output.push_str(&format!("  {}  \n", export.title));
-            output.push_str(&format!("{}\n", "=".repeat(export.title.len() + 4)));
-            
-            if let Some(ref desc) = export.description {
-                output.push_str(&format!("{}\n\n", desc));
-            }
-            
-            // Format based on data type
-            match &export.data {
-                DataPayload::Rows(rows) => {
-                    // Create clean table format using prettytable
-                    if !export.schema.columns.is_empty() && !rows.is_empty() {
-                        let mut table = Table::new();
-                        
-                        // Use default format to include both pipe separators and dashes
-                        // Tests expect both "|" and "-" characters in table formatting
-                        
-                        // Create header row
-                        let header_cells: Vec<Cell> = export.schema.columns.iter()
-                            .map(|col| Cell::new(&col.name))
-                            .collect();
-                        table.add_row(Row::new(header_cells));
-                        
-                        // Add data rows
-                        for row in rows.iter() {
-                            let data_cells: Vec<Cell> = row.values.iter()
-                                .map(|value| Cell::new(&value.to_string()))
-                                .collect();
-                            table.add_row(Row::new(data_cells));
-                        }
-                        
-                        // Add 2-space indent to each line
-                        let table_output = table.to_string();
-                        for line in table_output.lines() {
-                            output.push_str("  ");
-                            output.push_str(line);
-                            output.push('\n');
-                        }
-                    }
-                }
-                DataPayload::KeyValue(map) => {
-                    // Format key-value pairs as simple key: value lines for console readability
-                    if !map.is_empty() {
-                        for (key, value) in map.iter() {
-                            output.push_str(&format!("  {}: {}\n", key, value.to_string()));
-                        }
-                    }
-                }
-                DataPayload::Tree(root) => {
-                    // Simple tree representation
-                    output.push_str(&format!("Tree: {}\n", root.label));
-                    // TODO: Implement proper tree formatting
-                }
-                DataPayload::Raw(text) => {
-                    output.push_str(text);
-                    output.push('\n');
-                }
-                DataPayload::Empty => {
-                    output.push_str("(no data)\n");
-                }
-            }
-            
-            output.push('\n');
-        }
-        
-        Ok(output)
-    }
 
-    pub async fn format_console_with_colors(&self, data: &[Arc<PluginDataExport>], colour_manager: &ColourManager) -> PluginResult<String> {
-        if data.is_empty() {
-            return Ok("No data available for export.\n".to_string());
+    
+    /// Public method to format data as console output for testing and direct use
+    pub async fn format_as_console(&self, data: &[Arc<PluginDataExport>]) -> PluginResult<String> {
+        use self::formats::console::ConsoleFormatter;
+        use self::formats::FormatExporter;
+        
+        // Check if we have a color manager available
+        if let Some(colour_manager) = self.colour_manager.read().await.as_ref() {
+            let formatter = ConsoleFormatter::with_colors(Arc::clone(colour_manager));
+            formatter.format_with_colors(data)
+        } else {
+            let formatter = ConsoleFormatter::new();
+            formatter.format_data(data)
         }
-        
-        let mut output = String::new();
-        
-        for export in data {
-            output.push_str(&format!("## {}\n", export.title));
-            if let Some(description) = &export.description {
-                output.push_str(&format!("{}\n", description));
-            }
-            output.push('\n');
-            
-            match &export.data {
-                DataPayload::Rows(rows) => {
-                    // Create clean table format with colors using prettytable
-                    if !export.schema.columns.is_empty() && !rows.is_empty() {
-                        let mut table = Table::new();
-                        // Use default table format (includes borders and separators)
-                        
-                        // Create header row with colors
-                        let header_cells: Vec<Cell> = export.schema.columns.iter()
-                            .map(|col| {
-                                let header_text = if colour_manager.colours_enabled() {
-                                    colour_manager.highlight(&col.name).to_string()
-                                } else {
-                                    col.name.clone()
-                                };
-                                Cell::new(&header_text)
-                            })
-                            .collect();
-                        table.add_row(Row::new(header_cells));
-                        
-                        // Add data rows with colors
-                        for row in rows.iter() {
-                            let data_cells: Vec<Cell> = row.values.iter()
-                                .enumerate()
-                                .map(|(i, value)| {
-                                    let str_val = value.to_string();
-                                    let is_numeric = matches!(export.schema.columns.get(i).map(|c| c.data_type), 
-                                                            Some(ColumnType::Integer | ColumnType::Float));
-                                    
-                                    let formatted_value = if colour_manager.colours_enabled() && is_numeric {
-                                        colour_manager.info(&str_val).to_string()
-                                    } else {
-                                        str_val
-                                    };
-                                    
-                                    Cell::new(&formatted_value)
-                                })
-                                .collect();
-                            table.add_row(Row::new(data_cells));
-                        }
-                        
-                        // Add 2-space indent to each line
-                        let table_output = table.to_string();
-                        for line in table_output.lines() {
-                            output.push_str("  ");
-                            output.push_str(line);
-                            output.push('\n');
-                        }
-                    }
-                }
-                DataPayload::KeyValue(map) => {
-                    // Format key-value pairs using prettytable with clean format and colors
-                    if !map.is_empty() {
-                        let mut table = Table::new();
-                        // Use default table format (includes borders and separators)
-                        
-                        // Add header with colors
-                        let key_header = if colour_manager.colours_enabled() {
-                            colour_manager.highlight("Key").to_string()
-                        } else {
-                            "Key".to_string()
-                        };
-                        let value_header = if colour_manager.colours_enabled() {
-                            colour_manager.highlight("Value").to_string()
-                        } else {
-                            "Value".to_string()
-                        };
-                        table.add_row(Row::new(vec![Cell::new(&key_header), Cell::new(&value_header)]));
-                        
-                        // Add key-value pairs
-                        for (key, value) in map.iter() {
-                            table.add_row(Row::new(vec![Cell::new(key), Cell::new(&value.to_string())]));
-                        }
-                        
-                        // Add 2-space indent to each line
-                        let table_output = table.to_string();
-                        for line in table_output.lines() {
-                            output.push_str("  ");
-                            output.push_str(line);
-                            output.push('\n');
-                        }
-                    }
-                }
-                DataPayload::Tree(root) => {
-                    output.push_str(&format!("Tree: {}\n", root.label));
-                    // TODO: Implement proper tree formatting with prettytable
-                }
-                DataPayload::Raw(text) => {
-                    output.push_str(text);
-                    output.push('\n');
-                }
-                DataPayload::Empty => {
-                    output.push_str("(no data)\n");
-                }
-            }
-            
-            output.push('\n');
-        }
-        
-        Ok(output)
     }
     
     pub async fn format_json(&self, data: &[Arc<PluginDataExport>]) -> PluginResult<String> {
@@ -376,39 +352,17 @@ impl ExportPlugin {
     }
     
     pub async fn format_csv(&self, data: &[Arc<PluginDataExport>]) -> PluginResult<String> {
-        let mut output = String::new();
+        use self::formats::csv::CsvFormatter;
+        use self::formats::FormatExporter;
         
-        for export in data {
-            if let DataPayload::Rows(rows) = &export.data {
-                // Write CSV header
-                for (i, col) in export.schema.columns.iter().enumerate() {
-                    if i > 0 {
-                        output.push(',');
-                    }
-                    output.push_str(&col.name);
-                }
-                output.push('\n');
-                
-                // Write rows
-                for row in rows.iter() {
-                    for (i, value) in row.values.iter().enumerate() {
-                        if i > 0 {
-                            output.push(',');
-                        }
-                        // Quote strings that contain commas or quotes
-                        let str_val = value.to_string();
-                        if str_val.contains(',') || str_val.contains('"') {
-                            output.push_str(&format!("\"{}\"", str_val.replace('"', "\"\"")));
-                        } else {
-                            output.push_str(&str_val);
-                        }
-                    }
-                    output.push('\n');
-                }
-            }
-        }
+        let config = self.export_config.read().await;
         
-        Ok(output)
+        // Parse delimiter - default to comma, but use config if specified
+        let delimiter = config.csv_delimiter.chars().next().unwrap_or(',');
+        let quote_char = config.csv_quote_char.chars().next().unwrap_or('"');
+        
+        let formatter = CsvFormatter::with_config(delimiter, quote_char, config.csv_quoting_style);
+        formatter.format_data(data)
     }
     
     pub async fn format_xml(&self, data: &[Arc<PluginDataExport>]) -> PluginResult<String> {
@@ -617,8 +571,13 @@ impl Plugin for ExportPlugin {
             log::debug!("ExportPlugin: No color manager available in context");
         }
         
+        // Start the comprehensive notification listener if needed
+        // Note: The actual listening happens through the Subscriber trait
+        // but we can start additional background tasks here if needed
+        log::debug!("ExportPlugin: Comprehensive notification listener ready");
+        
         self.initialized = true;
-        log::info!("Export plugin initialized");
+        log::info!("Export plugin initialized with comprehensive notification handling");
         Ok(())
     }
     
@@ -651,8 +610,26 @@ impl Plugin for ExportPlugin {
     }
     
     async fn cleanup(&mut self) -> PluginResult<()> {
+        log::info!("ExportPlugin: Starting cleanup");
+        
+        // Stop the notification listener if running
+        if let Err(e) = self.stop_notification_listener().await {
+            log::warn!("ExportPlugin: Error stopping notification listener: {}", e);
+        }
+        
+        // Clear any remaining data in coordinator
+        {
+            let mut coordinator = self.data_coordinator.write().await;
+            coordinator.clear();
+        }
+        
+        // Publish shutdown event
+        self.publish_shutdown_event().await.unwrap_or_else(|e| {
+            log::warn!("ExportPlugin: Error publishing shutdown event: {}", e);
+        });
+        
         self.initialized = false;
-        log::info!("Export plugin cleanup");
+        log::info!("ExportPlugin: Cleanup completed");
         Ok(())
     }
     
@@ -689,6 +666,19 @@ impl Plugin for ExportPlugin {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))
     }
+    
+    async fn parse_plugin_arguments(&mut self, args: &[String]) -> PluginResult<()> {
+        use crate::plugin::traits::PluginClapParserExt;
+        self.parse_plugin_args_default(args).await
+    }
+}
+
+// Implement Publisher trait for sending events
+#[async_trait]
+impl Publisher<PluginEvent> for ExportPlugin {
+    async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
+        self.notification_manager.publish(event).await
+    }
 }
 
 // Implement Subscriber trait for receiving data export notifications
@@ -701,70 +691,48 @@ impl Subscriber<PluginEvent> for ExportPlugin {
     async fn handle_event(&self, event: PluginEvent) -> NotificationResult<()> {
         match event {
             PluginEvent::DataReady { plugin_id, scan_id, export } => {
-                log::info!("ExportPlugin received DataReady from '{}' for scan '{}'", plugin_id, scan_id);
-                
-                // Update scan ID if needed
-                {
-                    let mut scan_id_guard = self.current_scan_id.write().await;
-                    if scan_id_guard.is_none() {
-                        *scan_id_guard = Some(scan_id.clone());
-                    }
-                }
-                
-                // Add data to coordinator
-                {
-                    let mut coordinator = self.data_coordinator.write().await;
-                    coordinator.add_data(plugin_id.clone(), export);
-                    
-                    // Check if all expected plugins have reported
-                    if coordinator.is_complete() {
-                        log::info!("All expected plugins have reported data, triggering export");
-                        
-                        // Get all data and trigger export
-                        let all_data = coordinator.get_all_data();
-                        
-                        // Use color-aware console formatting if color manager is available
-                        let formatted = {
-                            let colour_manager_guard = self.colour_manager.read().await;
-                            if let Some(ref colour_manager) = *colour_manager_guard {
-                                self.format_console_with_colors(&all_data, colour_manager).await.map_err(|e| {
-                                    NotificationError::processing(format!("Color formatting failed: {}", e))
-                                })?
-                            } else {
-                                // Fallback to basic console formatting
-                                self.format_console(&all_data).await.map_err(|e| {
-                                    NotificationError::processing(format!("Formatting failed: {}", e))
-                                })?
-                            }
-                        };
-                        
-                        println!("{}", formatted);
-                        
-                        // Clear for next scan
-                        coordinator.clear();
-                    } else {
-                        let pending = coordinator.get_pending_plugins();
-                        log::debug!("Waiting for plugins: {:?}", pending);
-                    }
-                }
-                
-                Ok(())
+                // Use the new comprehensive DataReady handler
+                self.handle_data_ready_event(plugin_id, scan_id, export).await
+                    .map_err(|e| NotificationError::delivery_failed("export-plugin", &e.to_string()))?;
+                return Ok(());
             }
             _ => {
-                // Ignore other plugin events
-                Ok(())
+                // Handle all other PluginEvent types
+                self.handle_other_plugin_event(&event).await
+                    .map_err(|e| NotificationError::delivery_failed("export-plugin", &e.to_string()))?;
+                return Ok(());
             }
         }
+        
+        // This is the old implementation that we're replacing:
+        /*
+        match event {
+            PluginEvent::DataReady { plugin_id, scan_id, export } => {
+                log::info!("ExportPlugin received DataReady from '{}' for scan '{}'", plugin_id, scan_id);
+                // Old implementation removed - now handled by handle_data_ready_event()
+                */
     }
 }
 
 /// Modern clap-based argument parsing implementation for export plugin
 #[async_trait]
 impl PluginClapParser for ExportPlugin {
-    fn build_clap_command(&self) -> clap::Command {
-        use clap::{Arg, Command};
+    fn get_command_name(&self) -> impl Into<String> {
+        &self.command_name
+    }
+    
+    fn get_command_description(&self) -> &str {
+        "Exports analysis results to various formats"
+    }
+    
+    fn get_plugin_settings(&self) -> &crate::plugin::PluginSettings {
+        &self.settings
+    }
+    
+    fn add_plugin_args(&self, command: clap::Command) -> clap::Command {
+        use clap::Arg;
         
-        Command::new("export")
+        command
             .override_usage("export [OPTIONS]")
             .help_template("Usage: {usage}\n\nExports analysis results\n\nOptions:\n{options}\n{after-help}")
             .after_help("File extensions (.json, .csv, .xml, .yaml, .html, .md, .htm, .yml) auto-detect format when using --outfile.")
@@ -825,6 +793,7 @@ impl PluginClapParser for ExportPlugin {
         if let Some(template) = matches.get_one::<String>("template") {
             let template_path = PathBuf::from(template);
             config.template_file = Some(template_path.clone());
+            config.output_format = ExportFormat::Template; // Set format to Template when --template is used
             
             // Load template
             let mut engine = self.template_engine.write().await;
@@ -910,7 +879,7 @@ mod tests {
         assert_eq!(plugin.plugin_info().name, "export");
         assert_eq!(plugin.plugin_info().version, "1.0.0");
         assert_eq!(plugin.plugin_info().plugin_type, PluginType::Output);
-        assert!(plugin.plugin_info().load_by_default);
+        assert!(plugin.plugin_info().active_by_default);
     }
 
     #[tokio::test]
@@ -959,7 +928,7 @@ mod tests {
         assert!(coordinator.has_data_from("debug"));
         
         // Verify scan ID was set
-        let scan_id = plugin.current_scan_id.read().await;
+        let scan_id = plugin.scan_id.read().await;
         assert_eq!(scan_id.as_ref().unwrap(), "test-scan");
     }
 

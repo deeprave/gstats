@@ -22,21 +22,58 @@ use std::time::SystemTime;
 use tokio::sync::RwLock;
 use serde_json::json;
 
+/// Statistics for commits plugin operation
+#[derive(Debug, Default, Clone)]
+struct CommitsStats {
+    /// Total number of commits processed
+    commit_count: usize,
+    /// Commits by author for contributor analysis
+    author_stats: HashMap<String, usize>,
+}
+
+/// Per-scan data for commits plugin
+#[derive(Debug)]
+struct CommitsScanData {
+    /// Statistics for this scan
+    stats: CommitsStats,
+}
+
+impl CommitsScanData {
+    fn new() -> Self {
+        Self {
+            stats: CommitsStats::default(),
+        }
+    }
+}
+
 /// Commits analysis plugin
 pub struct CommitsPlugin {
+    /// Command name for clap integration
+    command_name: String,
+    
+    /// Plugin settings (color preferences, etc.)
+    settings: crate::plugin::PluginSettings,
+    
     info: PluginInfo,
     initialized: bool,
-    commit_count: Arc<RwLock<usize>>,
-    author_stats: Arc<RwLock<HashMap<String, usize>>>,
+    
+    /// Plugin start time for performance tracking
+    started_at: std::time::Instant,
+    
+    /// Per-scan commit data and statistics
+    scan_data: Arc<RwLock<HashMap<String, CommitsScanData>>>,
+    
     consuming: Arc<RwLock<bool>>,
     consumer: Arc<RwLock<Option<QueueConsumer>>>,
-    // Notification publishing
-    notification_manager: Option<AsyncNotificationManager<PluginEvent>>,
-    current_scan_id: Arc<RwLock<Option<String>>>,
+    
+    /// Notification publishing - REQUIRED for all plugins
+    notification_manager: Arc<AsyncNotificationManager<PluginEvent>>,
 }
 
 impl CommitsPlugin {
-    /// Create a new commits plugin
+    /// Create a new commits plugin (DEPRECATED - requires notification manager)
+    /// Use with_dependencies() instead
+    #[deprecated(note = "Use with_dependencies() instead - plugins require notification managers")]
     pub fn new() -> Self {
         let info = PluginInfo::new(
             "commits".to_string(),
@@ -58,83 +95,83 @@ impl CommitsPlugin {
         );
 
         Self {
+            command_name: "commits".to_string(),
+            settings: crate::plugin::PluginSettings::default(),
             info,
             initialized: false,
-            commit_count: Arc::new(RwLock::new(0)),
-            author_stats: Arc::new(RwLock::new(HashMap::new())),
+            started_at: std::time::Instant::now(),
+            scan_data: Arc::new(RwLock::new(HashMap::new())),
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
-            notification_manager: None,
-            current_scan_id: Arc::new(RwLock::new(None)),
+            notification_manager: Arc::new(AsyncNotificationManager::new()), // Temporary for deprecated constructor
         }
     }
     
-    /// Handle ScanDataReady event to fetch and process queued commit data
-    pub async fn handle_scan_data_ready(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
-        use crate::notifications::ScanEvent;
-        
-        match event {
-            ScanEvent::ScanDataReady { scan_id, data_type, message_count } => {
-                log::info!("CommitsPlugin received ScanDataReady event: {} messages of type '{}' for scan {}", 
-                          message_count, data_type, scan_id);
-                
-                // For now, just log that we received the event
-                // In future iterations, we'll implement actual data fetching from the queue
-                // TODO: Fetch commit data from the scanner queue
-                // TODO: Process commit messages and update internal statistics
-                // TODO: Emit DataReady event when processing is complete
-                
-                Ok(())
-            }
-            _ => {
-                Err(PluginError::ExecutionFailed { 
-                    message: "CommitsPlugin::handle_scan_data_ready received non-ScanDataReady event".to_string() 
-                })
-            }
+    // with_settings() method removed - use with_dependencies() instead
+    
+    /// Create a new commits plugin with all required dependencies (REQUIRED)
+    /// This is the correct way to instantiate CommitsPlugin - it MUST have notification manager
+    pub fn with_dependencies(
+        settings: crate::plugin::PluginSettings,
+        notification_manager: std::sync::Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::PluginEvent>>
+    ) -> Self {
+        let info = PluginInfo::new(
+            "commits".to_string(),
+            "1.0.0".to_string(),
+            crate::scanner::version::get_api_version() as u32,
+            "Analyzes git commit history and provides commit statistics".to_string(),
+            "gstats built-in".to_string(),
+            PluginType::Processing,
+        )
+        .with_capability(
+            "commit_analysis".to_string(),
+            "Processes git commits and generates statistics".to_string(),
+            "1.0.0".to_string(),
+        )
+        .with_capability(
+            "author_tracking".to_string(),
+            "Tracks commits by author for contributor analysis".to_string(),
+            "1.0.0".to_string(),
+        );
+
+        Self {
+            command_name: "commits".to_string(),
+            settings,
+            info,
+            initialized: false,
+            started_at: std::time::Instant::now(),
+            scan_data: Arc::new(RwLock::new(HashMap::new())),
+            consuming: Arc::new(RwLock::new(false)),
+            consumer: Arc::new(RwLock::new(None)),
+            notification_manager,
         }
     }
     
-    /// Handle ScanWarning event - log warnings and continue processing
-    pub async fn handle_scan_warning(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
-        use crate::notifications::ScanEvent;
-        
-        match event {
-            ScanEvent::ScanWarning { scan_id, warning, recoverable } => {
-                if recoverable {
-                    log::warn!("CommitsPlugin received recoverable warning for scan {}: {}", scan_id, warning);
-                    // Continue processing with degraded data quality
-                } else {
-                    log::error!("CommitsPlugin received non-recoverable warning for scan {}: {}", scan_id, warning);
-                    // May need to adjust processing strategy
-                }
-                Ok(())
-            }
-            _ => {
-                Err(PluginError::ExecutionFailed { 
-                    message: "CommitsPlugin::handle_scan_warning received non-ScanWarning event".to_string() 
-                })
-            }
-        }
-    }
     
     /// Handle ScanError event - abort processing and cleanup resources if fatal
-    pub async fn handle_scan_error(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+    pub async fn handle_scan_error(&self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
         use crate::notifications::ScanEvent;
         
         match event {
             ScanEvent::ScanError { scan_id, error, fatal } => {
                 if fatal {
                     log::error!("CommitsPlugin received fatal error for scan {}: {}", scan_id, error);
-                    // Fatal errors require cleanup and abort processing
+                    // Fatal errors require immediate cleanup and abort processing
                     {
-                        let mut count = self.commit_count.write().await;
-                        *count = 0;
-                    }
-                    {
-                        let mut stats = self.author_stats.write().await;
-                        stats.clear();
+                        let mut scan_data = self.scan_data.write().await;
+                        scan_data.remove(scan_id.as_str());
                     }
                     log::info!("CommitsPlugin cleaned up partial data for scan {}", scan_id);
+                    
+                    // If this was the last scan and we need to shut down, log elapsed time
+                    let remaining_scans = {
+                        let scan_data = self.scan_data.read().await;
+                        scan_data.is_empty()
+                    };
+                    if remaining_scans {
+                        let elapsed = self.started_at.elapsed();
+                        log::info!("CommitsPlugin shutting down due to fatal error after {:?}", elapsed);
+                    }
                 } else {
                     log::warn!("CommitsPlugin received non-fatal error for scan {}: {}", scan_id, error);
                     // Non-fatal errors allow graceful degradation
@@ -150,7 +187,7 @@ impl CommitsPlugin {
     }
     
     /// Handle ScanCompleted event - finalize processing and prepare results
-    pub async fn handle_scan_completed(&mut self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
+    pub async fn handle_scan_completed(&self, event: crate::notifications::ScanEvent) -> PluginResult<()> {
         use crate::notifications::ScanEvent;
         
         match event {
@@ -158,17 +195,20 @@ impl CommitsPlugin {
                 log::info!("CommitsPlugin received ScanCompleted event for scan {} (duration: {:?}, warnings: {})", 
                           scan_id, duration, warnings.len());
                 
-                // Finalize commit analysis processing
+                // Finalize commit analysis processing and get stats before cleanup
                 let (count, author_count) = {
-                    let count_guard = self.commit_count.read().await;
-                    let stats_guard = self.author_stats.read().await;
-                    (*count_guard, stats_guard.len())
+                    let scan_data = self.scan_data.read().await;
+                    if let Some(data) = scan_data.get(&scan_id) {
+                        (data.stats.commit_count, data.stats.author_stats.len())
+                    } else {
+                        (0, 0)
+                    }
                 };
                 log::info!("CommitsPlugin processed {} commits from {} authors for scan {}", 
                           count, author_count, scan_id);
                 
-                // Create and publish data export if we have a notification manager
-                if self.notification_manager.is_some() {
+                // Create and publish data export before cleanup
+                {
                     if let Ok(export_data) = self.create_data_export(&scan_id).await {
                         let event = PluginEvent::DataReady {
                             plugin_id: "commits".to_string(),
@@ -184,6 +224,22 @@ impl CommitsPlugin {
                     }
                 }
                 
+                // Clean up scan data for completed scan
+                let remaining_scans = {
+                    let mut scan_data = self.scan_data.write().await;
+                    scan_data.remove(&scan_id);
+                    scan_data.len()
+                };
+                
+                // Log elapsed plugin time if this was the last scan
+                if remaining_scans == 0 {
+                    let elapsed = self.started_at.elapsed();
+                    log::info!("CommitsPlugin completed all scans in {:?}", elapsed);
+                }
+                
+                log::debug!("CommitsPlugin scan {} cleanup complete, {} scans remaining", 
+                           scan_id, remaining_scans);
+                
                 Ok(())
             }
             _ => {
@@ -195,28 +251,35 @@ impl CommitsPlugin {
     }
 
     /// Process a commit message and extract statistics  
-    async fn process_commit(&self, message: &ScanMessage) -> PluginResult<()> {
+    async fn process_commit(&self, scan_id: &str, message: &ScanMessage) -> PluginResult<()> {
         // Extract commit information from scan message
         if let MessageData::CommitInfo { author, .. } = &message.data {
-            {
-                let mut count = self.commit_count.write().await;
-                *count += 1;
-            }
-            {
-                let mut stats = self.author_stats.write().await;
-                *stats.entry(author.clone()).or_insert(0) += 1;
-            }
+            let mut scan_data = self.scan_data.write().await;
+            let data = scan_data.entry(scan_id.to_string())
+                .or_insert_with(CommitsScanData::new);
+            
+            data.stats.commit_count += 1;
+            *data.stats.author_stats.entry(author.clone()).or_insert(0) += 1;
         }
         Ok(())
     }
 
     /// Generate commit summary statistics
     async fn generate_summary(&self) -> PluginResult<ScanMessage> {
-        // Create a metric info message containing our summary statistics
+        // Aggregate statistics from all active scans
         let (author_count, commit_count) = {
-            let stats = self.author_stats.read().await;
-            let count = self.commit_count.read().await;
-            (stats.len(), *count)
+            let scan_data = self.scan_data.read().await;
+            let mut total_commits = 0;
+            let mut all_authors = HashMap::new();
+            
+            for data in scan_data.values() {
+                total_commits += data.stats.commit_count;
+                for (author, count) in &data.stats.author_stats {
+                    *all_authors.entry(author.clone()).or_insert(0) += count;
+                }
+            }
+            
+            (all_authors.len(), total_commits)
         };
         
         let data = MessageData::MetricInfo {
@@ -234,6 +297,7 @@ impl CommitsPlugin {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            "plugin-generated".to_string(),
         );
 
         Ok(ScanMessage::new(header, data))
@@ -242,9 +306,12 @@ impl CommitsPlugin {
     /// Create PluginDataExport from current commit statistics
     async fn create_data_export(&self, scan_id: &str) -> PluginResult<PluginDataExport> {
         let (commit_count, author_stats) = {
-            let count_guard = self.commit_count.read().await;
-            let stats_guard = self.author_stats.read().await;
-            (*count_guard, stats_guard.clone())
+            let scan_data_guard = self.scan_data.read().await;
+            if let Some(data) = scan_data_guard.get(scan_id) {
+                (data.stats.commit_count, data.stats.author_stats.clone())
+            } else {
+                (0, HashMap::new())
+            }
         };
         
         // Create schema for commit statistics table
@@ -316,9 +383,18 @@ impl CommitsPlugin {
         let start_time = std::time::Instant::now();
 
         let (commit_count, author_count) = {
-            let count = self.commit_count.read().await;
-            let stats = self.author_stats.read().await;
-            (*count, stats.len())
+            let scan_data = self.scan_data.read().await;
+            let mut total_commits = 0;
+            let mut all_authors = HashMap::new();
+            
+            for data in scan_data.values() {
+                total_commits += data.stats.commit_count;
+                for author in data.stats.author_stats.keys() {
+                    all_authors.insert(author.clone(), true);
+                }
+            }
+            
+            (total_commits, all_authors.len())
         };
 
         let data = json!({
@@ -354,9 +430,18 @@ impl CommitsPlugin {
         let start_time = std::time::Instant::now();
 
         let (author_count, author_stats, mut authors) = {
-            let stats = self.author_stats.read().await;
-            let authors: Vec<_> = stats.iter().map(|(k, v)| (k.clone(), *v)).collect();
-            (stats.len(), stats.clone(), authors)
+            let scan_data = self.scan_data.read().await;
+            let mut aggregated_stats = HashMap::new();
+            
+            // Aggregate author stats from all scans
+            for data in scan_data.values() {
+                for (author, count) in &data.stats.author_stats {
+                    *aggregated_stats.entry(author.clone()).or_insert(0) += count;
+                }
+            }
+            
+            let authors: Vec<_> = aggregated_stats.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            (aggregated_stats.len(), aggregated_stats.clone(), authors)
         };
         
         authors.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by commit count descending
@@ -388,11 +473,7 @@ impl CommitsPlugin {
     }
 }
 
-impl Default for CommitsPlugin {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Default implementation removed - plugins require notification managers via with_dependencies()
 
 #[async_trait]
 impl Plugin for CommitsPlugin {
@@ -405,14 +486,10 @@ impl Plugin for CommitsPlugin {
             return Ok(()); // Idempotent - allow re-initialization
         }
 
-        // Reset statistics
+        // Clear any existing scan data
         {
-            let mut count = self.commit_count.write().await;
-            *count = 0;
-        }
-        {
-            let mut stats = self.author_stats.write().await;
-            stats.clear();
+            let mut scan_data = self.scan_data.write().await;
+            scan_data.clear();
         }
         
         // TODO: Initialize notification manager when PluginContext supports it
@@ -470,12 +547,8 @@ impl Plugin for CommitsPlugin {
         
         self.initialized = false;
         {
-            let mut count = self.commit_count.write().await;
-            *count = 0;
-        }
-        {
-            let mut stats = self.author_stats.write().await;
-            stats.clear();
+            let mut scan_data = self.scan_data.write().await;
+            scan_data.clear();
         }
         Ok(())
     }
@@ -527,19 +600,55 @@ impl Plugin for CommitsPlugin {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))
     }
+    
+    async fn parse_plugin_arguments(&mut self, args: &[String]) -> PluginResult<()> {
+        use crate::plugin::traits::PluginClapParserExt;
+        self.parse_plugin_args_default(args).await
+    }
 }
 
 #[async_trait]
 impl Publisher<PluginEvent> for CommitsPlugin {
     async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
-        if let Some(ref manager) = self.notification_manager {
-            manager.publish(event).await
-        } else {
-            log::warn!("No notification manager available for publishing events");
-            Ok(())
-        }
+        self.notification_manager.publish(event).await
+    }
+}
+
+#[async_trait]
+impl crate::notifications::traits::Subscriber<crate::notifications::events::UnifiedEvent> for CommitsPlugin {
+    fn subscriber_id(&self) -> &str {
+        "commits-plugin"
     }
     
+    async fn handle_event(&self, event: crate::notifications::events::UnifiedEvent) -> crate::notifications::NotificationResult<()> {
+        match event {
+            crate::notifications::events::UnifiedEvent::Scan(scan_event) => {
+                match scan_event {
+                    crate::notifications::ScanEvent::ScanError { .. } => {
+                        // Now that handlers use &self, we can call them directly
+                        if let Err(e) = self.handle_scan_error(scan_event).await {
+                            log::error!("CommitsPlugin failed to handle ScanError: {}", e);
+                        }
+                    }
+                    crate::notifications::ScanEvent::ScanCompleted { .. } => {
+                        // Now that handlers use &self, we can call them directly
+                        if let Err(e) = self.handle_scan_completed(scan_event).await {
+                            log::error!("CommitsPlugin failed to handle ScanCompleted: {}", e);
+                        }
+                    }
+                    _ => {
+                        // Handle other ScanEvents if needed - for now just log
+                        log::debug!("CommitsPlugin received ScanEvent: {:?}", scan_event);
+                    }
+                }
+            }
+            _ => {
+                // Handle other UnifiedEvent types if needed - for now just log
+                log::debug!("CommitsPlugin received non-ScanEvent: {:?}", event);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Data requirements implementation for CommitsPlugin
@@ -589,7 +698,8 @@ impl ConsumerPlugin for CommitsPlugin {
     
     async fn process_message(&self, consumer: &QueueConsumer, message: Arc<ScanMessage>) -> PluginResult<()> {
         // Process the commit message and update statistics
-        self.process_commit(&message).await?;
+        let scan_id = "unknown"; // TODO: Get actual scan_id from message context
+        self.process_commit(scan_id, &message).await?;
         
         // Acknowledge the message
         consumer.acknowledge(message.header().sequence()).await.map_err(|e| {
@@ -606,32 +716,28 @@ impl ConsumerPlugin for CommitsPlugin {
             QueueEvent::ScanStarted { scan_id, .. } => {
                 log::info!("Commits plugin: scan started for {}", scan_id);
                 
-                // Store the current scan ID
+                // Initialize scan data for this scan
                 {
-                    let mut current_scan = self.current_scan_id.write().await;
-                    *current_scan = Some(scan_id.clone());
-                }
-                
-                // Reset statistics for new scan
-                {
-                    let mut count = self.commit_count.write().await;
-                    *count = 0;
-                }
-                {
-                    let mut stats = self.author_stats.write().await;
-                    stats.clear();
+                    let mut scan_data = self.scan_data.write().await;
+                    scan_data.insert(scan_id.clone(), CommitsScanData::new());
                 }
             }
             QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
-                let count = self.commit_count.read().await;
-                let author_count = self.author_stats.read().await.len();
+                let (count, author_count) = {
+                    let scan_data = self.scan_data.read().await;
+                    if let Some(data) = scan_data.get(scan_id) {
+                        (data.stats.commit_count, data.stats.author_stats.len())
+                    } else {
+                        (0, 0)
+                    }
+                };
                 log::info!(
-                    "Commits plugin: scan complete for {} - processed {} commits from {} authors (total {} messages)", 
-                    scan_id, *count, author_count, total_messages
+                    "Commits plugin: scan {} complete - processed {} commits from {} authors (total {} messages)", 
+                    scan_id, count, author_count, total_messages
                 );
                 
-                // Create and publish data export if we have a notification manager
-                if self.notification_manager.is_some() {
+                // Create and publish data export
+                {
                     if let Ok(export_data) = self.create_data_export(scan_id).await {
                         let event = PluginEvent::DataReady {
                             plugin_id: "commits".to_string(),
@@ -670,7 +776,9 @@ impl ConsumerPlugin for CommitsPlugin {
             *consumer_guard = None;
         }
         
-        log::info!("Commits plugin stopped consuming messages");
+        // Log elapsed plugin runtime
+        let elapsed = self.started_at.elapsed();
+        log::info!("Commits plugin completed in {:?}", elapsed);
         Ok(())
     }
     
@@ -686,71 +794,27 @@ impl ConsumerPlugin for CommitsPlugin {
 }
 
 impl CommitsPlugin {
-    /// Clone for processing (workaround for mutable operations in immutable context)
-    async fn clone_for_processing(&self) -> Self {
-        let (count, stats, scan_id) = {
-            let count_guard = self.commit_count.read().await;
-            let stats_guard = self.author_stats.read().await;
-            let scan_guard = self.current_scan_id.read().await;
-            (*count_guard, stats_guard.clone(), scan_guard.clone())
-        };
-        
-        Self {
-            info: self.info.clone(),
-            initialized: self.initialized,
-            commit_count: Arc::new(RwLock::new(count)),
-            author_stats: Arc::new(RwLock::new(stats)),
-            consuming: Arc::new(RwLock::new(false)),
-            consumer: Arc::new(RwLock::new(None)),
-            notification_manager: None, // Clone doesn't preserve notification manager
-            current_scan_id: Arc::new(RwLock::new(scan_id)),
-        }
-    }
-
-    /// Generate analysis for a single commit
-    async fn generate_commit_analysis(&self, commit: &ScanMessage) -> PluginResult<ScanMessage> {
-        if let MessageData::CommitInfo { author, message, .. } = &commit.data {
-            // Get author commit count
-            let count = {
-                let stats = self.author_stats.read().await;
-                *stats.get(author).unwrap_or(&0)
-            };
-            
-            // Analyze commit message
-            let is_merge_commit = message.contains("Merge");
-            let _issue_refs_count = message
-                .split_whitespace()
-                .filter(|word| word.starts_with('#') || word.contains("GS-"))
-                .count();
-
-            // Create a metric info that represents the commit analysis
-            let data = MessageData::MetricInfo {
-                file_count: count as u32, // Author's commit count
-                line_count: message.len() as u64, // Message length
-                complexity: if is_merge_commit { 1.0 } else { 0.0 }, // Is merge commit indicator
-            };
-
-            let header = MessageHeader::new(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            );
-
-            Ok(ScanMessage::new(header, data))
-        } else {
-            Err(PluginError::execution_failed("Expected CommitInfo data"))
-        }
-    }
 }
 
 /// Modern clap-based argument parsing implementation for commits plugin
 #[async_trait]
 impl PluginClapParser for CommitsPlugin {
-    fn build_clap_command(&self) -> clap::Command {
-        use clap::{Arg, ArgAction, Command};
+    fn get_command_name(&self) -> impl Into<String> {
+        &self.command_name
+    }
+    
+    fn get_command_description(&self) -> &str {
+        "Analyzes git commit history and statistics"
+    }
+    
+    fn get_plugin_settings(&self) -> &crate::plugin::PluginSettings {
+        &self.settings
+    }
+    
+    fn add_plugin_args(&self, command: clap::Command) -> clap::Command {
+        use clap::{Arg, ArgAction};
         
-        Command::new("commits")
+        command
             .override_usage("commits [OPTIONS]")
             .help_template("Usage: {usage}\n\nAnalyzes git commit history and statistics\n\nOptions:\n{options}\n{after-help}")
             .after_help("Provides commit analysis, author statistics, and development patterns.")
@@ -764,9 +828,6 @@ impl PluginClapParser for CommitsPlugin {
         // Commits plugin doesn't have complex configuration state to update
         // The arguments are handled during execution based on the function being called
         
-        if let Some(limit) = matches.get_one::<u64>("limit") {
-            log::debug!("Commits plugin configured with limit: {}", limit);
-        }
         
         if let Some(authors) = matches.get_many::<String>("author-filter") {
             log::debug!("Commits plugin configured with author filters: {:?}", 
@@ -816,6 +877,7 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            "plugin-generated".to_string(),
         );
 
         ScanMessage::new(header, data)
@@ -907,12 +969,8 @@ mod tests {
         assert!(plugin.cleanup().await.is_ok());
         assert!(!plugin.initialized);
         {
-            let count = plugin.commit_count.read().await;
-            assert_eq!(*count, 0);
-        }
-        {
-            let stats = plugin.author_stats.read().await;
-            assert!(stats.is_empty());
+            let scan_data = plugin.scan_data.read().await;
+            assert!(scan_data.is_empty()); // No scans should be active initially
         }
     }
 

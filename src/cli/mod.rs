@@ -10,7 +10,6 @@ pub mod command_mapper;
 pub mod suggestion;
 pub mod contextual_help;
 pub mod help_formatter;
-pub mod global_flags;
 pub mod plugin_args;
 pub mod initial_args;
 pub mod command_segmenter;
@@ -19,4 +18,3 @@ pub mod command_segmenter;
 pub mod tests;
 
 pub use args::Args;
-pub use global_flags::filter_global_flags;

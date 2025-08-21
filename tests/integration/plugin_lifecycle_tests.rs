@@ -191,7 +191,7 @@ async fn test_export_plugin_complete_lifecycle() {
     let info = plugin.plugin_info();
     assert_eq!(info.name, "export");
     assert_eq!(info.plugin_type, gstats::plugin::traits::PluginType::Output);
-    assert!(info.load_by_default); // Export plugin should load by default
+    assert!(info.active_by_default); // Export plugin should load by default
     
     // Test argument schema
     let schema = plugin.get_arg_schema();

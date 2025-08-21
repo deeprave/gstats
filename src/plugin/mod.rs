@@ -18,13 +18,18 @@
 
 pub mod traits;
 pub mod error;
+pub mod settings;
 pub mod context;
 pub mod registry;
 pub mod notification;
 pub mod compatibility;
 pub mod discovery;
 pub mod subscriber;
-pub mod builtin;
+pub mod manager;
+pub(crate) mod builtin;  // Make builtin module private to crate
+
+// Expose export plugin publicly for use in applications and tests
+pub use builtin::export::{ExportPlugin, ExportConfig, ExportFormat};
 pub mod processors;
 pub mod priority_queue;
 pub mod data_export;
@@ -37,6 +42,7 @@ pub mod tests;
 pub use traits::Plugin;
 pub use error::{PluginError, PluginResult};
 pub use context::{PluginContext, PluginRequest, PluginResponse, InvocationType};
+pub use settings::PluginSettings;
 
 // Plugin metadata and info
 pub use traits::PluginInfo;
@@ -44,3 +50,4 @@ pub use traits::PluginInfo;
 // Registry and management
 #[allow(unused_imports)]
 pub use registry::{PluginRegistry, SharedPluginRegistry};
+pub use manager::PluginManager;

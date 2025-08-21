@@ -26,10 +26,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Mutex};
 
 use crate::queue::{QueueError, QueueResult, MemoryMonitor};
+use crate::queue::statistics::{QueueStatistics, ScanStatistics};
+use crate::queue::events::QueueEventHandler;
+use crate::queue::consumer_registry::{ConsumerRegistry, ConsumerProgress};
 use crate::notifications::AsyncNotificationManager;
-use crate::notifications::events::QueueEvent;
-use crate::notifications::traits::{Publisher, NotificationManager};
+use crate::notifications::events::{QueueEvent, ScanEvent};
+use crate::notifications::traits::{Publisher, Subscriber};
 use crate::scanner::messages::ScanMessage;
+use async_trait::async_trait;
+use crate::notifications::error::NotificationResult;
 
 /// Configuration for multi-consumer queue
 #[derive(Debug, Clone)]
@@ -130,27 +135,12 @@ impl Default for SequenceTracker {
     }
 }
 
-/// Statistics for the multi-consumer queue
-#[derive(Debug, Clone)]
-pub struct QueueStatistics {
-    /// Current queue size (number of messages)
-    pub queue_size: usize,
-    
-    /// Current memory usage (bytes)
-    pub memory_usage: u64,
-    
-    /// Number of active consumers
-    pub active_consumers: usize,
-    
-    /// Total messages processed
-    pub total_messages: u64,
-    
-}
 
 /// Multi-consumer queue with sequence-based tracking
+/// Now supports multiple concurrent scanners with separate statistics per scan_id
 pub struct MultiConsumerQueue {
-    /// Unique identifier for this queue
-    scan_id: String,
+    /// Per-scan statistics and state tracking
+    scan_statistics: Arc<RwLock<HashMap<String, ScanStatistics>>>,
     
     /// Message storage with Arc for efficient sharing
     pub(crate) messages: Arc<RwLock<VecDeque<Arc<ScanMessage>>>>,
@@ -179,38 +169,13 @@ pub struct MultiConsumerQueue {
     /// Whether the queue is active
     active: Arc<RwLock<bool>>,
     
+    /// ScanEvent notification manager for listening to scanner events
+    scan_notification_manager: Arc<AsyncNotificationManager<ScanEvent>>,
+    
+    /// Event handler for publishing and subscribing to events
+    event_handler: QueueEventHandler,
 }
 
-/// Consumer registry for tracking active consumers
-#[derive(Debug)]
-pub struct ConsumerRegistry {
-    /// Active consumers and their progress
-    pub(crate) consumers: HashMap<String, ConsumerProgress>,
-    
-}
-
-/// Progress tracking for individual consumers
-#[derive(Debug, Clone)]
-pub struct ConsumerProgress {
-    
-    /// Last acknowledged sequence number
-    pub last_acknowledged_seq: u64,
-    
-    
-    /// Number of messages processed
-    pub messages_processed: u64,
-    
-    
-    /// Last update timestamp
-    pub last_update: Instant,
-    
-    /// Consumer creation time
-    pub created_at: Instant,
-    
-    /// Average processing rate (messages/second)
-    pub processing_rate: f64,
-    
-}
 
 /// Garbage collection state and statistics
 #[derive(Debug)]
@@ -233,12 +198,46 @@ struct GarbageCollectionState {
 
 impl MultiConsumerQueue {
     /// Create a new multi-consumer queue
-    pub fn new(scan_id: String, notification_manager: Arc<AsyncNotificationManager<QueueEvent>>) -> Self {
-        Self::with_config(scan_id, MultiConsumerConfig::default(), notification_manager)
+    pub fn new(
+        notification_manager: Arc<AsyncNotificationManager<QueueEvent>>,
+        scan_notification_manager: Arc<AsyncNotificationManager<ScanEvent>>
+    ) -> Self {
+        Self::with_config(MultiConsumerConfig::default(), notification_manager, scan_notification_manager)
+    }
+    
+    /// Create a new multi-consumer queue with typed publishers
+    pub fn new_with_publishers(
+        queue_publisher: Arc<crate::notifications::typed_publishers::QueueEventPublisher>,
+        scan_publisher: Arc<crate::notifications::typed_publishers::ScanEventPublisher>
+    ) -> Self {
+        Self::with_config_and_publishers(MultiConsumerConfig::default(), queue_publisher, scan_publisher)
+    }
+    
+    /// Create a new multi-consumer queue with custom configuration and typed publishers
+    pub fn with_config_and_publishers(
+        config: MultiConsumerConfig,
+        queue_publisher: Arc<crate::notifications::typed_publishers::QueueEventPublisher>,
+        scan_publisher: Arc<crate::notifications::typed_publishers::ScanEventPublisher>
+    ) -> Self {
+        // For now, create temporary specialized managers from the unified manager
+        // TODO: Refactor MultiConsumerQueue to use typed publishers throughout
+        let _unified_manager = queue_publisher.unified_manager.clone();
+        let _scan_publisher = scan_publisher; // Store reference to avoid unused parameter warning
+        
+        // Create specialized notification managers
+        // This is a temporary solution until MultiConsumerQueue is fully refactored
+        let queue_notification_manager = Arc::new(AsyncNotificationManager::<QueueEvent>::new());
+        let scan_notification_manager = Arc::new(AsyncNotificationManager::<ScanEvent>::new());
+        
+        Self::with_config(config, queue_notification_manager, scan_notification_manager)
     }
     
     /// Create a new multi-consumer queue with custom configuration
-    pub fn with_config(scan_id: String, config: MultiConsumerConfig, notification_manager: Arc<AsyncNotificationManager<QueueEvent>>) -> Self {
+    pub fn with_config(
+        config: MultiConsumerConfig, 
+        notification_manager: Arc<AsyncNotificationManager<QueueEvent>>,
+        scan_notification_manager: Arc<AsyncNotificationManager<ScanEvent>>
+    ) -> Self {
         let stats = QueueStatistics {
             queue_size: 0,
             memory_usage: 0,
@@ -254,8 +253,14 @@ impl MultiConsumerQueue {
             last_low_water_mark: 0,
         };
         
+        let scan_statistics = Arc::new(RwLock::new(HashMap::new()));
+        let event_handler = QueueEventHandler::new(
+            Arc::clone(&scan_statistics),
+            Arc::clone(&notification_manager),
+        );
+        
         Self {
-            scan_id,
+            scan_statistics,
             messages: Arc::new(RwLock::new(VecDeque::new())),
             sequence_tracker: Arc::new(RwLock::new(SequenceTracker::new())),
             consumer_registry: Arc::new(RwLock::new(ConsumerRegistry::new(config.consumer_timeout))),
@@ -265,6 +270,8 @@ impl MultiConsumerQueue {
             gc_state: Arc::new(Mutex::new(gc_state)),
             stats: Arc::new(RwLock::new(stats)),
             active: Arc::new(RwLock::new(false)),
+            scan_notification_manager,
+            event_handler,
         }
     }
     
@@ -280,9 +287,18 @@ impl MultiConsumerQueue {
         *active = true;
         
         
-        log::info!("Started multi-consumer queue: {}", self.scan_id);
+        log::info!("Started multi-consumer queue for multiple scanners");
         Ok(())
     }
+    
+    /// Subscribe to ScanEvents for statistical tracking
+    pub async fn subscribe_to_scan_events(&self) -> QueueResult<()> {
+        // Note: In a full implementation, this would register with the scan notification manager
+        // For now, we assume the queue is manually connected to receive ScanEvents
+        log::debug!("Queue subscribed to ScanEvents for statistical tracking");
+        Ok(())
+    }
+    
     
     
     /// Check if queue is active
@@ -313,6 +329,9 @@ impl MultiConsumerQueue {
             }
         }
         
+        // Store scan_id before moving message
+        let scan_id = message.header.scan_id.clone();
+        
         // Wrap message in Arc for sharing
         let arc_message = Arc::new(message);
         
@@ -335,8 +354,8 @@ impl MultiConsumerQueue {
             self.trigger_garbage_collection().await?;
         }
         
-        log::trace!("Enqueued message {} to queue '{}', size: {}", 
-                   sequence, self.scan_id, queue_size);
+        log::trace!("Enqueued message {} for scan '{}', queue size: {}", 
+                   sequence, scan_id, queue_size);
         
         Ok(sequence)
     }
@@ -416,8 +435,8 @@ impl MultiConsumerQueue {
         gc_state.messages_collected += collected;
         
         if collected > 0 {
-            log::debug!("Garbage collected {} messages below sequence {} in queue '{}'", 
-                       collected, low_water_mark, self.scan_id);
+            log::debug!("Garbage collected {} messages below sequence {} from multi-scanner queue", 
+                       collected, low_water_mark);
         }
         
         Ok(())
@@ -664,82 +683,16 @@ impl MultiConsumerQueue {
     
 }
 
-impl ConsumerRegistry {
-    /// Create a new consumer registry
-    pub fn new(_timeout: Duration) -> Self {
-        Self {
-            consumers: HashMap::new(),
-        }
-    }
-    
-    /// Register a new consumer
-    pub fn register_consumer(&mut self, consumer_id: String, _plugin_name: String, _priority: i32) -> QueueResult<()> {
-        if self.consumers.contains_key(&consumer_id) {
-            return Err(QueueError::operation_failed(
-                format!("Consumer {} already registered", consumer_id)
-            ));
-        }
-        
-        let now = Instant::now();
-        let progress = ConsumerProgress {
-            last_acknowledged_seq: 0,
-            messages_processed: 0,
-            last_update: now,
-            created_at: now,
-            processing_rate: 0.0,
-        };
-        
-        self.consumers.insert(consumer_id, progress);
-        Ok(())
-    }
-    
-    /// Deregister a consumer
-    pub fn deregister_consumer(&mut self, consumer_id: &str) -> QueueResult<()> {
-        if self.consumers.remove(consumer_id).is_none() {
-            return Err(QueueError::operation_failed(
-                format!("Consumer {} not found", consumer_id)
-            ));
-        }
-        Ok(())
-    }
-    
-    /// Update consumer progress
-    pub fn update_progress(&mut self, consumer_id: &str, acknowledged_seq: u64) -> QueueResult<()> {
-        if let Some(progress) = self.consumers.get_mut(consumer_id) {
-            progress.last_acknowledged_seq = acknowledged_seq;
-            progress.messages_processed += 1;
-            progress.last_update = Instant::now();
-            
-            // Update processing rate
-            let elapsed = progress.created_at.elapsed().as_secs_f64();
-            if elapsed > 0.0 {
-                progress.processing_rate = progress.messages_processed as f64 / elapsed;
-            }
-            
-            Ok(())
-        } else {
-            Err(QueueError::operation_failed(
-                format!("Consumer {} not found", consumer_id)
-            ))
-        }
-    }
-    
-    
-    /// Get all consumer progress
-    pub fn get_all_progress(&self) -> Vec<&ConsumerProgress> {
-        self.consumers.values().collect()
-    }
-    
-    /// Get specific consumer progress
-    pub fn get_progress(&self, consumer_id: &str) -> Option<&ConsumerProgress> {
-        self.consumers.get(consumer_id)
-    }
-}
 
 impl Clone for MultiConsumerQueue {
     fn clone(&self) -> Self {
+        let event_handler = QueueEventHandler::new(
+            Arc::clone(&self.scan_statistics),
+            Arc::clone(&self.notification_manager),
+        );
+        
         Self {
-            scan_id: self.scan_id.clone(),
+            scan_statistics: Arc::clone(&self.scan_statistics),
             messages: Arc::clone(&self.messages),
             sequence_tracker: Arc::clone(&self.sequence_tracker),
             consumer_registry: Arc::clone(&self.consumer_registry),
@@ -749,6 +702,8 @@ impl Clone for MultiConsumerQueue {
             gc_state: Arc::clone(&self.gc_state),
             stats: Arc::clone(&self.stats),
             active: Arc::clone(&self.active),
+            scan_notification_manager: Arc::clone(&self.scan_notification_manager),
+            event_handler,
         }
     }
 }
@@ -758,9 +713,20 @@ impl Clone for MultiConsumerQueue {
 impl Publisher<QueueEvent> for MultiConsumerQueue {
     /// Publish a queue event to all subscribers
     async fn publish(&self, event: QueueEvent) -> crate::notifications::error::NotificationResult<()> {
-        self.notification_manager.publish(event).await
+        self.event_handler.publish(event).await
+    }
+}
+
+/// Subscriber trait implementation for MultiConsumerQueue to listen to ScanEvents
+#[async_trait]
+impl Subscriber<ScanEvent> for MultiConsumerQueue {
+    fn subscriber_id(&self) -> &str {
+        self.event_handler.subscriber_id()
     }
     
+    async fn handle_event(&self, event: ScanEvent) -> NotificationResult<()> {
+        self.event_handler.handle_event(event).await
+    }
 }
 
 #[cfg(test)]
@@ -772,8 +738,12 @@ mod tests {
         Arc::new(AsyncNotificationManager::new())
     }
     
+    fn create_test_scan_notification_manager() -> Arc<AsyncNotificationManager<ScanEvent>> {
+        Arc::new(AsyncNotificationManager::new())
+    }
+    
     fn create_test_message(sequence: u64) -> ScanMessage {
-        let header = MessageHeader::new(sequence);
+        let header = MessageHeader::new(sequence, "test-scan".to_string());
         let data = MessageData::FileInfo {
             path: format!("test{}.rs", sequence),
             size: 1000,
@@ -784,9 +754,9 @@ mod tests {
     
     #[tokio::test]
     async fn test_multi_consumer_queue_creation() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         
-        assert_eq!(queue.scan_id, "test-scan");
+        // Queue now supports multiple scans via HashMap<String, ScanStatistics>
         assert!(!queue.is_active().await);
         
         let stats = queue.get_statistics().await;
@@ -796,7 +766,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_queue_lifecycle() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         
         // Start queue
         queue.start().await.unwrap();
@@ -805,7 +775,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_message_enqueue() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         let message = create_test_message(0);
@@ -860,7 +830,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_low_water_mark_calculation() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // No consumers - should use max sequence
@@ -880,7 +850,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_queue_statistics() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -897,7 +867,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_get_messages_from() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -930,7 +900,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_get_message_by_seq() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -956,7 +926,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_sequence_range_methods() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Initial range should be (0, 0) with no messages
@@ -989,7 +959,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_sequence_retrieval_with_gaps() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1035,7 +1005,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_consumer_acknowledgment_system() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1078,7 +1048,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_lagging_consumers() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Add messages
@@ -1120,7 +1090,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_acknowledge_nonexistent_consumer() {
-        let queue = MultiConsumerQueue::new("test-scan".to_string(), create_test_notification_manager());
+        let queue = MultiConsumerQueue::new(create_test_notification_manager(), create_test_scan_notification_manager());
         queue.start().await.unwrap();
         
         // Try to acknowledge for non-existent consumer

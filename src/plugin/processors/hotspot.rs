@@ -290,6 +290,7 @@ impl HotspotProcessor {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                "hotspot-processor".to_string(),
             );
 
             // For now, use MetricInfo - in a full implementation, we'd have a HotspotInfo variant

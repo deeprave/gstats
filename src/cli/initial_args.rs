@@ -42,6 +42,14 @@ pub struct InitialArgs {
     /// Version flag detection  
     #[arg(long = "version", short = 'V', action = ArgAction::SetTrue)]
     pub version_requested: bool,
+    
+    /// Force colored output (overrides TTY detection and NO_COLOR)
+    #[arg(long = "color", action = ArgAction::SetTrue)]
+    pub color: bool,
+    
+    /// Disable colored output (overrides configuration and NO_COLOR)
+    #[arg(long = "no-color", action = ArgAction::SetTrue)]
+    pub no_color: bool,
 }
 
 impl InitialArgs {
@@ -88,6 +96,14 @@ impl InitialArgs {
                 .short('V')
                 .action(clap::ArgAction::SetTrue)
                 .help("Show version"))
+            .arg(clap::Arg::new("color")
+                .long("color")
+                .action(clap::ArgAction::SetTrue)
+                .help("Force colored output"))
+            .arg(clap::Arg::new("no-color")
+                .long("no-color")
+                .action(clap::ArgAction::SetTrue)
+                .help("Disable colored output"))
             .allow_external_subcommands(true)
             .ignore_errors(true);
         
@@ -109,6 +125,8 @@ impl InitialArgs {
             plugin_exclude: matches.get_one::<String>("plugin-exclude").cloned(),
             help_requested: matches.get_flag("help"),
             version_requested: matches.get_flag("version"),
+            color: matches.get_flag("color"),
+            no_color: matches.get_flag("no-color"),
         }
     }
     
@@ -121,6 +139,8 @@ impl InitialArgs {
             plugin_exclude: None,
             help_requested: false,
             version_requested: false,
+            color: false,
+            no_color: false,
         }
     }
     

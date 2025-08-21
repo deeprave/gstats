@@ -414,10 +414,10 @@ config: {{}}
     let with_true = plugins.iter().find(|p| p.info.name == "test-with-true").unwrap();
     
     // Plugin without field should default to false
-    assert!(!without_field.info.load_by_default);
+    assert!(!without_field.info.active_by_default);
     
     // Plugin with explicit true should be true
-    assert!(with_true.info.load_by_default);
+    assert!(with_true.info.active_by_default);
 }
 
 // Test that builtin export plugin has load_by_default: true
@@ -426,23 +426,23 @@ async fn test_builtin_export_plugin_load_by_default() {
     use crate::plugin::discovery::{UnifiedPluginDiscovery, PluginDiscovery};
     
     // Create discovery with no external directory to get only builtin plugins
-    let discovery = UnifiedPluginDiscovery::new(None, Vec::new()).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(None, Vec::new(), crate::plugin::PluginSettings::default()).unwrap();
     let plugins = discovery.discover_plugins().await.unwrap();
     
     // Find the export plugin
     let export_plugin = plugins.iter().find(|p| p.info.name == "export").expect("Export plugin should exist");
     
     // Export plugin should have load_by_default: true since it's an Output plugin
-    assert!(export_plugin.info.load_by_default, "Export plugin should have load_by_default: true");
+    assert!(export_plugin.info.active_by_default, "Export plugin should have load_by_default: true");
     assert_eq!(export_plugin.info.plugin_type, PluginType::Output);
     
     // Other plugins should have load_by_default: false
     let commits_plugin = plugins.iter().find(|p| p.info.name == "commits").expect("Commits plugin should exist");
-    assert!(!commits_plugin.info.load_by_default, "Commits plugin should have load_by_default: false");
+    assert!(!commits_plugin.info.active_by_default, "Commits plugin should have load_by_default: false");
     assert_eq!(commits_plugin.info.plugin_type, PluginType::Processing);
     
     let metrics_plugin = plugins.iter().find(|p| p.info.name == "metrics").expect("Metrics plugin should exist");
-    assert!(!metrics_plugin.info.load_by_default, "Metrics plugin should have load_by_default: false");
+    assert!(!metrics_plugin.info.active_by_default, "Metrics plugin should have load_by_default: false");
     assert_eq!(metrics_plugin.info.plugin_type, PluginType::Processing);
 }
 
@@ -454,7 +454,7 @@ async fn test_unified_discovery_creation_without_directory() {
     use crate::plugin::discovery::UnifiedPluginDiscovery;
     
     let excluded_plugins = vec!["unwanted".to_string()];
-    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     // Should not have external discovery when no directory provided
     assert!(!discovery.supports_dynamic_loading());
@@ -468,7 +468,7 @@ async fn test_unified_discovery_creation_with_nonexistent_directory() {
     
     let nonexistent_dir = PathBuf::from("/nonexistent/directory");
     let excluded_plugins = vec![];
-    let discovery = UnifiedPluginDiscovery::new(Some(nonexistent_dir), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(nonexistent_dir), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     // Should not have external discovery when directory doesn't exist
     assert!(!discovery.supports_dynamic_loading());
@@ -481,7 +481,7 @@ async fn test_unified_discovery_creation_with_existing_directory() {
     
     let temp_dir = tempdir().unwrap();
     let excluded_plugins = vec![];
-    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     // Should have external discovery when directory exists
     assert!(discovery.supports_dynamic_loading());
@@ -493,7 +493,7 @@ async fn test_unified_discovery_with_default_directory() {
     use crate::plugin::discovery::UnifiedPluginDiscovery;
     
     let excluded_plugins = vec![];
-    let discovery = UnifiedPluginDiscovery::with_default_directory(excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::with_default_directory(excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     // Should use default directory in home/.config/gstats/plugins
     let plugin_dir = discovery.plugin_directory();
@@ -506,7 +506,7 @@ async fn test_unified_discovery_builtin_plugins_only() {
     
     // No external directory, so only builtin plugins
     let excluded_plugins = vec![];
-    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
@@ -532,7 +532,7 @@ async fn test_unified_discovery_builtin_plugins_with_exclusions() {
     
     // Exclude one builtin plugin
     let excluded_plugins = vec!["metrics".to_string()];
-    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(None, excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
@@ -564,7 +564,7 @@ async fn test_unified_discovery_external_plugins_only() {
     let excluded_plugins = vec!["debug".to_string(), "commits".to_string(), "metrics".to_string(), "export".to_string()];
     println!("DEBUG: Creating discovery with temp dir: {:?}", temp_dir.path());
     println!("DEBUG: Temp dir exists: {}", temp_dir.path().exists());
-    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
@@ -598,7 +598,7 @@ async fn test_unified_discovery_mixed_builtin_and_external() {
     
     // No exclusions
     let excluded_plugins = vec![];
-    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
@@ -628,7 +628,7 @@ async fn test_unified_discovery_external_overrides_builtin() {
     
     // No exclusions
     let excluded_plugins = vec![];
-    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
@@ -666,7 +666,7 @@ async fn test_unified_discovery_multiple_external_plugins_same_name() {
     
     // Exclude all builtin plugins to focus on external behavior
     let excluded_plugins = vec!["debug".to_string(), "commits".to_string(), "metrics".to_string(), "export".to_string()];
-    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     
@@ -695,7 +695,7 @@ async fn test_unified_discovery_external_exclusion() {
     
     // Exclude the unwanted external plugin and one builtin
     let excluded_plugins = vec!["unwanted".to_string(), "metrics".to_string()];
-    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins).unwrap();
+    let discovery = UnifiedPluginDiscovery::new(Some(temp_dir.path().to_path_buf()), excluded_plugins, crate::plugin::PluginSettings::default()).unwrap();
     
     let plugins = discovery.discover_plugins().await.unwrap();
     

@@ -4,7 +4,7 @@
 //! It splits the command line into global arguments and plugin-specific argument segments.
 
 use crate::cli::plugin_handler::PluginHandler;
-use crate::plugin::error::{PluginError, PluginResult};
+use crate::plugin::error::PluginResult;
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -23,7 +23,6 @@ pub struct PluginArgumentSegment {
 #[derive(Debug, Clone)]
 pub struct SegmentedArgs {
     /// Global arguments (before any plugin)
-    #[allow(dead_code)] // Used in tests
     pub global_args: Vec<String>,
     /// Plugin-specific argument segments
     pub plugin_segments: Vec<PluginArgumentSegment>,
@@ -164,29 +163,12 @@ impl CommandSegmenter {
         None
     }
     
-    /// Check if a specific argument segment requests help
-    pub fn is_help_request(&self, segment: &PluginArgumentSegment) -> bool {
-        segment.args.contains(&"--help".to_string()) || segment.args.contains(&"-h".to_string())
-    }
+    // Removed is_help_request and get_plugin_help_with_colors methods
+    // Plugins handle their own help through parse_plugin_arguments()
     
-    /// Get plugin help for a specific plugin with color support
-    pub async fn get_plugin_help_with_colors(&self, plugin_name: &str, _function_name: Option<&str>, no_color: bool, color: bool) -> PluginResult<String> {
-        // Try to create the plugin and get its help
-        if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin(plugin_name).await {
-            // Use the new color-aware help method
-            if let Some(help_text) = plugin.get_plugin_help_with_colors(no_color, color) {
-                return Ok(help_text);
-            }
-            
-            // Fallback to regular help if color-aware method not implemented
-            if let Some(help_text) = plugin.get_plugin_help() {
-                return Ok(help_text);
-            }
-        }
-        
-        Err(PluginError::PluginNotFound {
-            plugin_name: plugin_name.to_string(),
-        })
+    /// Extract the plugin handler from the segmenter
+    pub fn extract_plugin_handler(self) -> PluginHandler {
+        self.plugin_handler
     }
 }
 

@@ -6,13 +6,10 @@ mod notifications;
 mod queue;
 mod scanner;
 mod plugin;
-mod stats;
 mod app;
-mod output;
 
 use anyhow::{Result, Context};
 use std::process;
-use std::sync::Arc;
 use std::path::PathBuf;
 use log::error;
 use crate::display::CompactFormat;
@@ -121,28 +118,80 @@ fn run() -> Result<()> {
         }
     }
     
-    // Stage 1.5: Handle plugin help requests BEFORE clap parsing
+    // Stage 1.5: Create plugin settings from initial args and setup plugin system
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     
-    // Set up early color override based on raw arguments for plugin help
-    if raw_args.contains(&"--no-color".to_string()) {
+    // Create plugin settings early from parsed initial args
+    let plugin_settings = crate::plugin::PluginSettings::from_initial_args(&initial_args);
+    
+    // Set up early color override based on initial args (not global args parsing)
+    if initial_args.no_color {
         colored::control::set_override(false);
-        std::env::set_var("NO_COLOR", "1");
-    } else if raw_args.contains(&"--color".to_string()) {
+    } else if initial_args.color {
         colored::control::set_override(true);
-        std::env::set_var("CLICOLOR_FORCE", "1");
     }
     
-    if raw_args.len() >= 2 && (raw_args.contains(&"--help".to_string()) || raw_args.contains(&"-h".to_string())) {
-        // Check if this might be a plugin help request
-        if let Some(help_result) = handle_potential_plugin_help(&raw_args, &initial_args)? {
-            println!("{}", help_result);
-            return Ok(());
-        }
+    // Create a segmenter and extract global args
+    use crate::cli::converter::PluginConfig;
+    use crate::cli::plugin_handler::PluginHandler;
+    use crate::cli::command_segmenter::CommandSegmenter;
+    
+    let plugin_config = PluginConfig {
+        directories: if let Some(dir) = &initial_args.plugin_dir {
+            vec![dir.clone()]
+        } else {
+            vec![]
+        },
+        plugin_load: Vec::new(),
+        plugin_exclude: if let Some(exclude_list) = &initial_args.plugin_exclude {
+            exclude_list.split(',').map(|s| s.trim().to_string()).collect()
+        } else {
+            Vec::new()
+        },
+    };
+    
+    // Create a minimal runtime for plugin initialization
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to create tokio runtime for plugin initialization")?;
+    
+    let segmenter = rt.block_on(async {
+        let plugin_handler = PluginHandler::with_plugin_config_and_settings(plugin_config, plugin_settings.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to create plugin handler: {}", e))?;
+        let mut plugin_handler = plugin_handler;
+        plugin_handler.build_command_mappings().await
+            .map_err(|e| anyhow::anyhow!("Failed to build command mappings: {}", e))?;
+        
+        let segmenter = CommandSegmenter::new(plugin_handler).await
+            .map_err(|e| anyhow::anyhow!("Failed to create command segmenter: {}", e))?;
+        
+        Result::<_, anyhow::Error>::Ok(segmenter)
+    })?;
+    
+    let segmented = segmenter.segment_arguments(&raw_args)?;
+    
+    // Save plugin arguments to pass to the plugin later
+    let plugin_args = if let Some(first_segment) = segmented.plugin_segments.first() {
+        first_segment.args.clone()
+    } else {
+        Vec::new()
+    };
+    
+    // Reconstruct args for clap parsing: global_args + first plugin command (NOT plugin args)
+    let mut clap_args = segmented.global_args;
+    
+    // Add ONLY the first plugin command as the positional command argument
+    // Do NOT include plugin arguments - they should be handled by the plugin itself
+    if let Some(first_segment) = segmented.plugin_segments.first() {
+        clap_args.push(first_segment.plugin_name.clone());
     }
     
-    // Stage 2: Segment command line and parse with plugin-aware help
-    let args = segment_and_parse_args(&initial_args)?;
+    // Stage 2: Parse global arguments with clap
+    let mut args = segment_and_parse_args(&clap_args, &initial_args)?;
+    
+    // Manually populate plugin_args since we didn't pass them to clap
+    args.plugin_args = plugin_args;
     
     cli::args::validate_args(&args)?;
     
@@ -158,11 +207,7 @@ fn run() -> Result<()> {
         return app::initialization::handle_export_config(&config_manager, export_path);
     }
     
-    // Create runtime for async operations - single runtime for the entire application
-    // Using current_thread runtime to avoid nested runtime issues
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    // Main is no longer async - components can create their own runtimes cleanly
     
     // Handle help command
     if args.help {
@@ -172,32 +217,20 @@ fn run() -> Result<()> {
     
     // Handle plugin management commands
     if args.list_plugins || args.show_plugins || args.plugins_help || args.plugin_info.is_some() || args.list_formats {
-        return runtime.block_on(async {
-            let config_manager = app::load_configuration(&args)?;
-            app::handle_plugin_commands(&args, &config_manager).await
-        });
+        let config_manager = app::load_configuration(&args)?;
+        return rt.block_on(app::handle_plugin_commands(&args, &config_manager));
     }
     
     // Handle --show-branch command
     if args.show_branch {
-        return runtime.block_on(async {
-            app::handle_show_branch_command(&args, &config_manager).await
-        });
+        return rt.block_on(app::handle_show_branch_command(&args, &config_manager));
     }
     
     // Resolve repository path (scanner will validate it's a git repository)
     let repo_path = resolve_repository_path(args.repository.as_deref())?;
     
-    // Run scanner with existing runtime
-    let runtime_arc = Arc::new(runtime);
-    let runtime_clone = Arc::clone(&runtime_arc);
-    let result = runtime_arc.block_on(async {
-        app::run_scanner(repo_path, args, config_manager, runtime_clone).await
-    });
-    
-    // Runtime will be dropped when runtime_arc goes out of scope
-    
-    result
+    // Scanner handles its own runtime internally - clean sync interface
+    app::run_scanner(repo_path, args, config_manager)
 }
 
 /// Parse command line arguments with plugin-aware segmentation
@@ -207,74 +240,19 @@ fn run() -> Result<()> {
 /// 2. Segments command line by plugin boundaries 
 /// 3. Handles plugin-specific help routing
 /// 4. Parses global arguments using traditional clap derive
-fn segment_and_parse_args(_initial_args: &cli::initial_args::InitialArgs) -> Result<cli::Args> {
-    // Plugin help is now handled earlier in run(), so we can proceed with normal parsing
+fn segment_and_parse_args(global_args: &[String], _initial_args: &cli::initial_args::InitialArgs) -> Result<cli::Args> {
+    use clap::Parser;
     
-    // For now, fall back to traditional parsing for global arguments
-    // The segmentation logic will be used in the next phase for plugin execution
-    let args = cli::args::parse_args();
+    // Parse only the global arguments extracted from segmentation
+    // Each plugin will handle its own argument parsing
+    let mut args_with_program = vec!["gstats".to_string()];
+    args_with_program.extend_from_slice(global_args);
+    
+    let args = cli::Args::try_parse_from(&args_with_program)
+        .map_err(|e| anyhow::anyhow!("Failed to parse global arguments: {}", e))?;
+    let args = args.apply_enhanced_parsing();
+    
     Ok(args)
-}
-
-/// Handle potential plugin help requests
-/// 
-/// Checks if the command line contains a pattern like "plugin --help" and routes to plugin help
-fn handle_potential_plugin_help(raw_args: &[String], initial_args: &cli::initial_args::InitialArgs) -> Result<Option<String>> {
-    use crate::cli::converter::PluginConfig;
-    use crate::cli::plugin_handler::PluginHandler;
-    use crate::cli::command_segmenter::CommandSegmenter;
-    
-    // Create plugin configuration from initial_args
-    let plugin_config = PluginConfig {
-        directories: if let Some(dir) = &initial_args.plugin_dir {
-            vec![dir.clone()]
-        } else {
-            vec!["plugins".to_string()]
-        },
-        plugin_exclude: if let Some(exclude) = &initial_args.plugin_exclude {
-            exclude.split(',').map(|s| s.trim().to_string()).collect()
-        } else {
-            Vec::new()
-        },
-        plugin_load: Vec::new(),
-    };
-    
-    // Create runtime for async operations
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-        
-    runtime.block_on(async {
-        // Create plugin handler and build command mappings
-        let plugin_handler = PluginHandler::with_plugin_config(plugin_config)
-            .map_err(|e| anyhow::anyhow!("Failed to create plugin handler: {}", e))?;
-        
-        let mut plugin_handler = plugin_handler;
-        plugin_handler.build_command_mappings().await
-            .map_err(|e| anyhow::anyhow!("Failed to build command mappings: {}", e))?;
-        
-        // Create command segmenter
-        let segmenter = CommandSegmenter::new(plugin_handler).await
-            .map_err(|e| anyhow::anyhow!("Failed to create command segmenter: {}", e))?;
-        
-        // Segment the arguments
-        let segmented = segmenter.segment_arguments(raw_args)?;
-        
-        // Extract color flags from raw arguments
-        let no_color = raw_args.contains(&"--no-color".to_string());
-        let color = raw_args.contains(&"--color".to_string());
-        
-        // Check each plugin segment for help requests
-        for segment in &segmented.plugin_segments {
-            if segmenter.is_help_request(segment) {
-                let help_text = segmenter.get_plugin_help_with_colors(&segment.plugin_name, segment.function_name.as_deref(), no_color, color).await
-                    .map_err(|e| anyhow::anyhow!("Failed to get plugin help: {}", e))?;
-                return Ok(Some(help_text));
-            }
-        }
-        
-        Ok(None)
-    })
 }
 
 /// Utility function to estimate line count from file size

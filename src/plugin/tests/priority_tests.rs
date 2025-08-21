@@ -109,7 +109,7 @@ fn test_plugin_info_load_by_default_builder() {
         PluginType::Processing,
     );
     
-    assert_eq!(info_default.load_by_default, false);
+    assert_eq!(info_default.active_by_default, false);
     
     // Test setting to true (e.g., for export plugin)
     let info_auto_load = PluginInfo::new(
@@ -119,9 +119,9 @@ fn test_plugin_info_load_by_default_builder() {
         "Export plugin".to_string(),
         "Test Author".to_string(),
         PluginType::Processing,
-    ).with_load_by_default(true);
+    ).with_active_by_default(true);
     
-    assert_eq!(info_auto_load.load_by_default, true);
+    assert_eq!(info_auto_load.active_by_default, true);
     assert_eq!(info_auto_load.name, "export-plugin");
     
     // Test setting to false explicitly
@@ -132,8 +132,8 @@ fn test_plugin_info_load_by_default_builder() {
         "Commits plugin".to_string(),
         "Test Author".to_string(),
         PluginType::Processing,
-    ).with_load_by_default(false);
+    ).with_active_by_default(false);
     
-    assert_eq!(info_manual_load.load_by_default, false);
+    assert_eq!(info_manual_load.active_by_default, false);
     assert_eq!(info_manual_load.name, "commits-plugin");
 }

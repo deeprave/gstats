@@ -20,7 +20,6 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     /// Create a new ConfigManager from a Configuration (primarily for testing)
-    #[allow(dead_code)]
     pub fn from_config(config: Configuration) -> Self {
         Self {
             config,

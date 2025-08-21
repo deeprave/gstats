@@ -448,6 +448,7 @@ impl DebtAssessmentProcessor {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                "debt-assessment-processor".to_string(),
             );
 
             // For now, use MetricInfo - in a full implementation, we'd have a DebtInfo variant

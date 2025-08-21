@@ -43,14 +43,6 @@ impl MessageProducer for QueueMessageProducer {
 }
 
 
-/// Version compatibility checking trait
-pub trait VersionCompatible {
-    /// Check if this component is compatible with a required API version
-    fn is_compatible(&self, required_version: i64) -> bool;
-    
-    /// Get the API version this component was built for
-    fn get_component_version(&self) -> i64;
-}
 
 /// Scan result aggregator trait
 pub trait ScanAggregator {
@@ -65,23 +57,4 @@ pub trait ScanAggregator {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_version_compatible_trait() {
-        struct TestComponent;
-        
-        impl VersionCompatible for TestComponent {
-            fn is_compatible(&self, required_version: i64) -> bool {
-                required_version <= self.get_component_version()
-            }
-            
-            fn get_component_version(&self) -> i64 {
-                20000 // Mock version
-            }
-        }
-        
-        let component = TestComponent;
-        assert_eq!(component.get_component_version(), 20000);
-        assert!(component.is_compatible(19000));
-        assert!(!component.is_compatible(21000));
-    }
 }

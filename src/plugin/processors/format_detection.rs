@@ -12,7 +12,6 @@ use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
 use log::debug;
 use serde::{Serialize, Deserialize};
 
@@ -151,22 +150,6 @@ impl FileFormat {
         path_lower.ends_with(".cache")
     }
 
-    /// Analyze content patterns (would be implemented with actual file content)
-    pub fn analyze_content_patterns(&mut self, _content: &str) {
-        // In a full implementation, this would analyze file content for:
-        // - Shebang lines
-        // - Magic numbers
-        // - Content structure patterns
-        // - Language-specific patterns
-        
-        // For now, just add some example patterns
-        if self.language.as_ref().map_or(false, |l| l == "Python") {
-            self.detected_patterns.push("python_imports".to_string());
-        }
-        if self.language.as_ref().map_or(false, |l| l == "Rust") {
-            self.detected_patterns.push("rust_use_statements".to_string());
-        }
-    }
 
     /// Get format category for grouping
     pub fn get_category(&self) -> FormatCategory {
@@ -282,6 +265,7 @@ impl FormatStatistics {
         languages.sort_by(|a, b| b.1.cmp(&a.1));
         languages.into_iter().take(limit).collect()
     }
+
 }
 
 /// Format Detection Processor - can be used by any plugin
@@ -306,25 +290,14 @@ impl FormatDetectionProcessor {
         FileFormat::new(file_path.to_string())
     }
 
-    /// Get the collected file formats (for use by other processors)
-    pub fn get_file_formats(&self) -> &HashMap<String, FileFormat> {
-        &self.file_formats
-    }
-
-    /// Get format statistics
-    pub fn get_statistics(&self) -> &FormatStatistics {
-        &self.statistics
-    }
 
     fn create_format_messages(&self) -> Vec<ScanMessage> {
         let mut messages = Vec::new();
         
         // Create a summary message with format statistics
         let header = MessageHeader::new(
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            0, // sequence number
+            "format-detection-processor".to_string(),
         );
 
         let data = MessageData::FileInfo {
@@ -483,7 +456,7 @@ mod tests {
                 author_email: "test@example.com".to_string(),
                 committer_name: "Test Author".to_string(),
                 committer_email: "test@example.com".to_string(),
-                timestamp: SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 message: "Test commit".to_string(),
                 parent_hashes: vec![],
                 changed_files: vec![],

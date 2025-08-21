@@ -28,7 +28,7 @@ fn test_scan_message_creation() {
     // Test that scan messages can be created with proper structure
     use gstats::scanner::messages::{ScanMessage, MessageHeader, MessageData};
     
-    let header = MessageHeader::new(12345);
+    let header = MessageHeader::new(12345, "test-scan".to_string());
     let data = MessageData::FileInfo {
         path: "src/main.rs".to_string(),
         size: 1024,
@@ -54,7 +54,7 @@ fn test_scan_message_creation() {
 fn test_commit_message_creation() {
     use gstats::scanner::messages::{ScanMessage, MessageHeader, MessageData};
     
-    let header = MessageHeader::new(67890);
+    let header = MessageHeader::new(67890, "test-scan".to_string());
     let data = MessageData::CommitInfo {
         hash: "abc123".to_string(),
         author: "developer".to_string(),
@@ -134,7 +134,7 @@ fn test_scanner_config_fields() {
 fn test_message_header_fields() {
     use gstats::scanner::messages::MessageHeader;
     
-    let header = MessageHeader::new(9876543210);
+    let header = MessageHeader::new(9876543210, "test-scan".to_string());
     
     assert_eq!(header.sequence, 9876543210);
 }

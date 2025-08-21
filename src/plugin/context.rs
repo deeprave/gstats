@@ -10,6 +10,7 @@ use crate::scanner::messages::ScanMessage;
 use crate::display::{CompactFormat, ColourManager};
 use crate::notifications::AsyncNotificationManager;
 use crate::notifications::events::PluginEvent;
+use crate::notifications::typed_publishers::PluginEventPublisher;
 
 /// Context provided to plugins during initialization and execution
 #[derive(Clone)]
@@ -34,6 +35,9 @@ pub struct PluginContext {
     
     /// Notification manager for plugin-to-plugin communication
     pub notification_manager: Option<Arc<AsyncNotificationManager<PluginEvent>>>,
+    
+    /// Typed plugin event publisher for unified notifications
+    pub plugin_publisher: Option<Arc<PluginEventPublisher>>,
     
     /// Color manager for consistent output formatting
     pub colour_manager: Option<Arc<ColourManager>>,
@@ -187,6 +191,7 @@ impl PluginContext {
             capabilities: Vec::new(),
             aggregated_data: None,
             notification_manager: None,
+            plugin_publisher: None,
             colour_manager: None,
         }
     }
@@ -209,6 +214,12 @@ impl PluginContext {
         self
     }
     
+    /// Add typed plugin publisher for unified notification system
+    pub fn with_plugin_publisher(mut self, publisher: Arc<PluginEventPublisher>) -> Self {
+        self.plugin_publisher = Some(publisher);
+        self
+    }
+    
     /// Get plugin configuration value
     pub fn get_config_value(&self, key: &str) -> Option<&serde_json::Value> {
         self.plugin_config.get(key)
@@ -224,16 +235,25 @@ impl PluginContext {
         self.colour_manager = Some(colour_manager);
         self
     }
+    
+    /// Get the notification manager for plugin-to-plugin communication
+    pub fn get_notification_manager(&self) -> Arc<AsyncNotificationManager<PluginEvent>> {
+        self.notification_manager.clone()
+            .unwrap_or_else(|| Arc::new(AsyncNotificationManager::<PluginEvent>::new()))
+    }
 }
 
 impl RuntimeInfo {
     /// Get current runtime information
     pub fn current() -> Self {
+        let runtime_version = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.runtime_flavor().to_string(),
+            Err(_) => "no-runtime".to_string(), // No current runtime (sync context)
+        };
+        
         Self {
             api_version: crate::scanner::get_api_version() as u32,
-            runtime_version: tokio::runtime::Handle::current()
-                .runtime_flavor()
-                .to_string(),
+            runtime_version,
             cpu_cores: num_cpus::get(),
             available_memory: Self::get_available_memory(),
             working_directory: std::env::current_dir()

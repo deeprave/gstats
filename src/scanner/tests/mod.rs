@@ -1,6 +1,6 @@
-//! Scanner Integration Tests
+//! Scanner Tests
 //! 
-//! Tests for scanner integration with plugin coordination and other components.
+//! Tests for scanner functionality.
 
 #[cfg(test)]
-pub mod shutdown_coordination_tests;
+pub mod basic_scanner_tests;

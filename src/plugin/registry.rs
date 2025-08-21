@@ -349,11 +349,11 @@ impl PluginRegistry {
         }
     }
     
-    /// Auto-activate plugins marked with load_by_default = true
+    /// Auto-activate plugins marked with active_by_default = true
     pub async fn auto_activate_default_plugins(&mut self) -> PluginResult<()> {
         let plugins_to_activate: Vec<String> = self.plugins.iter()
             .filter_map(|(name, plugin)| {
-                if plugin.plugin_info().load_by_default {
+                if plugin.plugin_info().active_by_default {
                     Some(name.clone())
                 } else {
                     None
@@ -363,7 +363,7 @@ impl PluginRegistry {
         
         for plugin_name in plugins_to_activate {
             self.activate_plugin(&plugin_name).await?;
-            log::debug!("Auto-activated plugin '{}' (load_by_default = true)", plugin_name);
+            log::debug!("Auto-activated plugin '{}' (active_by_default = true)", plugin_name);
         }
         
         Ok(())
@@ -688,6 +688,70 @@ impl SharedPluginRegistry {
     /// Clone the Arc for sharing
     pub fn clone_inner(&self) -> Arc<RwLock<PluginRegistry>> {
         Arc::clone(&self.inner)
+    }
+    
+    /// Discover and load all available plugins using the unified discovery system
+    /// This is the ONLY correct way to populate a plugin registry from external code
+    pub fn discover_and_load_plugins(
+        &self,
+        context: &crate::plugin::PluginContext,
+        excluded_plugins: Vec<String>,
+    ) -> PluginResult<()> {
+        use crate::plugin::discovery::{PluginDiscovery, UnifiedPluginDiscovery};
+        
+        log::debug!("SharedPluginRegistry: Starting plugin discovery with {} exclusions", excluded_plugins.len());
+        
+        // Create unified discovery (no external plugin directory for default usage)
+        let discovery = UnifiedPluginDiscovery::new_with_notification_manager(
+            None, 
+            excluded_plugins, 
+            crate::plugin::PluginSettings::default(),
+            Some(context.get_notification_manager())
+        ).map_err(|e| PluginError::InitializationFailed { 
+            message: format!("Failed to create plugin discovery: {}", e) 
+        })?;
+        
+        // Discover and instantiate all available plugins
+        let plugins = discovery.discover_and_instantiate_plugins()?;
+        let plugin_count = plugins.len();
+        log::debug!("SharedPluginRegistry: Instantiated {} plugins", plugin_count);
+        
+        // Create a runtime for async plugin registration
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PluginError::InitializationFailed { 
+                message: format!("Failed to create runtime for plugin registration: {}", e) 
+            })?;
+        
+        // Register and initialize each plugin
+        rt.block_on(async {
+            let mut registry = self.inner.write().await;
+            
+            for mut plugin in plugins {
+                let plugin_name = plugin.plugin_info().name.clone();
+                let active_by_default = plugin.plugin_info().active_by_default;
+                
+                // Initialize plugin with context
+                plugin.initialize(context).await?;
+                
+                // Register plugin as inactive first
+                registry.register_plugin_inactive(plugin).await?;
+                
+                // Activate if marked as active_by_default
+                if active_by_default {
+                    registry.activate_plugin(&plugin_name).await?;
+                    log::debug!("SharedPluginRegistry: Activated plugin '{}' (active_by_default = true)", plugin_name);
+                } else {
+                    log::debug!("SharedPluginRegistry: Registered plugin '{}' as inactive (active_by_default = false)", plugin_name);
+                }
+            }
+            
+            Result::<_, PluginError>::Ok(())
+        })?;
+        
+        log::info!("SharedPluginRegistry: Successfully loaded {} plugins via discovery system", plugin_count);
+        Ok(())
     }
 }
 

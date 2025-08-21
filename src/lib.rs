@@ -1,5 +1,4 @@
-// Allow dead code during development phase
-#![allow(dead_code)]
+// Library modules for the gstats application
 
 pub mod app;
 pub mod cli;

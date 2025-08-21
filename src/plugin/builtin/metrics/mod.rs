@@ -18,30 +18,57 @@ use crate::notifications::traits::{NotificationManager, Publisher};
 use crate::queue::{QueueConsumer, QueueEvent};
 use crate::scanner::async_engine::processors::{EventProcessor, EventProcessingCoordinator};
 use crate::plugin::processors::{
-    ChangeFrequencyProcessor as ComprehensiveChangeFrequencyProcessor,
-    ComplexityProcessor as ComprehensiveComplexityProcessor,
-    HotspotProcessor as ComprehensiveHotspotProcessor,
-    DebtAssessmentProcessor as ComprehensiveDebtAssessmentProcessor,
-    FormatDetectionProcessor as ComprehensiveFormatDetectionProcessor,
-    DuplicationDetectorProcessor as ComprehensiveDuplicationDetectorProcessor,
+    ChangeFrequencyProcessor,
+    ComplexityProcessor,
+    HotspotProcessor,
+    DebtAssessmentProcessor,
+    FormatDetectionProcessor,
+    DuplicationDetectorProcessor,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Per-scan data for metrics plugin
+#[derive(Debug)]
+struct MetricsScanData {
+    /// Results and metrics for this scan
+    results: HashMap<String, serde_json::Value>,
+    /// Scan start time for performance tracking
+    started_at: std::time::Instant,
+}
+
+impl MetricsScanData {
+    fn new() -> Self {
+        Self {
+            results: HashMap::new(),
+            started_at: std::time::Instant::now(),
+        }
+    }
+}
+
 /// Code Metrics Plugin using comprehensive event-driven processors
 pub struct MetricsPlugin {
+    /// Command name for clap integration
+    command_name: String,
+    
+    /// Plugin settings (color preferences, etc.)
+    settings: crate::plugin::PluginSettings,
+    
     info: PluginInfo,
     initialized: bool,
     processor_coordinator: Option<EventProcessingCoordinator>,
-    results: Arc<RwLock<HashMap<String, serde_json::Value>>>,
-    // Consumer plugin fields
+    
+    /// Per-scan metrics data and results
+    scan_data: Arc<RwLock<HashMap<String, MetricsScanData>>>,
+    
+    /// Consumer plugin fields
     consuming: Arc<RwLock<bool>>,
     consumer: Arc<RwLock<Option<QueueConsumer>>>,
-    // Notification publishing
-    notification_manager: Option<AsyncNotificationManager<PluginEvent>>,
-    current_scan_id: Arc<RwLock<Option<String>>>,
+    
+    /// Notification publishing - REQUIRED for all plugins
+    notification_manager: Arc<AsyncNotificationManager<PluginEvent>>,
 }
 
 impl MetricsPlugin {
@@ -86,28 +113,42 @@ impl MetricsPlugin {
         );
 
         Self {
+            command_name: "metrics".to_string(),
+            settings: crate::plugin::PluginSettings::default(),
             info,
             initialized: false,
             processor_coordinator: None,
-            results: Arc::new(RwLock::new(HashMap::new())),
-            // Initialize consumer plugin fields
+            scan_data: Arc::new(RwLock::new(HashMap::new())),
             consuming: Arc::new(RwLock::new(false)),
             consumer: Arc::new(RwLock::new(None)),
-            notification_manager: None,
-            current_scan_id: Arc::new(RwLock::new(None)),
+            notification_manager: Arc::new(AsyncNotificationManager::new()), // Temporary for deprecated constructor
         }
+    }
+    
+    // with_settings() method removed - use with_dependencies() instead
+    
+    /// Create a new metrics plugin with all required dependencies (REQUIRED)
+    /// This is the correct way to instantiate MetricsPlugin - it MUST have notification manager
+    pub fn with_dependencies(
+        settings: crate::plugin::PluginSettings,
+        notification_manager: std::sync::Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::PluginEvent>>
+    ) -> Self {
+        let mut plugin = Self::new();
+        plugin.settings = settings;
+        plugin.notification_manager = notification_manager;
+        plugin
     }
 
     fn create_processors(&self) -> Vec<Box<dyn EventProcessor>> {
         let mut processors: Vec<Box<dyn EventProcessor>> = Vec::new();
 
         // All processors run without mode filtering
-        processors.push(Box::new(ComprehensiveChangeFrequencyProcessor::new()));
-        processors.push(Box::new(ComprehensiveComplexityProcessor::new()));
-        processors.push(Box::new(ComprehensiveHotspotProcessor::new()));
-        processors.push(Box::new(ComprehensiveDebtAssessmentProcessor::new()));
-        processors.push(Box::new(ComprehensiveFormatDetectionProcessor::new()));
-        processors.push(Box::new(ComprehensiveDuplicationDetectorProcessor::new()));
+        processors.push(Box::new(ChangeFrequencyProcessor::new()));
+        processors.push(Box::new(ComplexityProcessor::new()));
+        processors.push(Box::new(HotspotProcessor::new()));
+        processors.push(Box::new(DebtAssessmentProcessor::new()));
+        processors.push(Box::new(FormatDetectionProcessor::new()));
+        processors.push(Box::new(DuplicationDetectorProcessor::new()));
 
         processors
     }
@@ -115,8 +156,12 @@ impl MetricsPlugin {
     /// Create PluginDataExport from current metrics results
     async fn create_data_export(&self, scan_id: &str) -> PluginResult<PluginDataExport> {
         let results = {
-            let results_guard = self.results.read().await;
-            results_guard.clone()
+            let scan_data_guard = self.scan_data.read().await;
+            if let Some(data) = scan_data_guard.get(scan_id) {
+                data.results.clone()
+            } else {
+                HashMap::new()
+            }
         };
         
         // Create schema for metrics table
@@ -266,30 +311,29 @@ impl ConsumerPlugin for MetricsPlugin {
             QueueEvent::ScanStarted { scan_id, .. } => {
                 log::info!("Metrics plugin: scan started for {}", scan_id);
                 
-                // Store the current scan ID
+                // Initialize scan data for this scan
                 {
-                    let mut current_scan = self.current_scan_id.write().await;
-                    *current_scan = Some(scan_id.clone());
-                }
-                
-                // Reset results for new scan
-                {
-                    let mut results = self.results.write().await;
-                    results.clear();
+                    let mut scan_data = self.scan_data.write().await;
+                    scan_data.insert(scan_id.clone(), MetricsScanData::new());
                 }
             }
             QueueEvent::ScanComplete { scan_id, total_messages, .. } => {
-                let result_count = {
-                    let results = self.results.read().await;
-                    results.len()
+                let (result_count, elapsed) = {
+                    let scan_data = self.scan_data.read().await;
+                    if let Some(data) = scan_data.get(scan_id) {
+                        let elapsed = data.started_at.elapsed();
+                        (data.results.len(), elapsed)
+                    } else {
+                        (0, std::time::Duration::from_secs(0))
+                    }
                 };
                 log::info!(
-                    "Metrics plugin: scan complete for {} - generated {} metrics (total {} messages)", 
-                    scan_id, result_count, total_messages
+                    "Metrics plugin: scan complete for {} - generated {} metrics (total {} messages) in {:?}", 
+                    scan_id, result_count, total_messages, elapsed
                 );
                 
-                // Create and publish data export if we have a notification manager
-                if self.notification_manager.is_some() {
+                // Create and publish data export
+                {
                     if let Ok(export_data) = self.create_data_export(scan_id).await {
                         let event = PluginEvent::DataReady {
                             plugin_id: "metrics".to_string(),
@@ -381,8 +425,13 @@ impl Plugin for MetricsPlugin {
                 
                 // TODO: Implement actual metrics analysis based on collected results
                 let results = {
-                    let results_guard = self.results.read().await;
-                    results_guard.clone()
+                    let scan_data = self.scan_data.read().await;
+                    // Aggregate results from all active scans
+                    let mut aggregated_results = HashMap::new();
+                    for data in scan_data.values() {
+                        aggregated_results.extend(data.results.clone());
+                    }
+                    aggregated_results
                 };
                 
                 let duration_us = start_time.elapsed().as_micros() as u64;
@@ -411,8 +460,13 @@ impl Plugin for MetricsPlugin {
                 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
                 
                 let results_count = {
-                    let results = self.results.read().await;
-                    results.len()
+                    let scan_data = self.scan_data.read().await;
+                    // Count results from all active scans
+                    let mut total_results = 0;
+                    for data in scan_data.values() {
+                        total_results += data.results.len();
+                    }
+                    total_results
                 };
                 
                 let data = MessageData::MetricInfo {
@@ -426,6 +480,7 @@ impl Plugin for MetricsPlugin {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
+                    "metrics-plugin".to_string(),
                 );
                 
                 Ok(PluginResponse::Statistics(ScanMessage::new(header, data)))
@@ -498,17 +553,17 @@ impl Plugin for MetricsPlugin {
         use crate::plugin::traits::PluginClapParser;
         Some(PluginClapParser::build_clap_command(self))
     }
+    
+    async fn parse_plugin_arguments(&mut self, args: &[String]) -> PluginResult<()> {
+        use crate::plugin::traits::PluginClapParserExt;
+        self.parse_plugin_args_default(args).await
+    }
 }
 
 #[async_trait]
 impl Publisher<PluginEvent> for MetricsPlugin {
     async fn publish(&self, event: PluginEvent) -> crate::notifications::NotificationResult<()> {
-        if let Some(ref manager) = self.notification_manager {
-            manager.publish(event).await
-        } else {
-            log::warn!("No notification manager available for publishing events");
-            Ok(())
-        }
+        self.notification_manager.publish(event).await
     }
     
 }
@@ -540,10 +595,22 @@ impl PluginDataRequirements for MetricsPlugin {
 /// Modern clap-based argument parsing implementation for metrics plugin
 #[async_trait]
 impl PluginClapParser for MetricsPlugin {
-    fn build_clap_command(&self) -> clap::Command {
-        use clap::{Arg, ArgAction, Command};
+    fn get_command_name(&self) -> impl Into<String> {
+        &self.command_name
+    }
+    
+    fn get_command_description(&self) -> &str {
+        "Analyzes code quality metrics and statistics"
+    }
+    
+    fn get_plugin_settings(&self) -> &crate::plugin::PluginSettings {
+        &self.settings
+    }
+    
+    fn add_plugin_args(&self, command: clap::Command) -> clap::Command {
+        use clap::{Arg, ArgAction};
         
-        Command::new("metrics")
+        command
             .override_usage("metrics [OPTIONS]")
             .help_template("Usage: {usage}\n\nAnalyzes code quality metrics and statistics\n\nOptions:\n{options}\n{after-help}")
             .after_help("Analyzes complexity, duplication, hotspots, and code quality indicators.")

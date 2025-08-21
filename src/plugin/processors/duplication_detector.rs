@@ -12,7 +12,6 @@ use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
 use log::debug;
 use serde::{Serialize, Deserialize};
 
@@ -236,6 +235,7 @@ impl DuplicateGroup {
     pub fn get_file_count(&self) -> usize {
         self.get_involved_files().len()
     }
+
 }
 
 /// Summary of duplication analysis
@@ -313,15 +313,6 @@ impl DuplicationDetectorProcessor {
         }
     }
 
-    pub fn with_config(config: DuplicationConfig) -> Self {
-        Self {
-            config,
-            file_contents: HashMap::new(),
-            duplicate_groups: Vec::new(),
-            stats: ProcessorStats::default(),
-            shared_state: None,
-        }
-    }
 
     fn should_analyze_file(&self, file_path: &str) -> bool {
         let extension = std::path::Path::new(file_path)
@@ -418,10 +409,6 @@ impl DuplicationDetectorProcessor {
         groups
     }
 
-    /// Get the detected duplicate groups
-    pub fn get_duplicate_groups(&self) -> &[DuplicateGroup] {
-        &self.duplicate_groups
-    }
 
     /// Generate duplication summary
     pub fn generate_summary(&self) -> DuplicationSummary {
@@ -439,10 +426,8 @@ impl DuplicationDetectorProcessor {
         // Create messages for top duplicate groups
         for group in self.duplicate_groups.iter().take(10) {
             let header = MessageHeader::new(
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
+                0, // sequence number
+                "duplication-detector-processor".to_string(),
             );
 
             // For now, use FileInfo - in a full implementation, we'd have a DuplicationInfo variant
@@ -639,7 +624,7 @@ mod tests {
                 author_email: "test@example.com".to_string(),
                 committer_name: "Test Author".to_string(),
                 committer_email: "test@example.com".to_string(),
-                timestamp: SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 message: "Test commit".to_string(),
                 parent_hashes: vec![],
                 changed_files: vec![],

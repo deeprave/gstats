@@ -54,8 +54,8 @@ impl MockPlugin {
     }
     
     /// Set whether plugin should be activated by default
-    pub fn with_load_by_default(mut self, load_by_default: bool) -> Self {
-        self.info.load_by_default = load_by_default;
+    pub fn with_active_by_default(mut self, load_by_default: bool) -> Self {
+        self.info.active_by_default = load_by_default;
         self
     }
     

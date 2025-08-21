@@ -55,15 +55,17 @@ pub mod shared_queue;
 pub mod memory;
 pub mod multi_consumer;
 pub mod queue_consumer;
+pub mod statistics;
+pub mod events;
+pub mod consumer_registry;
 
 // Re-export main types for convenience
 pub use error::{QueueError, QueueResult};
 pub use notifications::QueueEvent;
 pub use shared_queue::SharedMessageQueue;
 pub use memory::MemoryMonitor;
-pub use multi_consumer::{
-    MultiConsumerQueue, QueueStatistics
-};
+pub use multi_consumer::MultiConsumerQueue;
+pub use statistics::QueueStatistics;
 pub use queue_consumer::QueueConsumer;
 
 

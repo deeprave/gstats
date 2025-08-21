@@ -8,7 +8,13 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use gstats::plugin::data_export::*;
-use gstats::plugin::builtin::export::ExportPlugin;
+use gstats::plugin::ExportPlugin;
+
+/// Helper function to format data as console output using the new architecture
+async fn format_as_console(plugin: &ExportPlugin, data: &[Arc<PluginDataExport>]) -> Result<String, Box<dyn std::error::Error>> {
+    // Use the public format_as_console method
+    Ok(plugin.format_as_console(data).await?)
+}
 
 #[tokio::test]
 async fn test_json_formatter_with_tabular_data() {
@@ -133,7 +139,7 @@ async fn test_console_formatter_with_tabular_data() {
     let export_plugin = ExportPlugin::new();
     
     let test_data = create_sample_tabular_data();
-    let formatted = export_plugin.format_console(&[test_data]).await.unwrap();
+    let formatted = format_as_console(&export_plugin, &[test_data]).await.unwrap();
     
     // Verify console table structure
     assert!(formatted.contains("========"));
@@ -146,9 +152,30 @@ async fn test_console_formatter_with_tabular_data() {
     assert!(formatted.contains("Bob"));
     assert!(formatted.contains("87"));
     
-    // Verify table formatting with separators
-    assert!(formatted.contains("|"));
-    assert!(formatted.contains("-"));
+    // Verify table formatting with separators (TableBuilder uses spaces and dashes)
+    assert!(formatted.contains("-")); // Table separators
+    assert!(formatted.contains("Name")); // Headers are present
+    assert!(formatted.contains("Score"));
+}
+
+#[tokio::test]
+async fn test_console_formatter_with_colors() {
+    // Test that console formatting produces consistent output
+    let export_plugin = ExportPlugin::new();
+    let test_data = create_sample_tabular_data();
+    
+    // Format using the public method (will use TableBuilder internally)
+    let formatted = export_plugin.format_as_console(&[test_data]).await.unwrap();
+    
+    // Verify the output contains expected data
+    assert!(formatted.contains("Sample Data"));
+    assert!(formatted.contains("Alice"));
+    assert!(formatted.contains("Bob"));
+    assert!(formatted.contains("Name"));
+    assert!(formatted.contains("Score"));
+    
+    // Verify table structure (TableBuilder output)
+    assert!(formatted.contains("-")); // Table separators
 }
 
 #[tokio::test]
@@ -188,7 +215,7 @@ async fn test_key_value_data_formatting() {
     assert!(summary_data.is_object());
     
     // Test console formatting
-    let console_formatted = export_plugin.format_console(&[kv_data]).await.unwrap();
+    let console_formatted = format_as_console(&export_plugin, &[kv_data]).await.unwrap();
     assert!(console_formatted.contains("Summary Statistics"));
     assert!(console_formatted.contains("total_files"));
     assert!(console_formatted.contains("1250"));
@@ -202,7 +229,7 @@ async fn test_hierarchical_data_formatting() {
     let tree_data = create_hierarchical_data();
     
     // Test console formatting for tree data
-    let console_formatted = export_plugin.format_console(&[tree_data.clone()]).await.unwrap();
+    let console_formatted = format_as_console(&export_plugin, &[tree_data.clone()]).await.unwrap();
     assert!(console_formatted.contains("Project Structure"));
     assert!(console_formatted.contains("Tree: Root Directory"));
     
@@ -227,7 +254,7 @@ async fn test_empty_data_formatting() {
     let csv_result = export_plugin.format_csv(&[empty_data.clone()]).await;
     assert!(csv_result.is_ok());
     
-    let console_result = export_plugin.format_console(&[empty_data]).await;
+    let console_result = format_as_console(&export_plugin, &[empty_data]).await;
     assert!(console_result.is_ok());
     let console_output = console_result.unwrap();
     assert!(console_output.contains("(no data)"));
@@ -265,7 +292,7 @@ async fn test_large_dataset_formatting_performance() {
     let csv_result = export_plugin.format_csv(&[large_data.clone()]).await;
     assert!(csv_result.is_ok());
     
-    let console_result = export_plugin.format_console(&[large_data]).await;
+    let console_result = format_as_console(&export_plugin, &[large_data]).await;
     assert!(console_result.is_ok());
     
     let elapsed = start.elapsed();
@@ -279,7 +306,7 @@ async fn test_export_hints_influence_formatting() {
     let data_with_hints = create_data_with_export_hints();
     
     // Test console formatting respects column alignment hints
-    let console_formatted = export_plugin.format_console(&[data_with_hints]).await.unwrap();
+    let console_formatted = format_as_console(&export_plugin, &[data_with_hints]).await.unwrap();
     
     // Verify data is present and formatted
     assert!(console_formatted.contains("Sortable Data"));

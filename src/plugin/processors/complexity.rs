@@ -181,6 +181,7 @@ impl ComplexityProcessor {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                "complexity-processor".to_string(),
             );
 
             let data = MessageData::MetricInfo {

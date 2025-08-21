@@ -59,8 +59,28 @@ pub trait Plugin: Send + Sync {
     /// This method generates help text with explicit color control.
     /// Plugins that implement PluginClapParser should override this.
     fn get_plugin_help_with_colors(&self, _no_color: bool, _color: bool) -> Option<String> {
-        // Default implementation just calls get_plugin_help
-        // Plugins should override this to provide color-aware help
+        // Use new settings-based method for compatibility
+        let color_choice = if _no_color {
+            clap::ColorChoice::Never
+        } else if _color {
+            clap::ColorChoice::Always
+        } else {
+            clap::ColorChoice::Auto
+        };
+        let settings = crate::plugin::PluginSettings {
+            color_choice,
+            verbose: false,
+            debug: false,
+        };
+        self.get_plugin_help_with_settings(&settings)
+    }
+    
+    /// Generate help text using plugin settings (preferred method)
+    /// 
+    /// This is the new preferred method that uses structured settings instead
+    /// of individual boolean flags. Plugins should override this method.
+    fn get_plugin_help_with_settings(&self, _settings: &crate::plugin::PluginSettings) -> Option<String> {
+        // Default implementation falls back to basic help
         self.get_plugin_help()
     }
     
@@ -110,6 +130,12 @@ pub trait Plugin: Send + Sync {
     /// Cast to mutable ConsumerPlugin if this plugin implements that trait
     fn as_consumer_plugin_mut(&mut self) -> Option<&mut dyn ConsumerPlugin> {
         None
+    }
+    
+    /// Parse plugin arguments if this plugin supports clap parsing
+    /// Default implementation does nothing (for plugins that don't support argument parsing)
+    async fn parse_plugin_arguments(&mut self, _args: &[String]) -> PluginResult<()> {
+        Ok(()) // Default: no-op for plugins that don't support argument parsing
     }
 }
 
@@ -186,10 +212,9 @@ pub struct PluginInfo {
     /// Plugin execution priority (higher values = higher priority, default = 0)
     pub priority: i32,
     
-    /// Whether this plugin should be activated by default (default = false)
-    /// Export plugins typically set this to true
+    /// Export plugins typically set this to set to true, else false
     #[serde(default)]
-    pub load_by_default: bool,
+    pub active_by_default: bool,
 }
 
 /// Plugin dependency specification
@@ -400,6 +425,10 @@ pub struct PluginDescriptor {
     
     /// Plugin configuration
     pub config: HashMap<String, serde_json::Value>,
+    
+    /// Plugin functions (populated by discovery system)
+    #[serde(default)]
+    pub functions: Vec<PluginFunction>,
 }
 
 impl PluginInfo {
@@ -424,7 +453,7 @@ impl PluginInfo {
             plugin_type,
             license: None,
             priority: 5, // Default priority
-            load_by_default: false, // Default to manual activation
+            active_by_default: false, // Default to manual activation
         }
     }
     
@@ -470,8 +499,8 @@ impl PluginInfo {
     }
     
     /// Set whether plugin should be activated by default
-    pub fn with_load_by_default(mut self, load_by_default: bool) -> Self {
-        self.load_by_default = load_by_default;
+    pub fn with_active_by_default(mut self, active_by_default: bool) -> Self {
+        self.active_by_default = active_by_default;
         self
     }
     
@@ -555,6 +584,7 @@ impl PluginDescriptor {
             file_path: None,
             entry_point,
             config: HashMap::new(),
+            functions: Vec::new(),  // Default to empty functions
         }
     }
     
@@ -579,11 +609,58 @@ impl PluginDescriptor {
 /// offering consistency with the main CLI and automatic help generation.
 #[async_trait]
 pub trait PluginClapParser {
-    /// Build a clap Command for this plugin
+    /// Get the plugin name for the command
+    fn get_command_name(&self) -> impl Into<String>;
+    
+    /// Get the plugin description for the command
+    fn get_command_description(&self) -> &str {
+        "Plugin command"
+    }
+    
+    /// Get the plugin settings (color, verbose, debug flags)
+    fn get_plugin_settings(&self) -> &crate::plugin::PluginSettings;
+    
+    /// Add plugin-specific arguments to the command
     /// 
-    /// This method should return a clap Command that defines all the arguments
-    /// this plugin supports. The Command will be used for parsing and help generation.
-    fn build_clap_command(&self) -> clap::Command;
+    /// Plugins should add their specific arguments to the provided command.
+    /// The command will already have color settings and styles configured.
+    fn add_plugin_args(&self, command: clap::Command) -> clap::Command {
+        command // Default implementation returns unchanged
+    }
+    
+    /// Build a clap Command for this plugin with centralized configuration
+    /// 
+    /// This method creates a command with consistent color and style settings,
+    /// then allows the plugin to add its specific arguments.
+    fn build_clap_command(&self) -> clap::Command {
+        use clap::Command;
+        
+        // Create base command with plugin's name
+        let mut command = Command::new(self.get_command_name().into());
+        
+        // Get actual plugin settings for color configuration  
+        // Copy values to avoid borrowing issues
+        let color_choice = self.get_plugin_settings().color_choice;
+        
+        // Configure colors centrally
+        command = command.color(color_choice);
+        
+        // Apply consistent styling for all plugins when colors are enabled
+        if color_choice != clap::ColorChoice::Never {
+            let styles = clap::builder::Styles::styled()
+                .header(clap::builder::styling::AnsiColor::Yellow.on_default())
+                .usage(clap::builder::styling::AnsiColor::Green.on_default())
+                .literal(clap::builder::styling::AnsiColor::Cyan.on_default())
+                .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
+            command = command.styles(styles);
+        }
+        
+        // Set description
+        command = command.about(self.get_command_description().to_string());
+        
+        // Let the plugin add its specific arguments
+        self.add_plugin_args(command)
+    }
     
     /// Parse arguments using clap and configure the plugin
     /// 
@@ -605,32 +682,57 @@ pub trait PluginClapParser {
     /// Generate help text with color configuration
     /// 
     /// This provides help generation with explicit color control.
-    /// The default implementation uses clap's ColorChoice to control ANSI colors.
+    /// Uses clap v4's styling system to provide proper colored output.
     fn generate_help_with_colors(&self, no_color: bool, color: bool) -> String {
-        use clap::ColorChoice;
-        
         let mut command = self.build_clap_command();
         
-        // Configure color output based on flags with explicit terminal control
-        let color_choice = if no_color {
-            ColorChoice::Never
+        // Configure color choice based on flags
+        if no_color {
+            command = command.color(clap::ColorChoice::Never);
         } else if color {
-            // Force colors when explicitly requested
-            ColorChoice::Always
+            command = command.color(clap::ColorChoice::Always);
         } else {
-            // Use auto-detection for default behavior
-            ColorChoice::Auto
-        };
+            command = command.color(clap::ColorChoice::Auto);
+        }
         
-        command = command.color(color_choice);
+        // Add styled colors when not disabled
+        if !no_color {
+            let styles = clap::builder::Styles::styled()
+                .header(clap::builder::styling::AnsiColor::Yellow.on_default())
+                .usage(clap::builder::styling::AnsiColor::Green.on_default())
+                .literal(clap::builder::styling::AnsiColor::Cyan.on_default())
+                .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
+            command = command.styles(styles);
+        }
         
-        // Set environment variables to reinforce color choice
-        if color {
-            std::env::set_var("CLICOLOR_FORCE", "1");
-            std::env::remove_var("NO_COLOR");
-        } else if no_color {
-            std::env::set_var("NO_COLOR", "1");
-            std::env::remove_var("CLICOLOR_FORCE");
+        // Use print_help() which works with colors, but need to capture output
+        // For now, fall back to write_help() and add colors via structured approach
+        let mut help_output = Vec::new();
+        let _ = command.write_help(&mut help_output);
+        String::from_utf8_lossy(&help_output).to_string()
+    }
+    
+    /// Generate help text using plugin settings (preferred method)
+    /// 
+    /// This is the new preferred method that uses structured settings instead 
+    /// of individual boolean flags. It eliminates the need for environment variables.
+    fn generate_help_with_settings(&self, settings: &crate::plugin::PluginSettings) -> String {
+        let mut command = self.build_clap_command();
+        
+        // Configure color choice and styling based on settings
+        command = command.color(settings.color_choice);
+        
+        // Apply styling for colors when not disabled
+        if settings.color_choice != clap::ColorChoice::Never {
+            let styles = clap::builder::Styles::styled()
+                .header(clap::builder::styling::AnsiColor::Yellow.on_default() | clap::builder::styling::Effects::BOLD)
+                .usage(clap::builder::styling::AnsiColor::Green.on_default() | clap::builder::styling::Effects::BOLD)
+                .literal(clap::builder::styling::AnsiColor::Cyan.on_default() | clap::builder::styling::Effects::BOLD)
+                .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default())
+                .error(clap::builder::styling::AnsiColor::Red.on_default() | clap::builder::styling::Effects::BOLD)
+                .valid(clap::builder::styling::AnsiColor::Green.on_default() | clap::builder::styling::Effects::BOLD)
+                .invalid(clap::builder::styling::AnsiColor::Red.on_default() | clap::builder::styling::Effects::BOLD);
+            command = command.styles(styles);
         }
         
         let mut help_output = Vec::new();
@@ -638,6 +740,40 @@ pub trait PluginClapParser {
         String::from_utf8_lossy(&help_output).to_string()
     }
 }
+
+/// Extension trait providing default implementation of parse_plugin_args for PluginClapParser
+/// 
+/// This provides a convenient default implementation that handles help flags centrally 
+/// and uses print_help() for proper color support before delegating to configure_from_matches.
+#[async_trait]
+pub trait PluginClapParserExt: PluginClapParser {
+    async fn parse_plugin_args_default(&mut self, args: &[String]) -> PluginResult<()> {
+        // Check for help flag before building command - we want to handle it with print_help()
+        if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
+            let mut command = self.build_clap_command();
+            let _ = command.print_help();
+            std::process::exit(0);
+        }
+        
+        // Build command and parse arguments
+        let command = self.build_clap_command();
+        
+        // Create a full args vector with plugin name as first argument
+        let plugin_name = command.get_name().to_string();
+        let mut full_args = vec![plugin_name];
+        full_args.extend_from_slice(args);
+        
+        // Parse the arguments using clap
+        let matches = command.try_get_matches_from(&full_args)
+            .map_err(|e| PluginError::invalid_argument("plugin_args", &format!("Failed to parse plugin arguments: {}", e)))?;
+        
+        // Delegate to the plugin's configuration method
+        self.configure_from_matches(&matches).await
+    }
+}
+
+/// Blanket implementation of the extension trait
+impl<T: PluginClapParser> PluginClapParserExt for T {}
 
 /// Legacy plugin argument parsing trait (deprecated)
 /// 
@@ -893,6 +1029,7 @@ impl Default for ConsumerPreferences {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1061,7 +1198,7 @@ mod tests {
                     plugin_type: PluginType::Processing,
                     license: None,
                     priority: 0,
-                    load_by_default: false,
+                    active_by_default: false,
                 },
                 consumer: None,
             }

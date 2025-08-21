@@ -6,33 +6,54 @@
 use super::error::{PluginError, PluginResult};
 use super::traits::{PluginDescriptor, PluginType};
 use std::path::{Path, PathBuf};
-use async_trait::async_trait;
-use tokio::fs;
 use std::time::SystemTime;
 use std::collections::HashMap;
 
 /// Plugin discovery trait for finding and loading plugins
-#[async_trait]
 pub trait PluginDiscovery: Send + Sync {
     /// Discover all available plugins
-    async fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>>;
+    fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>>;
     
     /// Discover plugins filtered by type
-    async fn discover_plugins_by_type(&self, plugin_type: PluginType) -> PluginResult<Vec<PluginDescriptor>> {
-        let all_plugins = self.discover_plugins().await?;
+    fn discover_plugins_by_type(&self, plugin_type: PluginType) -> PluginResult<Vec<PluginDescriptor>> {
+        let all_plugins = self.discover_plugins()?;
         Ok(all_plugins.into_iter()
             .filter(|p| p.info.plugin_type == plugin_type)
             .collect())
     }
     
     /// Discover plugins compatible with a specific API version
-    async fn discover_compatible_plugins(&self, api_version: u32) -> PluginResult<Vec<PluginDescriptor>> {
-        let all_plugins = self.discover_plugins().await?;
+    fn discover_compatible_plugins(&self, api_version: u32) -> PluginResult<Vec<PluginDescriptor>> {
+        let all_plugins = self.discover_plugins()?;
         let major_version = api_version / 10000;
         
         Ok(all_plugins.into_iter()
             .filter(|p| (p.info.api_version / 10000) == major_version)
             .collect())
+    }
+    
+    /// Discover and instantiate all available plugins (the preferred method)
+    fn discover_and_instantiate_plugins(&self) -> PluginResult<Vec<Box<dyn crate::plugin::Plugin>>> {
+        // Default implementation falls back to descriptor-based discovery
+        // Specific implementations should override this for better performance
+        let descriptors = self.discover_plugins()?;
+        let mut plugins = Vec::new();
+        
+        for descriptor in descriptors {
+            if let Some(plugin) = self.instantiate_from_descriptor(&descriptor)? {
+                plugins.push(plugin);
+            }
+        }
+        
+        Ok(plugins)
+    }
+    
+    /// Instantiate a plugin from its descriptor
+    /// Returns None if the plugin cannot be instantiated (e.g., excluded, incompatible)
+    fn instantiate_from_descriptor(&self, descriptor: &PluginDescriptor) -> PluginResult<Option<Box<dyn crate::plugin::Plugin>>> {
+        // Default implementation - subclasses should override
+        log::warn!("Plugin discovery implementation does not support instantiation for: {}", descriptor.info.name);
+        Ok(None)
     }
     
     /// Check if this discovery mechanism supports dynamic loading
@@ -104,17 +125,18 @@ impl FileBasedDiscovery {
         Ok(discovery)
     }
     
-    /// Recursively scan directories for plugin descriptors
-    async fn scan_directory(&self, dir: &Path) -> PluginResult<Vec<PluginDescriptor>> {
+    /// Recursively scan directories for plugin descriptors (synchronous)
+    fn scan_directory_sync(&self, dir: &Path) -> PluginResult<Vec<PluginDescriptor>> {
         let mut descriptors = Vec::new();
         let mut directories_to_scan = vec![dir.to_path_buf()];
         
         while let Some(current_dir) = directories_to_scan.pop() {
-            let mut entries = fs::read_dir(&current_dir).await
+            let entries = std::fs::read_dir(&current_dir)
                 .map_err(|e| PluginError::discovery_error(format!("Failed to read directory {}: {}", current_dir.display(), e)))?;
             
-            while let Some(entry) = entries.next_entry().await
-                .map_err(|e| PluginError::discovery_error(format!("Failed to read directory entry: {}", e)))? {
+            for entry in entries {
+                let entry = entry
+                    .map_err(|e| PluginError::discovery_error(format!("Failed to read directory entry: {}", e)))?;
                 
                 let path = entry.path();
                 
@@ -124,7 +146,7 @@ impl FileBasedDiscovery {
                 } else if path.extension().and_then(|s| s.to_str()) == Some("yaml") || 
                          path.extension().and_then(|s| s.to_str()) == Some("yml") {
                     // Try to parse as plugin descriptor
-                    match self.parse_descriptor_file(&path).await {
+                    match self.parse_descriptor_file_sync(&path) {
                         Ok(descriptor) => descriptors.push(descriptor),
                         Err(_) => {
                             // Ignore invalid descriptors - they might not be plugin files
@@ -138,9 +160,9 @@ impl FileBasedDiscovery {
         Ok(descriptors)
     }
     
-    /// Parse a plugin descriptor from a file
-    async fn parse_descriptor_file(&self, file_path: &Path) -> PluginResult<PluginDescriptor> {
-        let content = fs::read_to_string(file_path).await
+    /// Parse a plugin descriptor from a file (synchronous)
+    fn parse_descriptor_file_sync(&self, file_path: &Path) -> PluginResult<PluginDescriptor> {
+        let content = std::fs::read_to_string(file_path)
             .map_err(|e| PluginError::discovery_error(format!("Failed to read file {}: {}", file_path.display(), e)))?;
         
         let mut descriptor = self.parser.parse_yaml(&content)?;
@@ -155,6 +177,7 @@ impl FileBasedDiscovery {
         
         Ok(descriptor)
     }
+    
     
     /// Check if cache is valid
     fn is_cache_valid(&self) -> Option<&Vec<PluginDescriptor>> {
@@ -176,15 +199,15 @@ impl FileBasedDiscovery {
     
 }
 
-#[async_trait]
 impl PluginDiscovery for FileBasedDiscovery {
-    async fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
+    fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
         // Check cache first
         if let Some(cached_descriptors) = self.is_cache_valid() {
             return Ok(cached_descriptors.clone());
         }
         
-        let descriptors = self.scan_directory(&self.plugin_directory).await?;
+        // Use synchronous directory scanning to avoid runtime creation
+        let descriptors = self.scan_directory_sync(&self.plugin_directory)?;
         
         // Update cache if enabled (note: we can't use &mut self here, so this won't work as-is)
         // For now, caching will need to be implemented differently
@@ -286,8 +309,10 @@ pub struct UnifiedPluginDiscovery {
     plugin_directory: Option<PathBuf>,
     /// Plugins to exclude by name
     excluded_plugins: Vec<String>,
-    /// Parser for plugin descriptors
-    parser: PluginDescriptorParser,
+    /// Settings to pass to plugins
+    plugin_settings: crate::plugin::PluginSettings,
+    /// Shared notification manager for all plugins
+    notification_manager: Option<std::sync::Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::PluginEvent>>>,
 }
 
 impl UnifiedPluginDiscovery {
@@ -295,6 +320,17 @@ impl UnifiedPluginDiscovery {
     pub fn new(
         plugin_directory: Option<PathBuf>,
         excluded_plugins: Vec<String>,
+        plugin_settings: crate::plugin::PluginSettings,
+    ) -> PluginResult<Self> {
+        Self::new_with_notification_manager(plugin_directory, excluded_plugins, plugin_settings, None)
+    }
+    
+    /// Create a new unified discovery instance with shared notification manager
+    pub fn new_with_notification_manager(
+        plugin_directory: Option<PathBuf>,
+        excluded_plugins: Vec<String>,
+        plugin_settings: crate::plugin::PluginSettings,
+        notification_manager: Option<std::sync::Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::PluginEvent>>>,
     ) -> PluginResult<Self> {
         let external_discovery = if let Some(dir) = &plugin_directory {
             if dir.exists() {
@@ -310,23 +346,30 @@ impl UnifiedPluginDiscovery {
             external_discovery,
             plugin_directory,
             excluded_plugins,
-            parser: PluginDescriptorParser::new(),
+            plugin_settings,
+            notification_manager,
         })
     }
 
     /// Create a unified discovery with default directory
-    pub fn with_default_directory(excluded_plugins: Vec<String>) -> PluginResult<Self> {
+    pub fn with_default_directory(excluded_plugins: Vec<String>, plugin_settings: crate::plugin::PluginSettings) -> PluginResult<Self> {
         let default_dir = if let Some(home_dir) = dirs::home_dir() {
             Some(home_dir.join(".config").join("gstats").join("plugins"))
         } else {
             None
         };
 
-        Self::new(default_dir, excluded_plugins)
+        Self::new(default_dir, excluded_plugins, plugin_settings)
+    }
+    
+    /// Set the shared notification manager for plugin instantiation
+    pub fn with_notification_manager(mut self, notification_manager: std::sync::Arc<crate::notifications::AsyncNotificationManager<crate::notifications::events::PluginEvent>>) -> Self {
+        self.notification_manager = Some(notification_manager);
+        self
     }
 
     /// Discover builtin plugins as descriptors
-    async fn discover_builtin_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
+    fn discover_builtin_plugins_sync(&self) -> PluginResult<Vec<PluginDescriptor>> {
         use crate::plugin::builtin;
         
         let mut descriptors = Vec::new();
@@ -357,14 +400,18 @@ impl UnifiedPluginDiscovery {
             
             // Output plugins should be loaded by default
             if plugin_type == crate::plugin::traits::PluginType::Output {
-                info = info.with_load_by_default(true);
+                info = info.with_active_by_default(true);
             }
 
+            // Get functions for this builtin plugin without creating it
+            let functions = builtin::get_builtin_plugin_functions(name);
+            
             let descriptor = crate::plugin::traits::PluginDescriptor {
                 info,
                 file_path: None, // Builtin plugins don't have file paths
                 entry_point: "builtin".to_string(),
                 config: HashMap::new(),
+                functions,
             };
 
             descriptors.push(descriptor);
@@ -374,9 +421,9 @@ impl UnifiedPluginDiscovery {
     }
 
     /// Discover external plugins as descriptors
-    async fn discover_external_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
+    fn discover_external_plugins_sync(&self) -> PluginResult<Vec<PluginDescriptor>> {
         if let Some(ref discovery) = self.external_discovery {
-            let plugins = discovery.discover_plugins().await?;
+            let plugins = discovery.discover_plugins()?;
             
             // Apply exclusions to external plugins
             let filtered_plugins = plugins.into_iter()
@@ -421,17 +468,17 @@ impl UnifiedPluginDiscovery {
     }
 }
 
-#[async_trait]
 impl PluginDiscovery for UnifiedPluginDiscovery {
-    async fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
+    fn discover_plugins(&self) -> PluginResult<Vec<PluginDescriptor>> {
         let mut all_plugins = Vec::new();
 
-        // Discover builtin plugins first
-        let builtin_plugins = self.discover_builtin_plugins().await?;
+        // Discovery is now completely synchronous - no runtime needed
+        log::debug!("Starting synchronous plugin discovery");
+        
+        let builtin_plugins = self.discover_builtin_plugins_sync()?;
         all_plugins.extend(builtin_plugins);
-
-        // Then discover external plugins
-        let external_plugins = self.discover_external_plugins().await?;
+        
+        let external_plugins = self.discover_external_plugins_sync()?;
         all_plugins.extend(external_plugins);
 
         // Deduplicate with external overriding builtin
@@ -443,6 +490,37 @@ impl PluginDiscovery for UnifiedPluginDiscovery {
         );
 
         Ok(deduplicated_plugins)
+    }
+
+    fn instantiate_from_descriptor(&self, descriptor: &PluginDescriptor) -> PluginResult<Option<Box<dyn crate::plugin::Plugin>>> {
+        // For builtin plugins, use the builtin factory with all required dependencies
+        if crate::plugin::builtin::get_builtin_plugins().contains(&descriptor.info.name.as_str()) {
+            // Use shared notification manager if provided, otherwise create a new one
+            use crate::notifications::AsyncNotificationManager;
+            use crate::notifications::events::PluginEvent;
+            use std::sync::Arc;
+            
+            let notification_manager = self.notification_manager.clone()
+                .unwrap_or_else(|| Arc::new(AsyncNotificationManager::<PluginEvent>::new()));
+            
+            // Plugin instantiation is now synchronous - no runtime needed
+            if let Some(plugin) = crate::plugin::builtin::create_builtin_plugin_with_dependencies(
+                &descriptor.info.name, 
+                &self.plugin_settings, 
+                notification_manager
+            ) {
+                return Ok(Some(plugin));
+            } else {
+                return Err(PluginError::InitializationFailed { 
+                    message: format!("Failed to create builtin plugin: {}", descriptor.info.name) 
+                });
+            }
+        }
+        
+        // For external plugins, we would use dynamic loading here
+        // TODO: Implement external plugin instantiation when needed
+        log::debug!("External plugin '{}' discovered but instantiation not yet supported", descriptor.info.name);
+        Ok(None)
     }
 
     fn supports_dynamic_loading(&self) -> bool {

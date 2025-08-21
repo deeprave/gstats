@@ -3,8 +3,6 @@
 //! Native Rust data transfer protocol for efficient, type-safe data sharing
 //! between plugins and the export system.
 
-#![allow(dead_code)]
-
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::time::{SystemTime, Duration};

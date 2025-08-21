@@ -2,7 +2,6 @@ use crate::scanner::async_engine::events::{RepositoryEvent, FileInfo};
 use crate::scanner::async_engine::processors::{EventProcessor, ProcessorStats};
 use crate::scanner::async_engine::shared_state::{SharedProcessorState, RepositoryMetadata, ProcessorSharedData, SharedStateAccess};
 use crate::scanner::messages::{ScanMessage, MessageData, MessageHeader};
-use crate::scanner::query::QueryParams;
 use crate::plugin::PluginResult;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -11,7 +10,6 @@ use log::{debug, info};
 
 /// Event processor for handling file system events
 pub struct FileEventProcessor {
-    query_params: QueryParams,
     file_patterns: Vec<String>,
     excluded_patterns: Vec<String>,
     file_count: usize,
@@ -25,7 +23,6 @@ impl FileEventProcessor {
     /// Create a new file event processor
     pub fn new() -> Self {
         Self {
-            query_params: QueryParams::default(),
             file_patterns: Vec::new(),
             excluded_patterns: Vec::new(),
             file_count: 0,
@@ -36,31 +33,10 @@ impl FileEventProcessor {
         }
     }
 
-    /// Create a new file event processor with query parameters
-    pub fn with_query_params(query_params: QueryParams) -> Self {
-        let file_patterns = query_params.file_paths.include.iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect();
-        let excluded_patterns = query_params.file_paths.exclude.iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect();
-        
-        Self {
-            query_params,
-            file_patterns,
-            excluded_patterns,
-            file_count: 0,
-            total_size: 0,
-            processing_start_time: None,
-            stats: ProcessorStats::default(),
-            shared_state: None,
-        }
-    }
 
     /// Create a new file event processor with custom patterns
     pub fn with_patterns(file_patterns: Vec<String>, excluded_patterns: Vec<String>) -> Self {
         Self {
-            query_params: QueryParams::default(),
             file_patterns,
             excluded_patterns,
             file_count: 0,
@@ -78,6 +54,7 @@ impl FileEventProcessor {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            "files-processor".to_string(),
         );
 
         let file_data = MessageData::FileInfo {
@@ -130,13 +107,6 @@ impl FileEventProcessor {
         false
     }
 
-    /// Get file extension from path
-    fn get_file_extension(&self, file_path: &str) -> Option<String> {
-        std::path::Path::new(file_path)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|s| s.to_string())
-    }
 
     /// Check if file matches common source code extensions
     fn is_source_code_file(&self, file_info: &FileInfo) -> bool {

@@ -143,8 +143,8 @@ pub struct Args {
     pub exclude_author: Vec<String>,
     
     /// Limit the number of commits to scan from repository
-    /// Example: --scan-limit 100
-    #[arg(long = "scan-limit", value_name = "N", help = "Maximum number of commits to scan from repository")]
+    /// Example: --limit 100
+    #[arg(long = "limit", value_name = "N", help = "Maximum number of commits to scan from repository")]
     pub scan_limit: Option<usize>,
     
     // ============ SCANNER CONFIGURATION ============

@@ -70,19 +70,19 @@ async fn test_deactivate_plugin() {
 async fn test_auto_activate_load_by_default_plugins() {
     let mut registry = PluginRegistry::new();
     
-    // Create export plugin with load_by_default = true
+    // Create export plugin with active_by_default = true
     let export_plugin = MockPlugin::new("export", false)
-        .with_load_by_default(true);
+        .with_active_by_default(true);
     
-    // Create commits plugin with load_by_default = false
+    // Create commits plugin with active_by_default = false
     let commits_plugin = MockPlugin::new("commits", false)
-        .with_load_by_default(false);
+        .with_active_by_default(false);
     
     // Register plugins as inactive
     registry.register_plugin_inactive(Box::new(export_plugin)).await.unwrap();
     registry.register_plugin_inactive(Box::new(commits_plugin)).await.unwrap();
     
-    // Auto-activate plugins marked with load_by_default = true
+    // Auto-activate plugins marked with active_by_default = true
     registry.auto_activate_default_plugins().await.unwrap();
     
     // Export plugin should be active, commits should not

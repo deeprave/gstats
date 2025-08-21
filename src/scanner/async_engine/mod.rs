@@ -1,17 +1,14 @@
-//! Async Scanner Engine Module
+//! Async Scanner Manager Module
 //! 
-//! Provides asynchronous scanning capabilities with streaming results
-//! and concurrent task coordination.
+//! Manages EventDrivenScanner instances for repository scanning.
 
 pub mod error;
 pub mod task_manager;
 pub mod engine;
-pub mod stream;
 pub mod scanners;
 pub mod events;
 pub mod processors;
 pub mod shared_state;
-pub mod event_filtering;
 pub mod diff_analyzer;
 pub mod file_tracker;
 pub mod checkout_manager;
@@ -20,7 +17,7 @@ pub mod checkout_manager;
 mod tests;
 
 // Re-export core types
-pub use engine::AsyncScannerEngineBuilder;
+pub use engine::{AsyncScannerManager, AsyncScannerManagerBuilder};
 
 // Re-export statistics types for convenience
 

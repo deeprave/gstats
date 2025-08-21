@@ -277,7 +277,6 @@ impl PluginSubscriber {
 mod tests {
     use super::*;
     use crate::plugin::tests::mock_plugins::MockPlugin;
-    use crate::notifications::traits::NotificationManager;
     use std::time::Duration;
 
     #[tokio::test]

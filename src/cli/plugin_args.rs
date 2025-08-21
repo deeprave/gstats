@@ -49,13 +49,11 @@ pub enum PluginArgValue {
 
 /// Parser for plugin-specific CLI arguments
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct PluginArgumentParser {
     /// Parsed plugin configurations indexed by plugin name
     configurations: HashMap<String, PluginArguments>,
 }
 
-#[allow(dead_code)]
 impl PluginArgumentParser {
     /// Create a new parser
     pub fn new() -> Self {

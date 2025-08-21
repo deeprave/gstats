@@ -387,7 +387,7 @@ mod tests {
         let config = Arc::new(RwLock::new(DebugConfig::default()));
         let formatter = MessageFormatter::new(config);
         
-        let header = MessageHeader::new(1);
+        let header = MessageHeader::new(1, "test-scan".to_string());
         let data = MessageData::CommitInfo {
             hash: "abc123def456".to_string(),
             author: "Test Author".to_string(),
@@ -417,7 +417,7 @@ mod tests {
         let config = Arc::new(RwLock::new(DebugConfig::default()));
         let formatter = MessageFormatter::new(config);
         
-        let header = MessageHeader::new(2);
+        let header = MessageHeader::new(2, "test-scan".to_string());
         let data = MessageData::FileChange {
             path: "src/main.rs".to_string(),
             change_type: ChangeType::Modified,
@@ -444,7 +444,7 @@ mod tests {
         }));
         let formatter = MessageFormatter::new(config);
         
-        let header = MessageHeader::new(42);
+        let header = MessageHeader::new(42, "test-scan".to_string());
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1000,
@@ -463,7 +463,7 @@ mod tests {
         }));
         let formatter = MessageFormatter::new(config);
         
-        let header = MessageHeader::new(1);
+        let header = MessageHeader::new(1, "test-scan".to_string());
         let data = MessageData::FileInfo {
             path: "test.rs".to_string(),
             size: 1000,
@@ -482,7 +482,7 @@ mod tests {
         }));
         let formatter = MessageFormatter::new(config);
         
-        let header = MessageHeader::new(1);
+        let header = MessageHeader::new(1, "test-scan".to_string());
         let data = MessageData::CommitInfo {
             hash: "abc123def456".to_string(),
             author: "Test Author".to_string(),

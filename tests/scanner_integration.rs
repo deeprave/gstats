@@ -22,7 +22,7 @@ fn test_message_data_types() {
     use gstats::scanner::messages::{MessageHeader, ScanMessage, MessageData};
     
     // Create a message header
-    let header = MessageHeader::new(123);
+    let header = MessageHeader::new(123, "test-scan".to_string());
     
     // Create scan message with file info
     let file_data = MessageData::FileInfo {
@@ -53,7 +53,7 @@ fn test_message_data_types() {
 fn test_commit_message_data() {
     use gstats::scanner::messages::{MessageData, ScanMessage, MessageHeader};
     
-    let header = MessageHeader::new(456);
+    let header = MessageHeader::new(456, "test-scan".to_string());
     
     let commit_data = MessageData::CommitInfo {
         hash: "abc123def456".to_string(),
@@ -84,7 +84,7 @@ fn test_commit_message_data() {
 fn test_metric_message_data() {
     use gstats::scanner::messages::{MessageData, ScanMessage, MessageHeader};
     
-    let header = MessageHeader::new(789);
+    let header = MessageHeader::new(789, "test-scan".to_string());
     
     let metric_data = MessageData::MetricInfo {
         file_count: 157,

@@ -179,6 +179,7 @@ impl ChangeFrequencyProcessor {
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
+                    "change-frequency-processor".to_string(),
                 );
 
                 let change_data = MessageData::ChangeFrequencyInfo {

@@ -1,118 +1,180 @@
-//! CSV export format implementation
+//! CSV/TSV export format implementation
 
-use crate::plugin::{PluginResult, PluginError};
-use crate::scanner::messages::ScanMessage;
-use crate::plugin::builtin::export::config::ExportConfig;
-use super::common::{is_commit_data, generate_authors_summary};
+use super::FormatExporter;
+use crate::plugin::PluginResult;
+use crate::plugin::data_export::{PluginDataExport, DataPayload};
+use std::sync::Arc;
 
-/// Export data as CSV
-pub fn export_csv(
-    config: &ExportConfig,
-    collected_data: &[ScanMessage],
-    data_to_export: &[&ScanMessage],
-) -> PluginResult<String> {
-    let mut csv_content = String::new();
-    let delimiter = &config.csv_delimiter;
-    let quote_char = &config.csv_quote_char;
+/// CSV quoting style
+#[derive(Debug, Clone, Copy)]
+pub enum QuotingStyle {
+    /// RFC 4180: Quote only when necessary (contains delimiter, quote, or newline)
+    Minimal,
+    /// Always quote string fields
+    AlwaysQuote,
+    /// Never quote, escape with backslash (common in Unix-style CSV)
+    NoQuotes,
+}
 
-    if is_commit_data(data_to_export) {
-        // Generate authors summary for CSV
-        export_authors_csv_summary(&mut csv_content, collected_data, config, delimiter, quote_char)?;
-    } else {
-        // Regular data export for non-author reports
-        csv_content.push_str(&format!("timestamp{}sequence{}data_json\n", delimiter, delimiter));
+/// CSV formatter
+pub struct CsvFormatter {
+    delimiter: char,
+    quote_char: char,
+    quoting_style: QuotingStyle,
+}
 
-        for message in data_to_export {
-            let timestamp = message.header.timestamp;
-            let sequence = message.header.sequence;
-            let data_json = serde_json::to_string(&message.data)
-                .map_err(|e| PluginError::execution_failed(format!("JSON serialization failed: {}", e)))?;
-
-            // Escape CSV values based on quote character
-            let escaped_json = if quote_char == "\"" {
-                data_json.replace('"', "\"\"")
-            } else {
-                data_json.replace(quote_char, &format!("{}{}", quote_char, quote_char))
-            };
-            
-            csv_content.push_str(&format!(
-                "{}{}{}{}{}{}{}\n", 
-                timestamp, delimiter, 
-                sequence, delimiter,
-                quote_char, escaped_json, quote_char
-            ));
+impl CsvFormatter {
+    /// Create a new CSV formatter (comma-separated, RFC 4180)
+    pub fn new() -> Self {
+        Self { 
+            delimiter: ',', 
+            quote_char: '"',
+            quoting_style: QuotingStyle::Minimal,
         }
     }
-
-    Ok(csv_content)
-}
-
-/// Generate authors summary for CSV export
-fn export_authors_csv_summary(
-    csv_content: &mut String,
-    collected_data: &[ScanMessage],
-    config: &ExportConfig,
-    delimiter: &str,
-    quote_char: &str,
-) -> PluginResult<()> {
-    let sorted_authors = generate_authors_summary(collected_data);
     
-    // Determine how many recent commits to show (respecting output limit)
-    let recent_limit = if config.output_all {
-        usize::MAX
-    } else {
-        3.min(config.max_entries.unwrap_or(3)) // Default to 3 recent commits per author
-    };
-    
-    // CSV header for authors summary
-    csv_content.push_str(&format!("author{}total_commits{}lines_added{}lines_removed{}recent_activity\n", 
-        delimiter, delimiter, delimiter, delimiter));
-    
-    // CSV rows - one per author
-    for (author, (commits, lines_added, lines_removed, recent_commits)) in sorted_authors {
-        // Escape author name if needed
-        let escaped_author = if author.contains(delimiter) || author.contains(quote_char) {
-            if quote_char == "\"" {
-                format!("\"{}\"", author.replace('"', "\"\""))
-            } else {
-                format!("{}{}{}", quote_char, author.replace(quote_char, &format!("{}{}", quote_char, quote_char)), quote_char)
-            }
-        } else {
-            author.clone()
-        };
-        
-        // Format recent activity as a summary string (not individual commits to keep CSV clean)
-        let recent_activity = if recent_commits.is_empty() {
-            "No recent activity".to_string()
-        } else {
-            let latest_commit = &recent_commits[0];
-            let datetime = chrono::DateTime::from_timestamp(latest_commit.2 as i64, 0)
-                .unwrap_or_else(|| chrono::Utc::now());
-            let formatted_date = datetime.format("%Y-%m-%d").to_string();
-            
-            format!("Last: {} ({} commits shown)", formatted_date, recent_commits.len().min(recent_limit))
-        };
-        
-        // Escape recent activity if needed
-        let escaped_activity = if recent_activity.contains(delimiter) || recent_activity.contains(quote_char) {
-            if quote_char == "\"" {
-                format!("\"{}\"", recent_activity.replace('"', "\"\""))
-            } else {
-                format!("{}{}{}", quote_char, recent_activity.replace(quote_char, &format!("{}{}", quote_char, quote_char)), quote_char)
-            }
-        } else {
-            recent_activity
-        };
-        
-        csv_content.push_str(&format!(
-            "{}{}{}{}{}{}{}{}{}\n", 
-            escaped_author, delimiter,
-            commits, delimiter,
-            lines_added, delimiter,
-            lines_removed, delimiter,
-            escaped_activity
-        ));
+    /// Create a CSV formatter with no quotes (backslash escaping)
+    pub fn with_no_quotes(delimiter: char) -> Self {
+        Self { 
+            delimiter, 
+            quote_char: '"',  // Still needed for the escaping logic
+            quoting_style: QuotingStyle::NoQuotes,
+        }
     }
     
-    Ok(())
+    /// Create a formatter with custom delimiter and quote char
+    pub fn with_delimiter_and_quote(delimiter: char, quote_char: char) -> Self {
+        let quoting_style = if delimiter == '\t' {
+            QuotingStyle::Minimal
+        } else {
+            QuotingStyle::AlwaysQuote
+        };
+        
+        Self { delimiter, quote_char, quoting_style }
+    }
+    
+    /// Create a formatter with full configuration
+    pub fn with_config(delimiter: char, quote_char: char, quoting_style: QuotingStyle) -> Self {
+        Self { delimiter, quote_char, quoting_style }
+    }
+    
+    /// Escape a field based on the configured quoting style
+    fn escape_field(&self, field: &str) -> String {
+        match self.quoting_style {
+            QuotingStyle::Minimal => {
+                if self.needs_quoting(field) {
+                    self.quote_field(field)
+                } else {
+                    // Special handling for TSV tabs
+                    if self.delimiter == '\t' && field.contains('\t') {
+                        field.replace('\t', "\\t")
+                    } else {
+                        field.to_string()
+                    }
+                }
+            }
+            QuotingStyle::AlwaysQuote => {
+                if field.chars().any(|c| c.is_alphabetic()) {
+                    self.quote_field(field)
+                } else {
+                    field.to_string()  // Don't quote pure numbers
+                }
+            }
+            QuotingStyle::NoQuotes => {
+                field.replace('\\', "\\\\")
+                     .replace(&self.delimiter.to_string(), &format!("\\{}", self.delimiter))
+                     .replace(&self.quote_char.to_string(), &format!("\\{}", self.quote_char))
+                     .replace('\n', "\\n")
+                     .replace('\r', "\\r")
+            }
+        }
+    }
+    
+    /// Check if a field needs quoting in minimal mode
+    fn needs_quoting(&self, field: &str) -> bool {
+        field.contains(self.delimiter) || 
+        field.contains(self.quote_char) || 
+        field.contains('\n') || 
+        field.contains('\r')
+    }
+    
+    /// Quote a field with proper escaping
+    fn quote_field(&self, field: &str) -> String {
+        let escaped = field.replace(&self.quote_char.to_string(), 
+                                  &format!("{}{}", self.quote_char, self.quote_char));
+        format!("{}{}{}", self.quote_char, escaped, self.quote_char)
+    }
 }
+
+impl Default for CsvFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FormatExporter for CsvFormatter {
+    fn format_data(&self, data: &[Arc<PluginDataExport>]) -> PluginResult<String> {
+        let mut output = String::new();
+        
+        for export in data {
+            // Add section header as comment
+            output.push_str(&format!("# {}\n", export.title));
+            if let Some(ref desc) = export.description {
+                output.push_str(&format!("# {}\n", desc));
+            }
+            
+            match &export.data {
+                DataPayload::Rows(rows) => {
+                    if !rows.is_empty() && !export.schema.columns.is_empty() {
+                        // Headers
+                        let headers: Vec<String> = export.schema.columns.iter()
+                            .map(|col| self.escape_field(&col.name))
+                            .collect();
+                        output.push_str(&headers.join(&self.delimiter.to_string()));
+                        output.push('\n');
+                        
+                        // Data rows
+                        for row in rows.iter() {
+                            let fields: Vec<String> = row.values.iter()
+                                .map(|value| self.escape_field(&value.to_string()))
+                                .collect();
+                            output.push_str(&fields.join(&self.delimiter.to_string()));
+                            output.push('\n');
+                        }
+                    }
+                }
+                
+                DataPayload::KeyValue(kv) => {
+                    // Convert key-value to two-column format
+                    output.push_str(&format!("Key{}Value\n", self.delimiter));
+                    for (key, value) in kv.iter() {
+                        output.push_str(&format!("{}{}{}\n", 
+                            self.escape_field(key),
+                            self.delimiter,
+                            self.escape_field(&value.to_string())
+                        ));
+                    }
+                }
+                
+                DataPayload::Tree(_) => {
+                    // Trees don't translate well to CSV - provide a note
+                    output.push_str("# Tree data not supported in CSV format\n");
+                }
+                
+                DataPayload::Raw(raw) => {
+                    output.push_str(&format!("Raw\n{}\n", self.escape_field(raw.as_str())));
+                }
+                
+                DataPayload::Empty => {
+                    output.push_str("Empty\ntrue\n");
+                }
+            }
+            
+            output.push('\n');
+        }
+        
+        Ok(output)
+    }
+    
+}
+

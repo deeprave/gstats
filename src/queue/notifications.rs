@@ -103,7 +103,6 @@ impl QueueEvent {
                 .as_millis() as u64,
         }
     }
-
 }
 
 

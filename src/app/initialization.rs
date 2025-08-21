@@ -1,6 +1,6 @@
 //! Application initialization and configuration
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::path::PathBuf;
 use log::{info, debug, error};
 use crate::{cli, config, logging, display, plugin};
@@ -151,143 +151,51 @@ pub fn create_colour_manager(args: &cli::Args, config: &config::ConfigManager) -
     display::ColourManager::from_color_args(args.no_color, args.color, colour_config)
 }
 
-pub async fn initialize_builtin_plugins(
-    plugin_registry: &plugin::SharedPluginRegistry,
-) -> Result<()> {
-    // Create a default colour manager for backward compatibility
-    let colour_manager = display::ColourManager::from_color_args(false, false, None);
-    initialize_builtin_plugins_with_context(plugin_registry, &colour_manager).await
-}
 
-pub async fn initialize_builtin_plugins_with_context(
+/// Initialize plugins using the plugin system's discovery mechanism
+pub fn initialize_plugins_via_discovery(
     plugin_registry: &plugin::SharedPluginRegistry,
     colour_manager: &display::ColourManager,
+    excluded_plugins: Vec<String>,
+    plugin_publisher: std::sync::Arc<crate::notifications::typed_publishers::PluginEventPublisher>,
 ) -> Result<()> {
+    debug!("Initializing plugins via plugin system's discovery mechanism");
     
-    debug!("Initializing builtin plugins");
+    // Create plugin context for initialization with the plugin publisher
+    // Note: plugin context may need updating to accept Publisher trait instead of manager
+    let context = create_plugin_context(&std::env::current_dir()?, colour_manager, plugin_publisher)?;
     
-    // Register all builtin plugins discovered dynamically
-    {
-        let mut registry = plugin_registry.inner().write().await;
-        
-        // Use centralized plugin creation to avoid hardcoded names
-        let builtin_plugins = create_all_builtin_plugins();
-        for plugin in builtin_plugins {
-            let plugin_name = plugin.plugin_info().name.clone();
-            registry.register_plugin_inactive(plugin).await
-                .with_context(|| format!("Failed to register builtin plugin: {}", plugin_name))?;
-        }
-        
-        // Activate plugins marked with load_by_default = true
-        let plugin_names = registry.list_plugins();
-        for plugin_name in plugin_names {
-            if let Some(plugin) = registry.get_plugin(&plugin_name) {
-                if plugin.plugin_info().load_by_default {
-                    registry.activate_plugin(&plugin_name).await
-                        .with_context(|| format!("Failed to activate default plugin: {}", plugin_name))?;
-                }
-            }
-        }
-        // Create plugin context with colour manager and initialize all plugins
-        let plugin_context = create_plugin_context(&std::env::current_dir()?, colour_manager)?;
-        
-        // Initialize all plugins with the context
-        let initialization_results = registry.initialize_all(&plugin_context).await;
-        
-        // Check for initialization failures
-        for (plugin_name, result) in initialization_results {
-            if let Err(e) = result {
-                error!("Failed to initialize plugin '{}': {}", plugin_name, e);
-                return Err(anyhow::anyhow!("Plugin initialization failed for '{}': {}", plugin_name, e));
-            } else {
-                debug!("Successfully initialized plugin: {}", plugin_name);
-            }
-        }
-    }
+    // The plugin registry should handle all discovery and instantiation internally
+    // TODO: Add discover_and_load_plugins method to SharedPluginRegistry that:
+    // 1. Uses UnifiedPluginDiscovery internally 
+    // 2. Handles both builtin and external plugin instantiation
+    // 3. Applies excluded_plugins filter
+    // 4. Registers and initializes plugins with context
+    // 5. Activates plugins based on active_by_default setting
     
-    info!("Builtin plugins initialized successfully with color context");
+    // For now, this is a placeholder that should be replaced with the proper registry method
+    plugin_registry.discover_and_load_plugins(&context, excluded_plugins)
+        .map_err(|e| anyhow::anyhow!("Plugin discovery and loading failed: {}", e))?;
+    
+    info!("Successfully initialized plugins via discovery system");
     Ok(())
 }
 
-/// Initialize builtin plugins with color context and compact mode detection
-pub async fn initialize_builtin_plugins_with_compact_mode(
-    plugin_registry: &plugin::SharedPluginRegistry,
+pub fn create_plugin_context(
+    _repo_path: &PathBuf, 
     colour_manager: &display::ColourManager,
-    debug_compact_mode: bool,
-) -> Result<()> {
-    debug!("Initializing builtin plugins with compact mode: {}", debug_compact_mode);
-    
-    let context = create_plugin_context(&std::env::current_dir()?, colour_manager)?;
-    
-    // Get builtin plugins with compact mode consideration
-    let plugins = create_all_builtin_plugins_with_config(debug_compact_mode);
-    
-    for mut plugin in plugins {
-        let plugin_name = plugin.plugin_info().name.clone();
-        
-        debug!("Initializing plugin with context: {}", plugin_name);
-        
-        if let Err(e) = plugin.initialize(&context).await {
-            error!("Failed to initialize plugin '{}': {}", plugin_name, e);
-            return Err(anyhow::anyhow!("Plugin initialization failed for '{}': {}", plugin_name, e));
-        } else {
-            debug!("Successfully initialized plugin: {}", plugin_name);
-        }
-        
-        // Register plugin in the registry
-        {
-            let mut registry_guard = plugin_registry.inner().write().await;
-            if let Err(e) = registry_guard.register_plugin(plugin).await {
-                error!("Failed to register plugin '{}': {}", plugin_name, e);
-                return Err(anyhow::anyhow!("Plugin registration failed for '{}': {}", plugin_name, e));
-            } else {
-                debug!("Successfully registered plugin: {}", plugin_name);
-            }
-        }
-    }
-    
-    info!("Builtin plugins initialized successfully with compact mode configuration");
-    Ok(())
-}
-
-pub fn create_plugin_context(_repo_path: &PathBuf, colour_manager: &display::ColourManager) -> Result<plugin::PluginContext> {
+    plugin_publisher: std::sync::Arc<crate::notifications::typed_publishers::PluginEventPublisher>,
+) -> Result<plugin::PluginContext> {
     use crate::scanner::{ScannerConfig, QueryParams};
-    use crate::notifications::AsyncNotificationManager;
-    use crate::notifications::events::PluginEvent;
     use std::sync::Arc;
     
     // Create default scanner config and query params
     let scanner_config = Arc::new(ScannerConfig::default());
     let query_params = Arc::new(QueryParams::default());
     
-    // Create notification manager for plugin-to-plugin communication
-    let notification_manager = Arc::new(
-        AsyncNotificationManager::<PluginEvent>::new()
-    );
-    
+    // Use the provided plugin publisher
     Ok(plugin::PluginContext::new(scanner_config, query_params)
-        .with_notification_manager(notification_manager)
+        .with_plugin_publisher(plugin_publisher)
         .with_colour_manager(Arc::new(colour_manager.clone())))
 }
 
-/// Centralized helper function to create all builtin plugins
-/// This is the ONLY place where builtin plugin instantiation should be hardcoded
-/// All other code should use plugin discovery mechanisms
-fn create_all_builtin_plugins() -> Vec<Box<dyn plugin::Plugin>> {
-    vec![
-        Box::new(plugin::builtin::debug::DebugPlugin::new()),
-        Box::new(plugin::builtin::export::ExportPlugin::new()),
-        Box::new(plugin::builtin::commits::CommitsPlugin::new()),
-        Box::new(plugin::builtin::metrics::MetricsPlugin::new()),
-    ]
-}
-
-/// Create all builtin plugins with configuration options
-fn create_all_builtin_plugins_with_config(debug_compact_mode: bool) -> Vec<Box<dyn plugin::Plugin>> {
-    vec![
-        Box::new(plugin::builtin::debug::DebugPlugin::new_with_compact(debug_compact_mode)),
-        Box::new(plugin::builtin::export::ExportPlugin::new()),
-        Box::new(plugin::builtin::commits::CommitsPlugin::new()),
-        Box::new(plugin::builtin::metrics::MetricsPlugin::new()),
-    ]
-}
